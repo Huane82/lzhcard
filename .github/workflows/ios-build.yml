@@ -55,21 +55,24 @@ jobs:
           template_path = 'ios-template/Info.plist'
           target_path = 'ios/App/App/Info.plist'
 
-          with open(template_path, 'rb') as f:
-              template_plist = plistlib.load(f)
+          if os.path.exists(template_path):
+              with open(template_path, 'rb') as f:
+                  template_plist = plistlib.load(f)
 
-          if os.path.exists(target_path):
-              with open(target_path, 'rb') as f:
-                  target_plist = plistlib.load(f)
+              if os.path.exists(target_path):
+                  with open(target_path, 'rb') as f:
+                      target_plist = plistlib.load(f)
+              else:
+                  target_plist = {}
+
+              for key, value in template_plist.items():
+                  target_plist[key] = value
+
+              with open(target_path, 'wb') as f:
+                  plistlib.dump(target_plist, f, sort_keys=False)
+              print('Merged ios-template/Info.plist into ios/App/App/Info.plist successfully.')
           else:
-              target_plist = {}
-
-          for key, value in template_plist.items():
-              target_plist[key] = value
-
-          with open(target_path, 'wb') as f:
-              plistlib.dump(target_plist, f, sort_keys=False)
-          print('Merged ios-template/Info.plist into ios/App/App/Info.plist successfully.')
+              print('ios-template/Info.plist not found; skipping template merge.')
           PY
 
           if [ -n "$GOOGLE_SERVICE_INFO_PLIST_BASE64" ]; then
@@ -217,12 +220,23 @@ jobs:
           retention-days: 30
 
       - name: 9. Upload IPA to TestFlight (Optional)
-        if: ${{ (github.event_name == 'push' || inputs.upload_testflight == true) && secrets.APPLE_CONNECT_API_KEY_BASE64 != '' && secrets.APPLE_CONNECT_KEY_ID != '' && secrets.APPLE_CONNECT_ISSUER_ID != '' }}
         env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_UPLOAD: ${{ inputs.upload_testflight }}
           APPLE_CONNECT_API_KEY_BASE64: ${{ secrets.APPLE_CONNECT_API_KEY_BASE64 }}
           APPLE_CONNECT_KEY_ID: ${{ secrets.APPLE_CONNECT_KEY_ID }}
           APPLE_CONNECT_ISSUER_ID: ${{ secrets.APPLE_CONNECT_ISSUER_ID }}
         run: |
+          if [ "$EVENT_NAME" != "push" ] && [ "$INPUT_UPLOAD" != "true" ]; then
+            echo "未勾選上傳 TestFlight，略過此步驟。"
+            exit 0
+          fi
+
+          if [ -z "$APPLE_CONNECT_API_KEY_BASE64" ] || [ -z "$APPLE_CONNECT_KEY_ID" ] || [ -z "$APPLE_CONNECT_ISSUER_ID" ]; then
+            echo "尚未設定 App Store Connect API Key Secrets，略過 TestFlight 上傳（仍可從 Artifacts 下載 .ipa）。"
+            exit 0
+          fi
+
           mkdir -p "$HOME/.appstoreconnect/private_keys"
           KEY_FILE="$HOME/.appstoreconnect/private_keys/AuthKey_${APPLE_CONNECT_KEY_ID}.p8"
           echo "$APPLE_CONNECT_API_KEY_BASE64" | base64 --decode > "$KEY_FILE"
