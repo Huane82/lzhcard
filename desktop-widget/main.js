@@ -8,7 +8,8 @@ const {
     screen,
     shell,
     nativeImage,
-    session
+    session,
+    desktopCapturer
 } = require('electron');
 const fs = require('fs');
 const path = require('path');
@@ -17,6 +18,7 @@ const http = require('http');
 const BALL_SIZE = { width: 76, height: 76 };
 const PANEL_SIZE = { width: 436, height: 650 };
 const FULLSCREEN_DEFAULT_SIZE = { width: 980, height: 700 };
+const SUBTITLE_DEFAULT_SIZE = { width: 680, height: 140 };
 const EDGE_MARGIN = 14;
 const PRIMARY_TOGGLE_SHORTCUT = 'Alt+T';
 const FALLBACK_TOGGLE_SHORTCUT = 'CommandOrControl+Shift+T';
@@ -49,6 +51,7 @@ const MIME_TYPES = {
 };
 
 let mainWin = null;
+let subtitleWin = null;
 let tray = null;
 let localStaticServer = null;
 let localStaticServerOrigin = '';
@@ -58,6 +61,8 @@ let alwaysOnTopEnabled = true;
 let isQuitting = false;
 let activeToggleShortcut = PRIMARY_TOGGLE_SHORTCUT;
 let currentLogicalBounds = { x: 0, y: 0, width: PANEL_SIZE.width, height: PANEL_SIZE.height };
+let lastSubtitlePayload = { orig: '', trans: '等待字幕或語音辨識內容…', tierLabel: '待機', isLive: false };
+let subtitleBoundsSaveTimer = null;
 let trayIconCache = null;
 
 function getConfigFilePath() {
@@ -653,6 +658,126 @@ async function createMainWindow() {
     updateTrayMenu();
 }
 
+function persistSubtitleBounds() {
+    if (!subtitleWin || subtitleWin.isDestroyed()) return;
+    if (subtitleBoundsSaveTimer) {
+        clearTimeout(subtitleBoundsSaveTimer);
+    }
+    subtitleBoundsSaveTimer = setTimeout(() => {
+        subtitleBoundsSaveTimer = null;
+        if (!subtitleWin || subtitleWin.isDestroyed()) return;
+        const b = subtitleWin.getBounds();
+        writeWidgetConfig({
+            subX: b.x,
+            subY: b.y,
+            subW: b.width,
+            subH: b.height
+        });
+    }, 180);
+}
+
+async function createOrShowSubtitleWindow() {
+    if (subtitleWin && !subtitleWin.isDestroyed()) {
+        if (!subtitleWin.isVisible()) {
+            subtitleWin.showInactive();
+        }
+        subtitleWin.setAlwaysOnTop(true, 'screen-saver');
+        if (lastSubtitlePayload) {
+            subtitleWin.webContents.send('subtitle:update', lastSubtitlePayload);
+        }
+        return { opened: true, bounds: subtitleWin.getBounds() };
+    }
+
+    const cfg = readWidgetConfig();
+    const refDisplay = (mainWin && !mainWin.isDestroyed())
+        ? getDisplayForBounds(mainWin.getBounds())
+        : screen.getPrimaryDisplay();
+    const wa = (refDisplay && refDisplay.workArea) ? refDisplay.workArea : screen.getPrimaryDisplay().workArea;
+
+    const targetW = Math.max(360, Math.min(1400, Number(cfg.subW) || SUBTITLE_DEFAULT_SIZE.width));
+    const targetH = Math.max(96, Math.min(480, Number(cfg.subH) || SUBTITLE_DEFAULT_SIZE.height));
+    const defaultX = Math.round(wa.x + (wa.width - targetW) / 2);
+    const defaultY = Math.round(wa.y + wa.height - targetH - 42);
+    const hasSavedPos = Number.isFinite(cfg.subX) && Number.isFinite(cfg.subY);
+    const rawBounds = {
+        x: hasSavedPos ? Number(cfg.subX) : defaultX,
+        y: hasSavedPos ? Number(cfg.subY) : defaultY,
+        width: targetW,
+        height: targetH
+    };
+    const safeDisplay = getDisplayForBounds(rawBounds);
+    const safeWa = safeDisplay.workArea;
+    const width = Math.min(targetW, safeWa.width - 16);
+    const height = Math.min(targetH, safeWa.height - 16);
+    const x = Math.max(safeWa.x + 8, Math.min(rawBounds.x, safeWa.x + safeWa.width - width - 8));
+    const y = Math.max(safeWa.y + 8, Math.min(rawBounds.y, safeWa.y + safeWa.height - height - 8));
+
+    // Top-level 獨立視窗（不指定 parent: mainWin，可自由跨螢幕拖曳置頂）
+    subtitleWin = new BrowserWindow({
+        x: Math.round(x),
+        y: Math.round(y),
+        width: Math.round(width),
+        height: Math.round(height),
+        minWidth: 360,
+        minHeight: 96,
+        maxWidth: 1600,
+        maxHeight: 520,
+        frame: false,
+        transparent: true,
+        alwaysOnTop: true,
+        hasShadow: false,
+        resizable: true,
+        maximizable: false,
+        fullscreenable: false,
+        skipTaskbar: true,
+        backgroundColor: '#00000000',
+        icon: createWidgetTrayIcon(),
+        webPreferences: {
+            preload: path.join(__dirname, 'preload.js'),
+            contextIsolation: true,
+            nodeIntegration: false,
+            sandbox: false,
+            backgroundThrottling: false
+        }
+    });
+
+    subtitleWin.setContentProtection(true);
+    subtitleWin.setAlwaysOnTop(true, 'screen-saver');
+    if (typeof subtitleWin.setVisibleOnAllWorkspaces === 'function') {
+        subtitleWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    }
+
+    subtitleWin.on('moved', persistSubtitleBounds);
+    subtitleWin.on('resized', persistSubtitleBounds);
+
+    subtitleWin.on('close', (event) => {
+        if (!isQuitting) {
+            event.preventDefault();
+            subtitleWin.hide();
+        }
+    });
+
+    subtitleWin.on('closed', () => {
+        subtitleWin = null;
+    });
+
+    subtitleWin.webContents.on('did-finish-load', () => {
+        if (subtitleWin && !subtitleWin.isDestroyed() && lastSubtitlePayload) {
+            subtitleWin.webContents.send('subtitle:update', lastSubtitlePayload);
+        }
+    });
+
+    await subtitleWin.loadFile(path.join(__dirname, 'subtitle.html'));
+    return { opened: true, bounds: subtitleWin.getBounds() };
+}
+
+function closeOrHideSubtitleWindow() {
+    if (subtitleWin && !subtitleWin.isDestroyed()) {
+        subtitleWin.hide();
+    }
+    return { closed: true };
+}
+
 function registerIpcHandlers() {
     ipcMain.handle('widget:set-expanded', (_event, expanded) => {
         isExpanded = Boolean(expanded);
@@ -723,6 +848,21 @@ function registerIpcHandlers() {
         }
         return false;
     });
+
+    ipcMain.handle('widget:open-subtitle', async () => {
+        return createOrShowSubtitleWindow();
+    });
+
+    ipcMain.handle('widget:close-subtitle', () => {
+        return closeOrHideSubtitleWindow();
+    });
+
+    ipcMain.on('widget:update-subtitle', (_event, payload) => {
+        lastSubtitlePayload = (payload && typeof payload === 'object') ? payload : {};
+        if (subtitleWin && !subtitleWin.isDestroyed()) {
+            subtitleWin.webContents.send('subtitle:update', lastSubtitlePayload);
+        }
+    });
 }
 
 const gotSingleLock = app.requestSingleInstanceLock();
@@ -738,6 +878,32 @@ if (!gotSingleLock) {
 
     app.whenReady().then(async () => {
         configurePermissions();
+
+        session.defaultSession.setDisplayMediaRequestHandler(async (request, callback) => {
+            try {
+                const sources = await desktopCapturer.getSources({ types: ['screen'] });
+                if (!sources || sources.length === 0) {
+                    return callback({});
+                }
+                // 自動匹配懸浮視窗目前所在的螢幕（支援多螢幕環境）
+                let targetSource = sources[0];
+                if (mainWin && !mainWin.isDestroyed()) {
+                    const bounds = mainWin.getBounds();
+                    const currentDisplay = screen.getDisplayNearestPoint({ x: bounds.x, y: bounds.y });
+                    const matched = sources.find(s => String(s.display_id) === String(currentDisplay.id));
+                    if (matched) targetSource = matched;
+                }
+                const mediaResponse = { video: targetSource };
+                if (request && request.audioRequested && process.platform === 'win32') {
+                    mediaResponse.audio = 'loopback';
+                }
+                callback(mediaResponse);
+            } catch (err) {
+                console.error('[DesktopWidget] setDisplayMediaRequestHandler error:', err);
+                callback({});
+            }
+        });
+
         registerIpcHandlers();
 
         tray = new Tray(createWidgetTrayIcon());
@@ -775,6 +941,16 @@ if (!gotSingleLock) {
 
     app.on('before-quit', () => {
         isQuitting = true;
+        if (subtitleBoundsSaveTimer) {
+            clearTimeout(subtitleBoundsSaveTimer);
+            subtitleBoundsSaveTimer = null;
+        }
+        if (subtitleWin && !subtitleWin.isDestroyed()) {
+            try {
+                subtitleWin.destroy();
+            } catch (e) {}
+            subtitleWin = null;
+        }
     });
 
     app.on('will-quit', () => {

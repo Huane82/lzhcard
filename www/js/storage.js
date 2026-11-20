@@ -331,14 +331,10 @@ const StorageEngine = {
     localStorage.removeItem('lzhcard_api_mode');
     localStorage.removeItem('lzhcard_auto_audio');
     localStorage.removeItem('lzhcard_show_sentence_front');
-    localStorage.removeItem('lzhcard_floating_translator_enabled');
     localStorage.removeItem('lzhcard_notif_friend_msg');
     localStorage.removeItem('lzhcard_notif_announcements');
     localStorage.removeItem('lzhcard_notif_friend_requests');
     localStorage.removeItem('lzhcard_notif_team_invites');
-    if (typeof FloatingTranslator !== 'undefined' && typeof FloatingTranslator.setEnabled === 'function') {
-      FloatingTranslator.setEnabled(true);
-    }
     if (typeof syncSettingsUI === 'function') syncSettingsUI();
     if (typeof updateApiKeyStatusUI === 'function') updateApiKeyStatusUI();
   },
@@ -1080,7 +1076,6 @@ const StorageEngine = {
       apiMode: localStorage.getItem('lzhcard_api_mode') || 'shared',
       autoPlayAudio: localStorage.getItem('lzhcard_auto_audio') === 'true',
       showSentenceFront: localStorage.getItem('lzhcard_show_sentence_front') === 'true',
-      floatingTranslatorEnabled: localStorage.getItem('lzhcard_floating_translator_enabled') !== 'false',
       notifFriendMsg: localStorage.getItem('lzhcard_notif_friend_msg') !== 'false',
       notifAnnouncements: localStorage.getItem('lzhcard_notif_announcements') !== 'false',
       notifFriendRequests: localStorage.getItem('lzhcard_notif_friend_requests') !== 'false',
@@ -1104,12 +1099,6 @@ const StorageEngine = {
     }
     if (typeof settings.showSentenceFront === 'boolean') {
       localStorage.setItem('lzhcard_show_sentence_front', settings.showSentenceFront ? 'true' : 'false');
-    }
-    if (typeof settings.floatingTranslatorEnabled === 'boolean') {
-      localStorage.setItem('lzhcard_floating_translator_enabled', settings.floatingTranslatorEnabled ? 'true' : 'false');
-      if (typeof FloatingTranslator !== 'undefined' && typeof FloatingTranslator.setEnabled === 'function') {
-        FloatingTranslator.setEnabled(settings.floatingTranslatorEnabled);
-      }
     }
     if (typeof settings.notifFriendMsg === 'boolean') {
       localStorage.setItem('lzhcard_notif_friend_msg', settings.notifFriendMsg ? 'true' : 'false');
@@ -1226,7 +1215,7 @@ const StorageEngine = {
       const localDecks = await this.getLocalDecks(uid);
       const isLocalDirty = localStorage.getItem(dirtyKey) === 'true';
 
-      if (uid && typeof db !== 'undefined') {
+      if (uid && typeof db !== 'undefined' && db) {
         try {
           const fetched = await this.fetchRemoteUserDocAndDecks(uid);
 
@@ -1326,7 +1315,7 @@ const StorageEngine = {
       this.updateLastKnownDecksSnapshot(wordList);
       this._hasLoadedOnce = true;
       this._loadedUid = uid;
-      if (uid && (typeof navigator === 'undefined' || navigator.onLine === false)) {
+      if (uid && (typeof db === 'undefined' || !db || typeof navigator === 'undefined' || navigator.onLine === false)) {
         this._loadedOffline = true;
         this._needsReconnectSync = true;
       }
@@ -1737,9 +1726,15 @@ if (typeof window !== 'undefined') {
       clearTimeout(StorageEngine._reconnectTimer);
       StorageEngine._reconnectTimer = null;
     }
+    if (typeof updateOfflineBannerUI === 'function') {
+      updateOfflineBannerUI();
+    }
   });
 
   window.addEventListener('online', () => {
+    if (typeof updateOfflineBannerUI === 'function') {
+      updateOfflineBannerUI();
+    }
     if (StorageEngine._reconnectTimer) {
       clearTimeout(StorageEngine._reconnectTimer);
     }

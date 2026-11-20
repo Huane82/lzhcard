@@ -16,6 +16,7 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(SystemOverlayPlugin.class);
         registerPlugin(PlayBillingPlugin.class);
+        registerPlugin(NativeTtsPlugin.class);
         super.onCreate(savedInstanceState);
         requestMicPermissionIfNeeded();
         handleOverlayActionIntent(getIntent());

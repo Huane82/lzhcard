@@ -176,7 +176,7 @@ function getStoreCurrentUser() {
     if (typeof firebase !== 'undefined' && firebase.auth && firebase.auth().currentUser) {
         return firebase.auth().currentUser;
     }
-    if (typeof auth !== 'undefined' && auth.currentUser) {
+    if (typeof auth !== 'undefined' && auth && auth.currentUser) {
         return auth.currentUser;
     }
     return null;

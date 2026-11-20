@@ -1,0 +1,1153 @@
+import Foundation
+import Capacitor
+import UIKit
+import AVKit
+import AVFoundation
+import ReplayKit
+import CoreMedia
+import CoreVideo
+import Network
+import SwiftUI
+#if canImport(Translation)
+import Translation
+#endif
+
+@objc(IosScreenTranslatePlugin)
+public class IosScreenTranslatePlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPictureControllerDelegate, AVPictureInPictureSampleBufferPlaybackDelegate {
+
+    public let identifier = "IosScreenTranslatePlugin"
+    public let jsName = "IosScreenTranslate"
+    public let pluginMethods: [CAPPluginMethod] = [
+        CAPPluginMethod(name: "getCapabilities", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "prepareOfflineLanguages", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "saveConfig", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "startScreenTranslate", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "showBroadcastPicker", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "startPipSubtitle", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "stopPipSubtitle", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "updatePipText", returnType: CAPPluginReturnPromise)
+    ]
+
+    private let loopbackHost = "127.0.0.1"
+    private let loopbackPort: UInt16 = 49152
+    private let darwinNotificationName = "com.lzhcard.app.pip.subtitle.updated" as CFString
+    private let pipWidthPx = 680
+    private let pipHeightPx = 192
+
+    private lazy var resolvedAppGroupId: String? = resolveAccessibleAppGroupId()
+    private lazy var sharedContainerBridgeFileUrl: URL? = resolveSharedBridgeFileUrl()
+
+    private var pipController: AVPictureInPictureController?
+    private var sampleLayer: AVSampleBufferDisplayLayer?
+    private var pipHostView: UIView?
+    private var silentAudioPlayer: AVAudioPlayer?
+    private var pollTimer: Timer?
+    private var lastHandledOcrSeq: Int = -1
+    private var lastHandledBridgeSeq: Int = -1
+    private var lastRenderedSubtitle: String = ""
+    private var isTranslatingOcr: Bool = false
+
+    private let ipcQueue = DispatchQueue(label: "com.lzhcard.app.loopback.ipc", qos: .userInitiated)
+    private var loopbackListener: NWListener?
+    private var darwinObserverRegistered = false
+
+    private var runtimeConfig: [String: Any] = [
+        "engine": "apple_offline",
+        "sourceLang": "en",
+        "targetLang": "zh-Hant",
+        "apiKey": "",
+        "workerBaseUrl": "https://lzhcard.tomlin980415.workers.dev",
+        "authToken": "",
+        "regionMode": "auto",
+        "region": [
+            "x": 0.12,
+            "y": 0.75,
+            "width": 0.76,
+            "height": 0.18
+        ]
+    ]
+
+    deinit {
+        unregisterDarwinObserver()
+        stopLoopbackServer()
+    }
+
+    private func resolveAccessibleAppGroupId() -> String? {
+        let mainBundleId = (Bundle.main.bundleIdentifier ?? "com.lzhcard.app").trimmingCharacters(in: .whitespacesAndNewlines)
+        var candidates: [String] = []
+
+        if let infoGroup = Bundle.main.object(forInfoDictionaryKey: "LZHAppGroupIdentifier") as? String {
+            let trimmed = infoGroup.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                candidates.append(trimmed)
+            }
+        }
+        if !mainBundleId.isEmpty {
+            candidates.append("group.\(mainBundleId)")
+        }
+        candidates.append("group.com.lzhcard.app")
+
+        var seen = Set<String>()
+        for gid in candidates where !gid.isEmpty && !seen.contains(gid) {
+            seen.insert(gid)
+            if FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: gid) != nil {
+                return gid
+            }
+        }
+        return nil
+    }
+
+    private func resolveSharedBridgeFileUrl() -> URL? {
+        guard let gid = resolvedAppGroupId,
+              let container = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: gid) else {
+            return nil
+        }
+        let cachesDir = container.appendingPathComponent("Library/Caches", isDirectory: true)
+        try? FileManager.default.createDirectory(at: cachesDir, withIntermediateDirectories: true)
+        return cachesDir.appendingPathComponent("lzh_pip_bridge.json")
+    }
+
+    private var sharedDefaults: UserDefaults {
+        if let gid = resolvedAppGroupId, let suite = UserDefaults(suiteName: gid) {
+            return suite
+        }
+        return UserDefaults.standard
+    }
+
+    private func readSharedBridgeState() -> [String: Any] {
+        guard let url = sharedContainerBridgeFileUrl,
+              let data = try? Data(contentsOf: url),
+              let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return [:]
+        }
+        return dict
+    }
+
+    private func writeSharedBridgeState(merging updates: [String: Any]) {
+        guard let url = sharedContainerBridgeFileUrl else { return }
+        var state = readSharedBridgeState()
+        for (k, v) in updates {
+            state[k] = v
+        }
+        if let data = try? JSONSerialization.data(withJSONObject: state, options: []) {
+            try? data.write(to: url, options: .atomic)
+        }
+    }
+
+    private func registerDarwinObserverIfNeeded() {
+        guard !darwinObserverRegistered else { return }
+        darwinObserverRegistered = true
+        let center = CFNotificationCenterGetDarwinNotifyCenter()
+        let observer = Unmanaged.passUnretained(self).toOpaque()
+        CFNotificationCenterAddObserver(
+            center,
+            observer,
+            { _, observerPtr, _, _, _ in
+                guard let observerPtr = observerPtr else { return }
+                let plugin = Unmanaged<IosScreenTranslatePlugin>.fromOpaque(observerPtr).takeUnretainedValue()
+                DispatchQueue.main.async {
+                    plugin.checkSharedSubtitleUpdates()
+                }
+            },
+            darwinNotificationName,
+            nil,
+            .deliverImmediately
+        )
+    }
+
+    private func unregisterDarwinObserver() {
+        guard darwinObserverRegistered else { return }
+        darwinObserverRegistered = false
+        let center = CFNotificationCenterGetDarwinNotifyCenter()
+        let observer = Unmanaged.passUnretained(self).toOpaque()
+        CFNotificationCenterRemoveObserver(center, observer, CFNotificationName(darwinNotificationName), nil)
+    }
+
+    private func broadcastExtensionBundleIdFallback() -> String {
+        "\(Bundle.main.bundleIdentifier ?? "com.lzhcard.app").BroadcastUpload"
+    }
+
+    // MARK: - Channel B: Local 127.0.0.1:49152 Loopback HTTP Server
+
+    private func startLoopbackServerIfNeeded() {
+        ipcQueue.async { [weak self] in
+            guard let self = self else { return }
+            if self.loopbackListener != nil { return }
+
+            guard let port = NWEndpoint.Port(rawValue: self.loopbackPort) else { return }
+            let params = NWParameters.tcp
+            params.allowLocalEndpointReuse = true
+            params.requiredLocalEndpoint = NWEndpoint.hostPort(
+                host: NWEndpoint.Host(self.loopbackHost),
+                port: port
+            )
+
+            do {
+                let listener = try NWListener(using: params)
+                listener.stateUpdateHandler = { [weak self] state in
+                    if case .failed = state {
+                        self?.ipcQueue.async {
+                            self?.loopbackListener?.cancel()
+                            self?.loopbackListener = nil
+                        }
+                    }
+                }
+                listener.newConnectionHandler = { [weak self] conn in
+                    self?.handleLoopbackConnection(conn)
+                }
+                self.loopbackListener = listener
+                listener.start(queue: self.ipcQueue)
+            } catch {
+                self.loopbackListener = nil
+            }
+        }
+    }
+
+    private func stopLoopbackServer() {
+        ipcQueue.async { [weak self] in
+            self?.loopbackListener?.cancel()
+            self?.loopbackListener = nil
+        }
+    }
+
+    private func handleLoopbackConnection(_ conn: NWConnection) {
+        conn.stateUpdateHandler = { state in
+            switch state {
+            case .failed, .cancelled:
+                conn.cancel()
+            default:
+                break
+            }
+        }
+        conn.start(queue: ipcQueue)
+        receiveLoopbackHttpRequest(on: conn, accumulated: Data())
+    }
+
+    private func receiveLoopbackHttpRequest(on conn: NWConnection, accumulated: Data) {
+        conn.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] data, _, isComplete, error in
+            guard let self = self else {
+                conn.cancel()
+                return
+            }
+            var buffer = accumulated
+            if let data = data, !data.isEmpty {
+                buffer.append(data)
+            }
+
+            if let parsed = self.tryParseHttpRequest(buffer) {
+                self.routeLoopbackRequest(method: parsed.method, path: parsed.path, body: parsed.body, on: conn)
+                return
+            }
+
+            if isComplete || error != nil || buffer.count > 262144 {
+                self.sendHttpResponse(on: conn, statusCode: 400, jsonBody: ["ok": false, "error": "invalid_request"])
+                return
+            }
+
+            self.receiveLoopbackHttpRequest(on: conn, accumulated: buffer)
+        }
+    }
+
+    private func tryParseHttpRequest(_ data: Data) -> (method: String, path: String, body: Data)? {
+        guard let separatorRange = data.range(of: Data("\r\n\r\n".utf8)) else {
+            return nil
+        }
+        let headerData = data.subdata(in: 0..<separatorRange.lowerBound)
+        guard let headerStr = String(data: headerData, encoding: .utf8) else {
+            return nil
+        }
+        let lines = headerStr.components(separatedBy: "\r\n")
+        guard let requestLine = lines.first else {
+            return nil
+        }
+        let parts = requestLine.split(separator: " ", omittingEmptySubsequences: true)
+        guard parts.count >= 2 else {
+            return nil
+        }
+        let method = String(parts[0]).uppercased()
+        let rawTarget = String(parts[1])
+        let path = rawTarget.split(separator: "?", maxSplits: 1).first.map(String.init) ?? rawTarget
+
+        var contentLength = 0
+        for line in lines.dropFirst() {
+            let kv = line.split(separator: ":", maxSplits: 1)
+            if kv.count == 2, kv[0].trimmingCharacters(in: .whitespaces).lowercased() == "content-length" {
+                contentLength = Int(kv[1].trimmingCharacters(in: .whitespaces)) ?? 0
+            }
+        }
+
+        let bodyStart = separatorRange.upperBound
+        let availableBody = data.count - bodyStart
+        if availableBody < contentLength {
+            return nil
+        }
+        let bodyEnd = min(data.count, bodyStart + max(0, contentLength))
+        let bodyData = contentLength > 0 ? data.subdata(in: bodyStart..<bodyEnd) : Data()
+        return (method, path, bodyData)
+    }
+
+    private func routeLoopbackRequest(method: String, path: String, body: Data, on conn: NWConnection) {
+        if method == "GET" && path == "/config" {
+            let cfgSnapshot = currentConfigDictionary()
+            sendHttpResponse(on: conn, statusCode: 200, jsonBody: cfgSnapshot)
+            return
+        }
+
+        if method == "POST" && path == "/subtitle" {
+            var incomingText = ""
+            if let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any] {
+                incomingText = String((json["text"] as? String) ?? (json["subtitle"] as? String) ?? "")
+            } else if let rawText = String(data: body, encoding: .utf8) {
+                incomingText = rawText
+            }
+            let clean = incomingText.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !clean.isEmpty {
+                DispatchQueue.main.async { [weak self] in
+                    guard let self = self else { return }
+                    self.sharedDefaults.set(clean, forKey: "lzh_latest_pip_subtitle")
+                    self.sharedDefaults.synchronize()
+                    self.writeSharedBridgeState(merging: [
+                        "subtitle": clean,
+                        "subtitleUpdatedAt": Date().timeIntervalSince1970
+                    ])
+                    self.renderSubtitleTextToPip(clean)
+                }
+            }
+            sendHttpResponse(on: conn, statusCode: 200, jsonBody: ["ok": true])
+            return
+        }
+
+        if method == "GET" && path == "/health" {
+            sendHttpResponse(on: conn, statusCode: 200, jsonBody: [
+                "ok": true,
+                "appGroup": resolvedAppGroupId ?? ""
+            ])
+            return
+        }
+
+        sendHttpResponse(on: conn, statusCode: 404, jsonBody: ["ok": false, "error": "not_found"])
+    }
+
+    private func sendHttpResponse(on conn: NWConnection, statusCode: Int, jsonBody: [String: Any]) {
+        let statusText = statusCode == 200 ? "OK" : (statusCode == 404 ? "Not Found" : "Bad Request")
+        let bodyData = (try? JSONSerialization.data(withJSONObject: jsonBody, options: [])) ?? Data("{}".utf8)
+        let header = "HTTP/1.1 \(statusCode) \(statusText)\r\nContent-Type: application/json; charset=utf-8\r\nContent-Length: \(bodyData.count)\r\nConnection: close\r\n\r\n"
+        var responseData = Data(header.utf8)
+        responseData.append(bodyData)
+
+        conn.send(content: responseData, completion: .contentProcessed { _ in
+            conn.cancel()
+        })
+    }
+
+    private func currentConfigDictionary() -> [String: Any] {
+        var cfg = runtimeConfig
+        let defaults = sharedDefaults
+        if let eng = defaults.string(forKey: "lzh_translate_engine"), !eng.isEmpty {
+            cfg["engine"] = eng
+        }
+        if let src = defaults.string(forKey: "lzh_source_lang"), !src.isEmpty {
+            cfg["sourceLang"] = src
+        }
+        if let dst = defaults.string(forKey: "lzh_target_lang"), !dst.isEmpty {
+            cfg["targetLang"] = dst
+        }
+        if let key = defaults.string(forKey: "lzh_custom_api_key") {
+            cfg["apiKey"] = key
+        }
+        if let worker = defaults.string(forKey: "lzh_worker_base_url"), !worker.isEmpty {
+            cfg["workerBaseUrl"] = worker
+        }
+        if let tok = defaults.string(forKey: "lzh_auth_token") {
+            cfg["authToken"] = tok
+        }
+        if let regMode = defaults.string(forKey: "lzh_region_mode"), !regMode.isEmpty {
+            cfg["regionMode"] = regMode
+        }
+        let rw = defaults.double(forKey: "lzh_region_w")
+        let rh = defaults.double(forKey: "lzh_region_h")
+        if rw > 0.05 && rh > 0.05 {
+            cfg["region"] = [
+                "x": defaults.double(forKey: "lzh_region_x"),
+                "y": defaults.double(forKey: "lzh_region_y"),
+                "width": rw,
+                "height": rh
+            ]
+        }
+        return cfg
+    }
+
+    // MARK: - Capacitor Plugin Methods
+
+    @objc func getCapabilities(_ call: CAPPluginCall) {
+        let ver = ProcessInfo.processInfo.operatingSystemVersion
+        let supportsOfflineSheet = ver.majorVersion >= 26
+        let supportsTranslationSession = ver.majorVersion >= 26
+        let pipSupported = AVPictureInPictureController.isPictureInPictureSupported()
+
+        call.resolve([
+            "supported": true,
+            "iosMajor": ver.majorVersion,
+            "iosMinor": ver.minorVersion,
+            "supportsOfflineTranslation": supportsOfflineSheet,
+            "supportsTranslationSession": supportsTranslationSession,
+            "pipSupported": pipSupported,
+            "appGroupId": resolvedAppGroupId ?? "",
+            "loopbackPort": Int(loopbackPort)
+        ])
+    }
+
+    @objc func prepareOfflineLanguages(_ call: CAPPluginCall) {
+        let sourceLang = call.getString("sourceLang") ?? "en"
+        let targetLang = call.getString("targetLang") ?? "zh-Hant"
+
+        guard #available(iOS 26.0, *) else {
+            call.resolve([
+                "supported": false,
+                "fallbackSuggested": true,
+                "reason": "目前系統版本將自動使用雲端高速翻譯通道；iOS 26 以上提供 Apple 原生離線語言包。"
+            ])
+            return
+        }
+
+        #if canImport(Translation)
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self, let presenter = self.bridge?.viewController else {
+                call.reject("Unable to access root viewController")
+                return
+            }
+
+            var finished = false
+            let finishOnce: ([String: Any]) -> Void = { payload in
+                guard !finished else { return }
+                finished = true
+                call.resolve(payload)
+            }
+
+            let helperView = AppleTranslationDownloadHelperView(
+                sourceLang: sourceLang,
+                targetLang: targetLang,
+                onComplete: { ok, message in
+                    presenter.dismiss(animated: true) {
+                        finishOnce([
+                            "supported": true,
+                            "ready": ok,
+                            "message": message
+                        ])
+                    }
+                }
+            )
+            let hc = UIHostingController(rootView: helperView)
+            hc.modalPresentationStyle = .overCurrentContext
+            hc.view.backgroundColor = UIColor.black.withAlphaComponent(0.32)
+            presenter.present(hc, animated: true)
+        }
+        #else
+        call.resolve([
+            "supported": false,
+            "fallbackSuggested": true,
+            "reason": "Translation framework unavailable in current Xcode SDK."
+        ])
+        #endif
+    }
+
+    @objc func saveConfig(_ call: CAPPluginCall) {
+        let engine = call.getString("engine") ?? "apple_offline"
+        let sourceLang = call.getString("sourceLang") ?? "en"
+        let targetLang = call.getString("targetLang") ?? "zh-Hant"
+        let apiKey = call.getString("apiKey") ?? ""
+        let workerBaseUrl = call.getString("workerBaseUrl") ?? "https://lzhcard.tomlin980415.workers.dev"
+        let authToken = call.getString("authToken") ?? ""
+        let regionMode = call.getString("regionMode") ?? "auto"
+
+        let defaults = sharedDefaults
+        defaults.set(engine, forKey: "lzh_translate_engine")
+        defaults.set(sourceLang, forKey: "lzh_source_lang")
+        defaults.set(targetLang, forKey: "lzh_target_lang")
+        defaults.set(apiKey, forKey: "lzh_custom_api_key")
+        defaults.set(workerBaseUrl, forKey: "lzh_worker_base_url")
+        defaults.set(authToken, forKey: "lzh_auth_token")
+        defaults.set(regionMode, forKey: "lzh_region_mode")
+
+        var regDict: [String: Double] = [
+            "x": defaults.double(forKey: "lzh_region_x"),
+            "y": defaults.double(forKey: "lzh_region_y"),
+            "width": defaults.double(forKey: "lzh_region_w"),
+            "height": defaults.double(forKey: "lzh_region_h")
+        ]
+        if let region = call.getObject("region") {
+            let rx = region["x"] as? Double ?? 0.12
+            let ry = region["y"] as? Double ?? 0.75
+            let rw = region["width"] as? Double ?? 0.76
+            let rh = region["height"] as? Double ?? 0.18
+            defaults.set(rx, forKey: "lzh_region_x")
+            defaults.set(ry, forKey: "lzh_region_y")
+            defaults.set(rw, forKey: "lzh_region_w")
+            defaults.set(rh, forKey: "lzh_region_h")
+            regDict = ["x": rx, "y": ry, "width": rw, "height": rh]
+        }
+        defaults.synchronize()
+
+        let updatedCfg: [String: Any] = [
+            "engine": engine,
+            "sourceLang": sourceLang,
+            "targetLang": targetLang,
+            "apiKey": apiKey,
+            "workerBaseUrl": workerBaseUrl,
+            "authToken": authToken,
+            "regionMode": regionMode,
+            "region": regDict
+        ]
+        ipcQueue.async { [weak self] in
+            self?.runtimeConfig = updatedCfg
+        }
+        writeSharedBridgeState(merging: [
+            "config": updatedCfg,
+            "configUpdatedAt": Date().timeIntervalSince1970
+        ])
+
+        call.resolve(["saved": true])
+    }
+
+    private func resolveBroadcastExtensionBundleId() -> String {
+        let fallbackId = broadcastExtensionBundleIdFallback()
+        guard let plugInsUrl = Bundle.main.builtInPlugInsURL else {
+            return fallbackId
+        }
+        let fm = FileManager.default
+        guard let items = try? fm.contentsOfDirectory(at: plugInsUrl, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) else {
+            return fallbackId
+        }
+        for url in items where url.pathExtension.lowercased() == "appex" {
+            let plistUrl = url.appendingPathComponent("Info.plist")
+            let info = Bundle(url: url)?.infoDictionary ?? (NSDictionary(contentsOf: plistUrl) as? [String: Any])
+            if let nsExt = info?["NSExtension"] as? [String: Any],
+               let pointId = nsExt["NSExtensionPointIdentifier"] as? String,
+               pointId == "com.apple.broadcast-services-upload",
+               let bundleId = info?["CFBundleIdentifier"] as? String,
+               !bundleId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return bundleId.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
+        return fallbackId
+    }
+
+    private func findButton(in view: UIView) -> UIButton? {
+        if let button = view as? UIButton {
+            return button
+        }
+        for subview in view.subviews {
+            if let found = findButton(in: subview) {
+                return found
+            }
+        }
+        return nil
+    }
+
+    @discardableResult
+    private func triggerSystemBroadcastPicker(in rootView: UIView) -> Bool {
+        let picker = RPSystemBroadcastPickerView(frame: CGRect(x: 0, y: 0, width: 44, height: 44))
+        picker.preferredExtension = resolveBroadcastExtensionBundleId()
+        picker.showsMicrophoneButton = false
+        picker.alpha = 0.01
+        rootView.addSubview(picker)
+        picker.layoutIfNeeded()
+
+        var triggered = false
+        if let button = findButton(in: picker) {
+            button.sendActions(for: .touchUpInside)
+            triggered = true
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+            picker.removeFromSuperview()
+        }
+        return triggered
+    }
+
+    @objc func startScreenTranslate(_ call: CAPPluginCall) {
+        let initialText = call.getString("initialText") ?? "LZHCard 螢幕翻譯準備就緒"
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self, let rootView = self.bridge?.viewController?.view else {
+                call.reject("Root view unavailable")
+                return
+            }
+
+            self.startLoopbackServerIfNeeded()
+            self.registerDarwinObserverIfNeeded()
+
+            var pipStarted = false
+            if AVPictureInPictureController.isPictureInPictureSupported() {
+                self.setupAudioSessionAndKeepAlive()
+                self.setupPipControllerIfNeeded()
+                self.sharedDefaults.set(initialText, forKey: "lzh_latest_pip_subtitle")
+                self.sharedDefaults.synchronize()
+                self.writeSharedBridgeState(merging: [
+                    "subtitle": initialText,
+                    "subtitleUpdatedAt": Date().timeIntervalSince1970
+                ])
+                self.renderSubtitleTextToPip(initialText)
+                self.startPollingSharedSubtitle()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                    self.pipController?.startPictureInPicture()
+                }
+                pipStarted = true
+            }
+
+            let pickerTriggered = self.triggerSystemBroadcastPicker(in: rootView)
+            call.resolve([
+                "started": pipStarted,
+                "triggered": pickerTriggered,
+                "pipSupported": AVPictureInPictureController.isPictureInPictureSupported()
+            ])
+        }
+    }
+
+    @objc func showBroadcastPicker(_ call: CAPPluginCall) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self, let rootView = self.bridge?.viewController?.view else {
+                call.reject("Root view unavailable")
+                return
+            }
+
+            self.startLoopbackServerIfNeeded()
+            let triggered = self.triggerSystemBroadcastPicker(in: rootView)
+            call.resolve(["triggered": triggered])
+        }
+    }
+
+    @objc func startPipSubtitle(_ call: CAPPluginCall) {
+        let initialText = call.getString("initialText") ?? "LZHCard 螢幕翻譯準備就緒"
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            guard AVPictureInPictureController.isPictureInPictureSupported() else {
+                call.reject("此裝置不支援子母畫面 (PiP)", "PIP_UNSUPPORTED")
+                return
+            }
+
+            self.startLoopbackServerIfNeeded()
+            self.registerDarwinObserverIfNeeded()
+            self.setupAudioSessionAndKeepAlive()
+            self.setupPipControllerIfNeeded()
+            self.sharedDefaults.set(initialText, forKey: "lzh_latest_pip_subtitle")
+            self.sharedDefaults.synchronize()
+            self.writeSharedBridgeState(merging: [
+                "subtitle": initialText,
+                "subtitleUpdatedAt": Date().timeIntervalSince1970
+            ])
+            self.renderSubtitleTextToPip(initialText)
+            self.startPollingSharedSubtitle()
+
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                self.pipController?.startPictureInPicture()
+            }
+            call.resolve(["started": true])
+        }
+    }
+
+    @objc func stopPipSubtitle(_ call: CAPPluginCall) {
+        DispatchQueue.main.async { [weak self] in
+            self?.teardownPip()
+            call.resolve(["stopped": true])
+        }
+    }
+
+    @objc func updatePipText(_ call: CAPPluginCall) {
+        let text = call.getString("text") ?? ""
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            self.sharedDefaults.set(text, forKey: "lzh_latest_pip_subtitle")
+            self.sharedDefaults.synchronize()
+            self.writeSharedBridgeState(merging: [
+                "subtitle": text,
+                "subtitleUpdatedAt": Date().timeIntervalSince1970
+            ])
+            self.renderSubtitleTextToPip(text)
+            call.resolve(["updated": true])
+        }
+    }
+
+    private func setupAudioSessionAndKeepAlive() {
+        do {
+            let session = AVAudioSession.sharedInstance()
+            try session.setCategory(.playback, mode: .moviePlayback, options: [.mixWithOthers])
+            try session.setActive(true)
+        } catch {
+            // Continue gracefully
+        }
+
+        if silentAudioPlayer == nil, let wavData = makeSilentWavData() {
+            do {
+                let player = try AVAudioPlayer(data: wavData)
+                player.numberOfLoops = -1
+                player.volume = 0.0
+                player.prepareToPlay()
+                player.play()
+                silentAudioPlayer = player
+            } catch {
+                silentAudioPlayer = nil
+            }
+        }
+    }
+
+    private func setupPipControllerIfNeeded() {
+        guard let rootView = bridge?.viewController?.view else { return }
+
+        if pipHostView == nil {
+            let host = UIView(frame: CGRect(x: -12, y: -12, width: 340, height: 96))
+            host.alpha = 0.015
+            host.isUserInteractionEnabled = false
+            rootView.addSubview(host)
+            pipHostView = host
+
+            let layer = AVSampleBufferDisplayLayer()
+            layer.frame = host.bounds
+            layer.videoGravity = .resizeAspect
+            layer.backgroundColor = UIColor(red: 0.06, green: 0.09, blue: 0.16, alpha: 0.92).cgColor
+            host.layer.addSublayer(layer)
+            sampleLayer = layer
+        }
+
+        if pipController == nil, let layer = sampleLayer {
+            let contentSource = AVPictureInPictureController.ContentSource(
+                sampleBufferDisplayLayer: layer,
+                playbackDelegate: self
+            )
+            let pip = AVPictureInPictureController(contentSource: contentSource)
+            pip.delegate = self
+            pip.canStartPictureInPictureAutomaticallyFromInline = true
+            if #available(iOS 14.2, *) {
+                pip.requiresLinearPlayback = true
+            }
+            pipController = pip
+        }
+    }
+
+    private func teardownPip() {
+        pollTimer?.invalidate()
+        pollTimer = nil
+        unregisterDarwinObserver()
+        stopLoopbackServer()
+        if let pip = pipController, pip.isPictureInPictureActive {
+            pip.stopPictureInPicture()
+        }
+        pipController = nil
+        sampleLayer?.removeFromSuperlayer()
+        sampleLayer = nil
+        pipHostView?.removeFromSuperview()
+        pipHostView = nil
+        silentAudioPlayer?.stop()
+        silentAudioPlayer = nil
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+    }
+
+    private func startPollingSharedSubtitle() {
+        pollTimer?.invalidate()
+        lastHandledOcrSeq = sharedDefaults.integer(forKey: "lzh_latest_ocr_seq")
+        let bridgeState = readSharedBridgeState()
+        lastHandledBridgeSeq = (bridgeState["ocrSeq"] as? Int) ?? -1
+        pollTimer = Timer.scheduledTimer(withTimeInterval: 0.35, repeats: true) { [weak self] _ in
+            self?.checkSharedSubtitleUpdates()
+        }
+    }
+
+    private func checkSharedSubtitleUpdates() {
+        let bridgeState = readSharedBridgeState()
+        if let bridgeSubtitle = (bridgeState["subtitle"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !bridgeSubtitle.isEmpty,
+           bridgeSubtitle != lastRenderedSubtitle {
+            renderSubtitleTextToPip(bridgeSubtitle)
+        }
+
+        if let bridgeSeq = bridgeState["ocrSeq"] as? Int,
+           bridgeSeq > lastHandledBridgeSeq,
+           let bridgeOcr = (bridgeState["ocrText"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !bridgeOcr.isEmpty,
+           !isTranslatingOcr {
+            lastHandledBridgeSeq = bridgeSeq
+            translateCapturedTextForPip(bridgeOcr)
+            return
+        }
+
+        let defaults = sharedDefaults
+        let seq = defaults.integer(forKey: "lzh_latest_ocr_seq")
+        let ocrText = (defaults.string(forKey: "lzh_latest_ocr_text") ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if seq > lastHandledOcrSeq, !ocrText.isEmpty, !isTranslatingOcr {
+            lastHandledOcrSeq = seq
+            translateCapturedTextForPip(ocrText)
+            return
+        }
+
+        let latestPip = (defaults.string(forKey: "lzh_latest_pip_subtitle") ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if !latestPip.isEmpty && latestPip != lastRenderedSubtitle {
+            renderSubtitleTextToPip(latestPip)
+        }
+    }
+
+    private func translateCapturedTextForPip(_ sourceText: String) {
+        isTranslatingOcr = true
+        let cfg = currentConfigDictionary()
+        let engine = (cfg["engine"] as? String) ?? "apple_offline"
+        let sourceLang = (cfg["sourceLang"] as? String) ?? "en"
+        let targetLang = (cfg["targetLang"] as? String) ?? "zh-Hant"
+
+        #if canImport(Translation)
+        if engine == "apple_offline", #available(iOS 26.0, *) {
+            Task { [weak self] in
+                guard let self = self else { return }
+                let translated = await self.translateWithAppleOffline(text: sourceText, from: sourceLang, to: targetLang)
+                await MainActor.run {
+                    self.isTranslatingOcr = false
+                    if let out = translated, !out.isEmpty {
+                        self.sharedDefaults.set(out, forKey: "lzh_latest_pip_subtitle")
+                        self.renderSubtitleTextToPip(out)
+                    } else {
+                        self.translateViaCloudFallback(sourceText)
+                    }
+                }
+            }
+            return
+        }
+        #endif
+
+        translateViaCloudFallback(sourceText)
+    }
+
+    #if canImport(Translation)
+    @available(iOS 26.0, *)
+    private func translateWithAppleOffline(text: String, from sourceCode: String, to targetCode: String) async -> String? {
+        do {
+            let srcLocale = Locale.Language(identifier: sourceCode)
+            let dstLocale = Locale.Language(identifier: targetCode)
+            let session = TranslationSession(installedSource: srcLocale, target: dstLocale)
+            let response = try await session.translate(text)
+            return response.targetText
+        } catch {
+            return nil
+        }
+    }
+    #endif
+
+    private func translateViaCloudFallback(_ sourceText: String) {
+        let cfg = currentConfigDictionary()
+        let workerUrl = ((cfg["workerBaseUrl"] as? String) ?? "https://lzhcard.tomlin980415.workers.dev").trimmingCharacters(in: .whitespacesAndNewlines)
+        let customKey = ((cfg["apiKey"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let authToken = ((cfg["authToken"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let sourceLang = (cfg["sourceLang"] as? String) ?? "auto"
+
+        if customKey.hasPrefix("AIza") {
+            let endpoint = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=\(customKey)"
+            guard let url = URL(string: endpoint) else { isTranslatingOcr = false; return }
+            var req = URLRequest(url: url)
+            req.httpMethod = "POST"
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            let prompt = """
+            你是一位即時雙語字幕譯者，請將以下 OCR 擷取文字翻譯成自然道地的繁體中文：
+            1. 自動忽略句首或句尾殘留的 OCR 亂碼、孤立符號或雜訊（如 `| ar Ss = 5` 等），只針對語意連貫的句子進行翻譯。
+            2. 若整段內容皆為無意義雜訊或無法辨識，請僅回傳空字串。
+            3. 遇到口語慣用語或俚語時，請依語境自然意譯，切勿死板逐字直譯（例如 `"new whip"` 應譯為「新車／座駕」）。
+            4. 僅輸出最終繁體中文譯文，勿加引號或解釋。
+
+            原文：
+            \(sourceText)
+            """
+            let body: [String: Any] = ["contents": [["parts": [["text": prompt]]]]]
+            req.httpBody = try? JSONSerialization.data(withJSONObject: body)
+            URLSession.shared.dataTask(with: req) { [weak self] data, _, _ in
+                var translated = ""
+                if let data = data,
+                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   let cands = json["candidates"] as? [[String: Any]],
+                   let content = cands.first?["content"] as? [String: Any],
+                   let parts = content["parts"] as? [[String: Any]],
+                   let text = parts.first?["text"] as? String {
+                    translated = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                }
+                DispatchQueue.main.async {
+                    self?.isTranslatingOcr = false
+                    if !translated.isEmpty {
+                        self?.sharedDefaults.set(translated, forKey: "lzh_latest_pip_subtitle")
+                        self?.renderSubtitleTextToPip(translated)
+                    }
+                }
+            }.resume()
+            return
+        }
+
+        guard let url = URL(string: "\(workerUrl)/ai/fast-refine") else {
+            isTranslatingOcr = false
+            return
+        }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if !authToken.isEmpty {
+            req.setValue("Bearer \(authToken)", forHTTPHeaderField: "Authorization")
+        }
+        let body: [String: Any] = [
+            "text": sourceText,
+            "sourceLang": sourceLang,
+            "targetLang": "zh-TW",
+            "targetLangName": "繁體中文"
+        ]
+        req.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        URLSession.shared.dataTask(with: req) { [weak self] data, _, _ in
+            var translated = ""
+            if let data = data,
+               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let tr = json["translation"] as? String {
+                translated = tr.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            DispatchQueue.main.async {
+                self?.isTranslatingOcr = false
+                if !translated.isEmpty {
+                    self?.sharedDefaults.set(translated, forKey: "lzh_latest_pip_subtitle")
+                    self?.renderSubtitleTextToPip(translated)
+                }
+            }
+        }.resume()
+    }
+
+    private func renderSubtitleTextToPip(_ text: String) {
+        guard let layer = sampleLayer else { return }
+        let clean = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty else { return }
+        lastRenderedSubtitle = clean
+
+        guard let buffer = createSubtitleSampleBuffer(text: clean, width: pipWidthPx, height: pipHeightPx) else {
+            return
+        }
+        if layer.status == .failed {
+            layer.flush()
+        }
+        layer.flushAndRemoveImage()
+        layer.enqueue(buffer)
+    }
+
+    private func createSubtitleSampleBuffer(text: String, width: Int, height: Int) -> CMSampleBuffer? {
+        var pixelBuffer: CVPixelBuffer?
+        let attrs: [String: Any] = [
+            kCVPixelBufferCGImageCompatibilityKey as String: true,
+            kCVPixelBufferCGBitmapContextCompatibilityKey as String: true,
+            kCVPixelBufferIOSurfacePropertiesKey as String: [:]
+        ]
+        let status = CVPixelBufferCreate(
+            kCFAllocatorDefault,
+            width,
+            height,
+            kCVPixelFormatType_32BGRA,
+            attrs as CFDictionary,
+            &pixelBuffer
+        )
+        guard status == kCVReturnSuccess, let pb = pixelBuffer else { return nil }
+
+        CVPixelBufferLockBaseAddress(pb, [])
+        defer { CVPixelBufferUnlockBaseAddress(pb, []) }
+
+        guard let ctx = CGContext(
+            data: CVPixelBufferGetBaseAddress(pb),
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: CVPixelBufferGetBytesPerRow(pb),
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
+        ) else {
+            return nil
+        }
+
+        ctx.translateBy(x: 0, y: CGFloat(height))
+        ctx.scaleBy(x: 1.0, y: -1.0)
+
+        UIGraphicsPushContext(ctx)
+        defer { UIGraphicsPopContext() }
+
+        let fullRect = CGRect(x: 0, y: 0, width: width, height: height)
+        UIColor(red: 0.06, green: 0.09, blue: 0.16, alpha: 0.94).setFill()
+        ctx.fill(fullRect)
+
+        let borderRect = fullRect.insetBy(dx: 4, dy: 4)
+        let borderPath = UIBezierPath(roundedRect: borderRect, cornerRadius: 18)
+        UIColor.white.withAlphaComponent(0.16).setStroke()
+        borderPath.lineWidth = 2.0
+        borderPath.stroke()
+
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.alignment = .center
+        paragraph.lineBreakMode = .byTruncatingTail
+        paragraph.lineSpacing = 4
+
+        let fontSize: CGFloat = text.count > 44 ? 26.0 : (text.count > 24 ? 30.0 : 34.0)
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: UIFont.systemFont(ofSize: fontSize, weight: .bold),
+            .foregroundColor: UIColor.white,
+            .paragraphStyle: paragraph
+        ]
+        let attrStr = NSAttributedString(string: text, attributes: attributes)
+        let insetRect = fullRect.insetBy(dx: 28, dy: 20)
+        let textBounds = attrStr.boundingRect(
+            with: CGSize(width: insetRect.width, height: insetRect.height),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            context: nil
+        )
+        let centeredRect = CGRect(
+            x: insetRect.minX,
+            y: max(insetRect.minY, (CGFloat(height) - textBounds.height) / 2.0),
+            width: insetRect.width,
+            height: min(insetRect.height, textBounds.height + 6)
+        )
+        attrStr.draw(with: centeredRect, options: [.usesLineFragmentOrigin, .usesFontLeading], context: nil)
+
+        var formatDesc: CMVideoFormatDescription?
+        let fmtStatus = CMVideoFormatDescriptionCreateForImageBuffer(
+            allocator: kCFAllocatorDefault,
+            imageBuffer: pb,
+            formatDescriptionOut: &formatDesc
+        )
+        guard fmtStatus == noErr, let desc = formatDesc else { return nil }
+
+        var timing = CMSampleTimingInfo(
+            duration: CMTime(value: 1, timescale: 30),
+            presentationTimeStamp: CMTime(seconds: CACurrentMediaTime(), preferredTimescale: 1000),
+            decodeTimeStamp: .invalid
+        )
+        var sampleBuffer: CMSampleBuffer?
+        let sbStatus = CMSampleBufferCreateReadyWithImageBuffer(
+            allocator: kCFAllocatorDefault,
+            imageBuffer: pb,
+            formatDescription: desc,
+            sampleTiming: &timing,
+            sampleBufferOut: &sampleBuffer
+        )
+        return sbStatus == noErr ? sampleBuffer : nil
+    }
+
+    private func makeSilentWavData() -> Data? {
+        let sampleRate: UInt32 = 8000
+        let dataSize: UInt32 = 8000
+        let chunkSize: UInt32 = 36 + dataSize
+        var data = Data()
+        func appendLE32(_ v: UInt32) {
+            var le = v.littleEndian
+            withUnsafeBytes(of: &le) { data.append(contentsOf: $0) }
+        }
+        func appendLE16(_ v: UInt16) {
+            var le = v.littleEndian
+            withUnsafeBytes(of: &le) { data.append(contentsOf: $0) }
+        }
+        data.append(contentsOf: "RIFF".utf8)
+        appendLE32(chunkSize)
+        data.append(contentsOf: "WAVE".utf8)
+        data.append(contentsOf: "fmt ".utf8)
+        appendLE32(16)
+        appendLE16(1)
+        appendLE16(1)
+        appendLE32(sampleRate)
+        appendLE32(sampleRate)
+        appendLE16(1)
+        appendLE16(8)
+        data.append(contentsOf: "data".utf8)
+        appendLE32(dataSize)
+        data.append(Data(repeating: 128, count: Int(dataSize)))
+        return data
+    }
+
+    // MARK: - AVPictureInPictureControllerDelegate & PlaybackDelegate
+
+    public func pictureInPictureControllerDidStopPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
+        pollTimer?.invalidate()
+        pollTimer = nil
+        stopLoopbackServer()
+        notifyListeners("pipStateChanged", data: ["active": false])
+    }
+
+    public func pictureInPictureControllerDidStartPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
+        notifyListeners("pipStateChanged", data: ["active": true])
+    }
+
+    public func pictureInPictureController(_ pictureInPictureController: AVPictureInPictureController, failedToStartPictureInPictureWithError error: Error) {
+        notifyListeners("pipError", data: ["message": error.localizedDescription])
+    }
+
+    public func pictureInPictureController(_ pictureInPictureController: AVPictureInPictureController, setPlaying playing: Bool) {}
+
+    public func pictureInPictureControllerTimeRangeForPlayback(_ pictureInPictureController: AVPictureInPictureController) -> CMTimeRange {
+        CMTimeRange(start: .zero, duration: CMTime(value: 3600, timescale: 1))
+    }
+
+    public func pictureInPictureControllerIsPlaybackPaused(_ pictureInPictureController: AVPictureInPictureController) -> Bool {
+        false
+    }
+
+    public func pictureInPictureController(_ pictureInPictureController: AVPictureInPictureController, didTransitionToRenderSize newRenderSize: CMVideoDimensions) {}
+
+    public func pictureInPictureController(_ pictureInPictureController: AVPictureInPictureController, skipByInterval skipInterval: CMTime, completion completionHandler: @escaping () -> Void) {
+        completionHandler()
+    }
+}
+
+#if canImport(Translation)
+@available(iOS 26.0, *)
+private struct AppleTranslationDownloadHelperView: View {
+    let sourceLang: String
+    let targetLang: String
+    let onComplete: (Bool, String) -> Void
+
+    @State private var config: TranslationSession.Configuration?
+    @State private var statusMessage = "正在檢查 Apple 離線語言包..."
+
+    var body: some View {
+        VStack(spacing: 14) {
+            Text("Apple 離線翻譯語言包")
+                .font(.headline)
+            Text(statusMessage)
+                .font(.subheadline)
+                .multilineTextAlignment(.center)
+                .foregroundColor(.secondary)
+            Button("完成 / 關閉") {
+                onComplete(true, statusMessage)
+            }
+            .buttonStyle(.borderedProminent)
+        }
+        .padding(22)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18))
+        .padding(24)
+        .onAppear {
+            config = TranslationSession.Configuration(
+                source: Locale.Language(identifier: sourceLang),
+                target: Locale.Language(identifier: targetLang)
+            )
+        }
+        .translationTask(config) { session in
+            do {
+                try await session.prepareTranslation()
+                await MainActor.run {
+                    statusMessage = "已備妥 Apple 離線語言包，可立即使用螢幕翻譯。"
+                }
+            } catch {
+                await MainActor.run {
+                    statusMessage = "已開啟系統語言下載／設定：\(error.localizedDescription)"
+                }
+            }
+        }
+    }
+}
+
+@available(iOS 26.0, *)
+private struct LegacyTranslationPresentationHelperView: View {
+    let sampleText: String
+    let onDismiss: () -> Void
+    @State private var showSheet = true
+
+    var body: some View {
+        Color.clear
+            .translationPresentation(isPresented: $showSheet, text: sampleText)
+            .onChange(of: showSheet) { isShown in
+                if !isShown {
+                    onDismiss()
+                }
+            }
+    }
+}
+#endif

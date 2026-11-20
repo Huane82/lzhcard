@@ -1723,12 +1723,12 @@
                         ${isGuest ? `
                             <div class="flex items-center gap-2 flex-wrap">
                                 ${isIos ? `
-                                    <button type="button" onclick="if(typeof closeMembershipModal==='function') closeMembershipModal(); if(typeof loginWithApple==='function') loginWithApple();" class="px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-black text-white text-xs font-bold cursor-pointer flex items-center gap-1.5">
+                                    <button type="button" onclick="if(typeof closeMembershipModal==='function') closeMembershipModal(); if(typeof loginWithApple==='function') loginWithApple();" class="min-h-[44px] px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-black text-white text-xs font-bold cursor-pointer flex items-center gap-1.5">
                                         <i class="fa-brands fa-apple"></i>
                                         <span>使用 Apple 登入</span>
                                     </button>
                                 ` : ''}
-                                <button type="button" onclick="if(typeof closeMembershipModal==='function') closeMembershipModal(); if(typeof loginWithGoogle==='function') loginWithGoogle();" class="px-3 py-1.5 rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-xs font-bold cursor-pointer">
+                                <button type="button" onclick="if(typeof closeMembershipModal==='function') closeMembershipModal(); if(typeof loginWithGoogle==='function') loginWithGoogle();" class="min-h-[44px] px-3.5 py-2 rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-xs font-bold cursor-pointer">
                                     ${escapeMemHtml(memTr('btnLoginGoogle', '使用 Google 帳號登入'))}
                                 </button>
                             </div>

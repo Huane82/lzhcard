@@ -41,6 +41,7 @@ public class SystemOverlayPlugin extends Plugin {
         if (call.hasOption("chatSessionJson")) ed.putString(FloatingOverlayService.KEY_CHAT_SESSION_JSON, call.getString("chatSessionJson", "{}"));
         if (call.hasOption("videoRoiMode")) ed.putString(FloatingOverlayService.KEY_VIDEO_ROI_MODE, call.getString("videoRoiMode", "bottom25"));
         if (call.hasOption("videoRoiRectJson")) ed.putString(FloatingOverlayService.KEY_VIDEO_ROI_RECT_JSON, call.getString("videoRoiRectJson", "{}"));
+        if (call.hasOption("videoSourceLang")) ed.putString(FloatingOverlayService.KEY_VIDEO_SOURCE_LANG, call.getString("videoSourceLang", "en"));
         ed.apply();
     }
 

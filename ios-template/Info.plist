@@ -34,6 +34,10 @@
 	<string>LZHCard 需要存取相簿權限以匯入圖片進行文字辨識與即時雙語翻譯。</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>LZHCard 需要語音辨識權限以提供即時語音字幕與口說練習。</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>audio</string>
+	</array>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 	<key>UILaunchStoryboardName</key>

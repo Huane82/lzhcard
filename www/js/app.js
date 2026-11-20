@@ -533,11 +533,17 @@ function handleCategoryCheckboxChange(checkbox) {
 }
 
 window.addEventListener('DOMContentLoaded', async () => {
+    if (typeof updateOfflineBannerUI === 'function') {
+        updateOfflineBannerUI();
+    }
     if (typeof loadStorage === 'function') {
         await loadStorage();
     }
     updateUserCoinsUI();
     updateUndoButtonUI();
+    if (typeof updateOfflineBannerUI === 'function') {
+        updateOfflineBannerUI();
+    }
 
     if (typeof firebase !== 'undefined' && firebase.auth) {
         firebase.auth().onAuthStateChanged((user) => {
@@ -1398,6 +1404,10 @@ function stopSpeakingWord() {
         clearTimeout(autoSpeakTimer);
         autoSpeakTimer = null;
     }
+    if (typeof window !== 'undefined' && window.LZHAudioTts && typeof window.LZHAudioTts.stop === 'function') {
+        window.LZHAudioTts.stop();
+        return;
+    }
     if (typeof window !== 'undefined' && 'speechSynthesis' in window && typeof window.speechSynthesis.cancel === 'function') {
         try {
             window.speechSynthesis.cancel();
@@ -1423,6 +1433,11 @@ function speakWord(options = {}) {
     stopSpeakingWord();
     const mySeq = speakSeq;
     const lang = resolveSpeechLang();
+
+    if (typeof window !== 'undefined' && window.LZHAudioTts && typeof window.LZHAudioTts.speak === 'function') {
+        window.LZHAudioTts.speak(wordToSpeak, lang, { keepPrevious: true }).catch(() => {});
+        return true;
+    }
 
     const capTTS = (typeof window !== 'undefined') ? window.Capacitor?.Plugins?.TextToSpeech : null;
     if (typeof isNativeApp === 'function' && isNativeApp() && capTTS && typeof capTTS.speak === 'function') {
@@ -2657,49 +2672,130 @@ function isAndroidNativeOverlayCapable() {
     }
 }
 
+function isIosClientDevice() {
+    try {
+        if (typeof window !== 'undefined') {
+            if (typeof window.getPaymentPlatform === 'function' && window.getPaymentPlatform() === 'ios') return true;
+            if (window.Capacitor && typeof window.Capacitor.getPlatform === 'function') {
+                if (String(window.Capacitor.getPlatform() || '').toLowerCase() === 'ios') return true;
+            }
+        }
+        const ua = (typeof navigator !== 'undefined' && navigator.userAgent) ? navigator.userAgent : '';
+        if (/iphone|ipad|ipod/i.test(ua)) return true;
+        if (typeof navigator !== 'undefined' && navigator.platform === 'MacIntel' && (navigator.maxTouchPoints || 0) > 1) return true;
+    } catch (e) {}
+    return false;
+}
+
+function persistLocalFloatingState(flag) {
+    const strVal = flag ? 'true' : 'false';
+    try {
+        localStorage.setItem('lzhcard_floating_translator_enabled', strVal);
+    } catch (e) {}
+    try {
+        const prefs = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Preferences;
+        if (prefs && typeof prefs.set === 'function') {
+            prefs.set({ key: 'lzhcard_floating_translator_enabled', value: strVal }).catch(() => {});
+        }
+    } catch (e) {}
+}
+
+async function hydrateLocalFloatingPrefFromPreferences() {
+    try {
+        const prefs = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Preferences;
+        if (!prefs || typeof prefs.get !== 'function') return;
+        const stored = localStorage.getItem('lzhcard_floating_translator_enabled');
+        if (stored === null) {
+            const res = await prefs.get({ key: 'lzhcard_floating_translator_enabled' });
+            if (res && (res.value === 'true' || res.value === 'false')) {
+                localStorage.setItem('lzhcard_floating_translator_enabled', res.value);
+                if (typeof FloatingTranslator !== 'undefined' && typeof FloatingTranslator.setEnabled === 'function') {
+                    FloatingTranslator.setEnabled(res.value === 'true');
+                }
+                updateFloatingMasterSwitchUI();
+            }
+        }
+    } catch (e) {}
+}
+
 function getMasterFloatingEnabledState() {
+    if (isIosClientDevice()) {
+        if (typeof FloatingTranslator !== 'undefined' && typeof FloatingTranslator.isIosPipActive === 'function') {
+            return Boolean(FloatingTranslator.isIosPipActive());
+        }
+        return false;
+    }
     if (isAndroidNativeOverlayCapable()) {
         const nativeSt = window._nativeSystemOverlayStatus;
         if (nativeSt && nativeSt.supported) {
             return Boolean(nativeSt.granted && nativeSt.running);
         }
-        return localStorage.getItem('lzhcard_system_overlay_enabled') === 'true';
+        return localStorage.getItem('lzhcard_floating_translator_enabled') === 'true'
+            || localStorage.getItem('lzhcard_system_overlay_enabled') === 'true';
     }
     if (typeof FloatingTranslator !== 'undefined' && typeof FloatingTranslator.isEnabled === 'function') {
         return Boolean(FloatingTranslator.isEnabled());
     }
-    const stored = localStorage.getItem('lzhcard_floating_translator_enabled');
-    return stored === null ? true : stored === 'true';
+    return localStorage.getItem('lzhcard_floating_translator_enabled') === 'true';
 }
 
 function updateFloatingMasterSwitchUI() {
+    const isIos = isIosClientDevice();
     const enabled = getMasterFloatingEnabledState();
     const btn = document.getElementById('quickActionFloatingToggleBtn');
     const iconWrap = document.getElementById('quickFloatingIconWrap');
     const badge = document.getElementById('quickFloatingStateBadge');
+    const toggleText = document.getElementById('quickFloatingToggleText');
+    const iosGearBtn = document.getElementById('quickActionIosTranslateSettingsBtn');
+    const quickTransBtn = document.getElementById('quickActionTranslateBtn');
     const settingsToggle = document.getElementById('floatingTranslatorToggle');
-    const systemOverlayToggle = document.getElementById('systemOverlayToggle');
 
-    if (isAndroidNativeOverlayCapable()) {
-        const nativeSt = window._nativeSystemOverlayStatus;
-        if (systemOverlayToggle) {
-            systemOverlayToggle.checked = nativeSt && nativeSt.supported
-                ? Boolean(nativeSt.granted && nativeSt.running)
-                : enabled;
+    if (iosGearBtn) {
+        iosGearBtn.classList.toggle('hidden', !isIos);
+    }
+
+    if (isIos) {
+        if (toggleText) toggleText.textContent = '懸浮翻譯視窗';
+        if (quickTransBtn) {
+            const lbl = quickTransBtn.querySelector('[data-i18n="quickTranslateLabel"]');
+            if (lbl) lbl.textContent = '子母畫面翻譯';
+        }
+        if (badge) {
+            badge.textContent = enabled ? 'LIVE' : 'OFF';
+            badge.className = enabled
+                ? 'px-1.5 py-0.5 rounded-full text-[10px] font-black bg-emerald-100 dark:bg-emerald-950/70 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700 shrink-0 uppercase'
+                : 'px-1.5 py-0.5 rounded-full text-[10px] font-black bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-slate-600 shrink-0 uppercase';
+        }
+        if (btn) {
+            btn.setAttribute('aria-pressed', enabled ? 'true' : 'false');
+            btn.className = enabled
+                ? 'flex-1 min-w-0 min-h-[48px] px-3 py-2.5 bg-white dark:bg-slate-800 hover:bg-indigo-50/80 dark:hover:bg-slate-700/70 rounded-2xl border border-emerald-300 dark:border-emerald-700 transition shadow-2xs flex items-center justify-between gap-2 cursor-pointer group'
+                : 'flex-1 min-w-0 min-h-[48px] px-3 py-2.5 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700/70 rounded-2xl border border-slate-200 dark:border-slate-700 transition shadow-2xs flex items-center justify-between gap-2 cursor-pointer group';
+        }
+        if (iconWrap) {
+            iconWrap.className = enabled
+                ? 'w-8 h-8 rounded-xl bg-emerald-100 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform'
+                : 'w-8 h-8 rounded-xl bg-slate-100 dark:bg-slate-700 text-slate-400 dark:text-slate-400 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform';
         }
         if (settingsToggle) {
-            const ftStored = localStorage.getItem('lzhcard_floating_translator_enabled');
-            settingsToggle.checked = enabled || (ftStored === null ? true : ftStored === 'true');
+            settingsToggle.checked = enabled;
         }
-    } else if (settingsToggle) {
+        return;
+    }
+
+    if (settingsToggle) {
         settingsToggle.checked = enabled;
+    }
+
+    if (toggleText) {
+        toggleText.textContent = tr('quickFloatingToggleLabel', '懸浮翻譯視窗');
     }
 
     if (btn) {
         btn.setAttribute('aria-pressed', enabled ? 'true' : 'false');
         btn.className = enabled
-            ? 'min-h-[48px] px-3 py-2.5 bg-white dark:bg-slate-800 hover:bg-brand-50/80 dark:hover:bg-slate-700/70 rounded-2xl border border-emerald-300 dark:border-emerald-700 transition shadow-2xs flex items-center justify-between gap-2 cursor-pointer group'
-            : 'min-h-[48px] px-3 py-2.5 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700/70 rounded-2xl border border-slate-200 dark:border-slate-700 transition shadow-2xs flex items-center justify-between gap-2 cursor-pointer group';
+            ? 'flex-1 min-w-0 min-h-[48px] px-3 py-2.5 bg-white dark:bg-slate-800 hover:bg-brand-50/80 dark:hover:bg-slate-700/70 rounded-2xl border border-emerald-300 dark:border-emerald-700 transition shadow-2xs flex items-center justify-between gap-2 cursor-pointer group'
+            : 'flex-1 min-w-0 min-h-[48px] px-3 py-2.5 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700/70 rounded-2xl border border-slate-200 dark:border-slate-700 transition shadow-2xs flex items-center justify-between gap-2 cursor-pointer group';
     }
 
     if (iconWrap) {
@@ -2718,31 +2814,61 @@ function updateFloatingMasterSwitchUI() {
     }
 }
 
+async function handleHomeFloatingTranslateBtn() {
+    if (isIosClientDevice()) {
+        if (typeof FloatingTranslator !== 'undefined' && typeof FloatingTranslator.openIosScreenTranslate === 'function') {
+            return FloatingTranslator.openIosScreenTranslate({ forceWizard: false });
+        }
+    }
+    if (typeof FloatingTranslator !== 'undefined') {
+        persistLocalFloatingState(true);
+        FloatingTranslator.setEnabled(true);
+        FloatingTranslator.open('camera');
+    }
+}
+
 async function toggleUnifiedAndroidOverlay(desiredEnable) {
     const next = typeof desiredEnable === 'boolean' ? desiredEnable : !getMasterFloatingEnabledState();
     const sharedToggle = window.ensureAndToggleAndroidOverlayPermission || window.handleSystemOverlayToggle;
     if (typeof sharedToggle === 'function') {
         const result = await sharedToggle(next);
+        if (!result && next) {
+            persistLocalFloatingState(false);
+        }
         updateFloatingMasterSwitchUI();
         return result;
     }
+    persistLocalFloatingState(false);
+    updateFloatingMasterSwitchUI();
     return false;
 }
 
-async function toggleMasterFloatingOverlay() {
-    if (isAndroidNativeOverlayCapable()) {
-        const nextNative = !getMasterFloatingEnabledState();
-        const ok = await toggleUnifiedAndroidOverlay(nextNative);
-        if (ok && typeof saveStorage === 'function') {
-            try { saveStorage(); } catch (e) {}
+async function toggleMasterFloatingOverlay(desiredState) {
+    const hasExplicit = typeof desiredState === 'boolean';
+    const next = hasExplicit ? desiredState : !getMasterFloatingEnabledState();
+
+    if (isIosClientDevice()) {
+        if (!next && typeof FloatingTranslator !== 'undefined' && typeof FloatingTranslator.stopIosPip === 'function') {
+            await FloatingTranslator.stopIosPip();
+            persistLocalFloatingState(false);
+            updateFloatingMasterSwitchUI();
+            return false;
         }
+        if (typeof FloatingTranslator !== 'undefined' && typeof FloatingTranslator.openIosScreenTranslate === 'function') {
+            const ok = await FloatingTranslator.openIosScreenTranslate({ forceWizard: false });
+            updateFloatingMasterSwitchUI();
+            return ok;
+        }
+        updateFloatingMasterSwitchUI();
+        return false;
+    }
+
+    if (isAndroidNativeOverlayCapable()) {
+        const ok = await toggleUnifiedAndroidOverlay(next);
         return ok;
     }
 
-    const next = !getMasterFloatingEnabledState();
-    try {
-        localStorage.setItem('lzhcard_floating_translator_enabled', next ? 'true' : 'false');
-    } catch (e) {}
+    persistLocalFloatingState(next);
 
     if (typeof FloatingTranslator !== 'undefined' && typeof FloatingTranslator.setEnabled === 'function') {
         FloatingTranslator.setEnabled(next);
@@ -2759,29 +2885,86 @@ async function toggleMasterFloatingOverlay() {
     }
 
     updateFloatingMasterSwitchUI();
-    if (typeof saveStorage === 'function') {
-        try { saveStorage(); } catch (e) {}
-    }
     if (typeof showToast === 'function') {
         showToast(
             next
-                ? tr('toastFloatingMasterOn', '已開啟懸浮視窗（網頁懸浮球與桌面版小工具已同步啟用）')
-                : tr('toastFloatingMasterOff', '已關閉懸浮視窗（網頁懸浮球與桌面版小工具已同步隱藏）'),
+                ? tr('toastInAppFloatingOn', '🌐 已開啟懸浮翻譯視窗')
+                : tr('toastInAppFloatingOff', '🙈 已關閉懸浮翻譯視窗'),
             next ? 'success' : 'info'
         );
     }
     return next;
 }
 
+let _lzhOfflineBannerDismissed = false;
+
+function updateOfflineBannerUI() {
+    if (typeof document === 'undefined') return;
+    const banner = document.getElementById('lzhOfflineNoticeBanner');
+    if (!banner) return;
+    const isOffline = (typeof navigator !== 'undefined' && navigator.onLine === false);
+    if (!isOffline) {
+        _lzhOfflineBannerDismissed = false;
+        banner.classList.add('hidden');
+        return;
+    }
+    if (_lzhOfflineBannerDismissed) {
+        banner.classList.add('hidden');
+        return;
+    }
+    banner.classList.remove('hidden');
+    if (typeof applyLanguageUI === 'function') {
+        applyLanguageUI();
+    }
+}
+
+function dismissOfflineBanner() {
+    _lzhOfflineBannerDismissed = true;
+    const banner = document.getElementById('lzhOfflineNoticeBanner');
+    if (banner) banner.classList.add('hidden');
+}
+
+function bindIosKeyboardInputScrollGuard() {
+    if (typeof document === 'undefined' || window._lzhKeyboardScrollGuardBound) return;
+    window._lzhKeyboardScrollGuardBound = true;
+    document.addEventListener('focusin', (e) => {
+        const target = e && e.target;
+        if (!target || typeof target.scrollIntoView !== 'function') return;
+        const tag = target.tagName;
+        if (tag !== 'INPUT' && tag !== 'TEXTAREA' && tag !== 'SELECT' && !target.isContentEditable) return;
+        setTimeout(() => {
+            try {
+                target.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
+            } catch (err) {}
+        }, 260);
+    });
+}
+
 if (typeof window !== 'undefined') {
+    window.isIosClientDevice = isIosClientDevice;
     window.isDesktopWidgetClient = isDesktopWidgetClient;
+    window.persistLocalFloatingState = persistLocalFloatingState;
     window.getMasterFloatingEnabledState = getMasterFloatingEnabledState;
     window.updateFloatingMasterSwitchUI = updateFloatingMasterSwitchUI;
+    window.handleHomeFloatingTranslateBtn = handleHomeFloatingTranslateBtn;
     window.toggleUnifiedAndroidOverlay = toggleUnifiedAndroidOverlay;
     window.toggleMasterFloatingOverlay = toggleMasterFloatingOverlay;
+    window.updateOfflineBannerUI = updateOfflineBannerUI;
+    window.dismissOfflineBanner = dismissOfflineBanner;
+    bindIosKeyboardInputScrollGuard();
+    window.addEventListener('online', updateOfflineBannerUI);
+    window.addEventListener('offline', updateOfflineBannerUI);
     if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', updateFloatingMasterSwitchUI);
+        document.addEventListener('DOMContentLoaded', () => {
+            hydrateLocalFloatingPrefFromPreferences();
+            updateFloatingMasterSwitchUI();
+            updateOfflineBannerUI();
+        });
     } else {
-        setTimeout(updateFloatingMasterSwitchUI, 0);
+        setTimeout(() => {
+            hydrateLocalFloatingPrefFromPreferences();
+            updateFloatingMasterSwitchUI();
+            updateOfflineBannerUI();
+        }, 0);
     }
 }

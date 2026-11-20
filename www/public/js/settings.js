@@ -162,11 +162,12 @@ function syncSettingsUI() {
         sentenceFrontToggle.checked = localStorage.getItem('lzhcard_show_sentence_front') === 'true';
     }
 
-    // 🌐 同步「啟用全域懸浮翻譯視窗」開關 (floatingTranslatorToggle)
+    // 🌐 同步「懸浮翻譯視窗」統一開關 (floatingTranslatorToggle)
     const floatingToggle = document.getElementById('floatingTranslatorToggle');
     if (floatingToggle) {
-        const storedFt = localStorage.getItem('lzhcard_floating_translator_enabled');
-        floatingToggle.checked = storedFt === null ? true : storedFt === 'true';
+        floatingToggle.checked = typeof window.getMasterFloatingEnabledState === 'function'
+            ? Boolean(window.getMasterFloatingEnabledState())
+            : (localStorage.getItem('lzhcard_floating_translator_enabled') === 'true');
     }
 
     // 🔒 同步「公開我的學習統計資料」開關 (publicStatsToggle)
@@ -253,21 +254,26 @@ function handleShowSentenceFrontChange(enableFrontSentence) {
 }
 
 function handleFloatingTranslatorChange(enableFloating) {
+    if (typeof window.toggleMasterFloatingOverlay === 'function') {
+        return window.toggleMasterFloatingOverlay(Boolean(enableFloating));
+    }
     const isEnabled = Boolean(enableFloating);
-    localStorage.setItem('lzhcard_floating_translator_enabled', isEnabled ? 'true' : 'false');
+    if (typeof window.persistLocalFloatingState === 'function') {
+        window.persistLocalFloatingState(isEnabled);
+    } else {
+        localStorage.setItem('lzhcard_floating_translator_enabled', isEnabled ? 'true' : 'false');
+    }
 
     if (typeof FloatingTranslator !== 'undefined' && typeof FloatingTranslator.setEnabled === 'function') {
         FloatingTranslator.setEnabled(isEnabled);
     }
 
-    if (typeof saveStorage === 'function') saveStorage();
-
     ensureHighZIndexOverlays();
     if (typeof showToast === 'function') {
         showToast(
             isEnabled
-                ? '🌐 已啟用全域懸浮翻譯視窗（按 Alt+T 可隨時展開）'
-                : '🙈 已隱藏全域懸浮翻譯視窗',
+                ? '🌐 已開啟懸浮翻譯視窗'
+                : '🙈 已關閉懸浮翻譯視窗',
             'info'
         );
     }
@@ -443,7 +449,7 @@ function initStudyPreferenceDefaults() {
         localStorage.setItem('lzhcard_show_sentence_front', 'false');
     }
     if (localStorage.getItem('lzhcard_floating_translator_enabled') === null) {
-        localStorage.setItem('lzhcard_floating_translator_enabled', 'true');
+        localStorage.setItem('lzhcard_floating_translator_enabled', 'false');
     }
     Object.values(NOTIFICATION_SETTING_KEYS).forEach((key) => {
         if (localStorage.getItem(key) === null) {

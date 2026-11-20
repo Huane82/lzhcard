@@ -17,7 +17,10 @@ import android.content.pm.PackageManager;
 import android.content.pm.ServiceInfo;
 import android.content.res.Configuration;
 import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.Paint;
 import android.graphics.PixelFormat;
 import android.graphics.Rect;
 import android.graphics.drawable.GradientDrawable;
@@ -74,10 +77,15 @@ import com.google.mlkit.vision.text.TextRecognition;
 import com.google.mlkit.vision.text.TextRecognizer;
 import com.google.mlkit.vision.text.chinese.ChineseTextRecognizerOptions;
 import com.google.mlkit.vision.text.japanese.JapaneseTextRecognizerOptions;
+import com.google.mlkit.vision.text.korean.KoreanTextRecognizerOptions;
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
+
+import java.net.URLEncoder;
+import java.util.LinkedHashSet;
+import java.util.Set;
 
 import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
@@ -126,14 +134,19 @@ public class FloatingOverlayService extends Service {
     public static final String KEY_CHAT_SESSION_JSON = "overlay_chat_session_json";
     public static final String KEY_VIDEO_ROI_MODE = "overlay_video_roi_mode";
     public static final String KEY_VIDEO_ROI_RECT_JSON = "overlay_video_roi_rect_json";
+    public static final String KEY_VIDEO_SOURCE_LANG = "overlay_video_source_lang";
 
     private static final String WORKER_FAST_REFINE_URL = "https://lzhcard.tomlin980415.workers.dev/ai/fast-refine";
     private static final String CHANNEL_ID = "lzhcard_overlay_service";
     private static final int NOTIFICATION_ID = 4901;
+    private static final long SCAN_WATCHDOG_TIMEOUT_MS = 8000L;
 
     private static final Pattern JA_KANA_PATTERN = Pattern.compile("[\\u3040-\\u309F\\u30A0-\\u30FF々〆ヵヶ]");
+    private static final Pattern KO_PATTERN = Pattern.compile("[\\uAC00-\\uD7AF\\u1100-\\u11FF\\u3130-\\u318F]");
     private static final Pattern CJK_PATTERN = Pattern.compile("[\\u4E00-\\u9FFF\\u3400-\\u4DBF]");
     private static final Pattern EN_PATTERN = Pattern.compile("[A-Za-z]");
+    private static final Pattern HAS_VALID_LANG_CHAR = Pattern.compile("[A-Za-z\\u3040-\\u30FF\\u4E00-\\u9FFF\\u3400-\\u4DBF\\uAC00-\\uD7AF]");
+    private static final Pattern PURE_NOISE_LINE = Pattern.compile("^[\\s\\p{Punct}0-9|~`^_=+<>\\\\/\\[\\]{}()*&%$#@!;:'\",.?-]+$");
 
     private static volatile boolean running = false;
     private static volatile boolean appInForeground = true;
@@ -163,13 +176,14 @@ public class FloatingOverlayService extends Service {
     private int savedW = 0;
     private int savedH = 0;
 
-    // Window 3: 全螢幕截圖定格點詞覆蓋層
+    // Window 3: 原生全螢幕截圖定格點詞覆蓋層（脫離背景 WebView，確保 HyperOS 平板穩定互動）
     private WindowManager.LayoutParams freezeParams;
-    private FrameLayout freezeContainer;
-    private WebView freezeWebView;
+    private NativeFreezeOverlayView nativeFreezeView;
     private boolean isFreezeAttached = false;
-    private boolean isFreezePageLoaded = false;
-    private String pendingFreezePayloadJson = null;
+    private volatile boolean isFreezeScanInProgress = false;
+    private volatile boolean isScanning = false;
+    private long activeScanSeq = 0L;
+    private Runnable activeScanWatchdog;
 
     // Window 4: 獨立可拖曳透明螢幕字幕視窗
     private WindowManager.LayoutParams subtitleParams;
@@ -198,6 +212,7 @@ public class FloatingOverlayService extends Service {
     private TextRecognizer latinRecognizer;
     private TextRecognizer japaneseRecognizer;
     private TextRecognizer chineseRecognizer;
+    private TextRecognizer koreanRecognizer;
     private final Map<String, Translator> translatorCache = new HashMap<>();
 
     // 畫面字幕掃描狀態
@@ -250,20 +265,26 @@ public class FloatingOverlayService extends Service {
     }
 
     public static void deliverCapturedImageBase64(Context ctx, String base64) {
-        if (!TextUtils.isEmpty(base64)) {
-            pendingCapturedBase64 = base64;
-        }
         FloatingOverlayService inst = activeInstance;
-        if (inst == null) return;
+        if (inst == null) {
+            if (!TextUtils.isEmpty(base64)) {
+                pendingCapturedBase64 = base64;
+            }
+            return;
+        }
         inst.mainHandler.post(() -> {
             inst.isSelectingImage = false;
             if (!TextUtils.isEmpty(base64)) {
                 inst.isImageModeActive = true;
+                pendingCapturedBase64 = null;
+                if (!appInForeground) {
+                    inst.processExternalBase64ImageWithNativeFreeze(base64);
+                    return;
+                }
+                pendingCapturedBase64 = base64;
                 inst.applyTabletImagePanelBounds();
-            }
-            if (!appInForeground) {
+            } else if (!appInForeground) {
                 inst.showOverlayPanel();
-                inst.flushPendingCapturedImage();
             }
         });
     }
@@ -321,6 +342,7 @@ public class FloatingOverlayService extends Service {
             latinRecognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS);
             japaneseRecognizer = TextRecognition.getClient(new JapaneseTextRecognizerOptions.Builder().build());
             chineseRecognizer = TextRecognition.getClient(new ChineseTextRecognizerOptions.Builder().build());
+            koreanRecognizer = TextRecognition.getClient(new KoreanTextRecognizerOptions.Builder().build());
         } catch (Exception ignored) {}
     }
 
@@ -381,17 +403,18 @@ public class FloatingOverlayService extends Service {
     }
 
     private void applyForegroundVisibility() {
+        if (isFreezeScanInProgress || isFreezeAttached) {
+            return;
+        }
         if (appInForeground) {
             hideOverlayPanel();
             detachBubble();
-            if (!isFreezeAttached) {
-                detachSubtitleOverlay();
-            }
+            detachSubtitleOverlay();
         } else {
-            if (!isPanelAttached && !isFreezeAttached) {
+            if (!isPanelAttached) {
                 attachBubble();
             }
-            if (subtitleDesiredVisible && !isFreezeAttached) {
+            if (subtitleDesiredVisible) {
                 showSubtitleOverlay();
             }
         }
@@ -639,8 +662,8 @@ public class FloatingOverlayService extends Service {
             @Override
             public void onWindowFocusChanged(boolean hasWindowFocus) {
                 super.onWindowFocusChanged(hasWindowFocus);
-                if (!hasWindowFocus && (isImageModeActive || isSelectingImage || isOverlayFullscreen)) {
-                    // 圖片/選圖或全螢幕模式下暫時失去焦點時，禁止縮回或重置尺寸
+                if (!hasWindowFocus && (isImageModeActive || isSelectingImage || isOverlayFullscreen || isFreezeScanInProgress || isFreezeAttached)) {
+                    // 圖片/選圖、定格掃描或全螢幕模式下暫時失去焦點時，禁止縮回或重置尺寸
                     return;
                 }
             }
@@ -716,7 +739,7 @@ public class FloatingOverlayService extends Service {
             } catch (Exception ignored) {}
             isPanelAttached = false;
         }
-        if (!appInForeground && running && !isFreezeAttached) {
+        if (!appInForeground && running && !isFreezeAttached && !isFreezeScanInProgress) {
             attachBubble();
         }
     }
@@ -760,6 +783,7 @@ public class FloatingOverlayService extends Service {
             obj.put("defaultDeck", sp.getString(KEY_DEFAULT_DECK, "我的單字本"));
             obj.put("membershipTier", sp.getString(KEY_MEMBERSHIP_TIER, "free"));
             obj.put("videoRoiMode", sp.getString(KEY_VIDEO_ROI_MODE, "bottom25"));
+            obj.put("videoSourceLang", sp.getString(KEY_VIDEO_SOURCE_LANG, "en"));
             try {
                 obj.put("videoRoiRect", new JSONObject(sp.getString(KEY_VIDEO_ROI_RECT_JSON, "{}")));
             } catch (Exception ignored) {
@@ -784,82 +808,113 @@ public class FloatingOverlayService extends Service {
     }
 
     /* ==========================================================================
-       3. Window 3: 全螢幕截圖定格點詞覆蓋視窗 (overlay.html?mode=freeze)
+       3. Window 3: 原生全螢幕截圖定格點詞覆蓋視窗 (NativeFreezeOverlayView)
        ========================================================================== */
 
-    @SuppressLint({"SetJavaScriptEnabled", "JavascriptInterface"})
-    private void ensureFreezeWebViewCreated() {
-        if (freezeContainer != null && freezeWebView != null) return;
+    private void ensureNativeFreezeViewCreated() {
+        if (nativeFreezeView != null && freezeParams != null) return;
 
-        freezeContainer = new FrameLayout(this);
-        freezeContainer.setBackgroundColor(Color.parseColor("#EB020617"));
-
-        freezeWebView = new WebView(getApplicationContext());
-        configureOverlayWebView(freezeWebView);
-        isFreezePageLoaded = false;
-
-        freezeWebView.setWebViewClient(new WebViewClient() {
+        nativeFreezeView = new NativeFreezeOverlayView(this, new NativeFreezeOverlayView.HostCallback() {
             @Override
-            public void onPageFinished(WebView view, String url) {
-                super.onPageFinished(view, url);
-                isFreezePageLoaded = true;
-                flushPendingFreezePayload();
+            public void onTranslateRequested(String text, String sourceLangHint, NativeFreezeOverlayView.TranslationResultListener listener) {
+                translateFreezeTextNative(text, sourceLangHint, listener);
+            }
+
+            @Override
+            public void onSpeakRequested(String text, String langCode) {
+                mainHandler.post(() -> {
+                    if (!ttsReady || ttsEngine == null || TextUtils.isEmpty(text)) return;
+                    Locale loc = "ja".equals(langCode)
+                        ? Locale.JAPAN
+                        : ("ko".equals(langCode)
+                            ? Locale.KOREA
+                            : ("zh-TW".equals(langCode) ? Locale.TRADITIONAL_CHINESE : Locale.US));
+                    ttsEngine.setLanguage(loc);
+                    ttsEngine.speak(text, TextToSpeech.QUEUE_FLUSH, null, "lzh_freeze_tts");
+                });
+            }
+
+            @Override
+            public void onSaveCardRequested(String word, String translation, String langCode, String targetDeck) {
+                saveNativeCardToPendingPrefs(word, translation, langCode, targetDeck);
+            }
+
+            @Override
+            public void onCloseRequested(boolean restorePanel) {
+                hideFreezeWindow(restorePanel);
             }
         });
 
-        freezeContainer.addView(freezeWebView, new FrameLayout.LayoutParams(
-            FrameLayout.LayoutParams.MATCH_PARENT,
-            FrameLayout.LayoutParams.MATCH_PARENT
-        ));
-
+        int flags = WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS;
         freezeParams = new WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.MATCH_PARENT,
             getOverlayWindowType(),
-            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            flags,
             PixelFormat.TRANSLUCENT
         );
         freezeParams.gravity = Gravity.TOP | Gravity.START;
         freezeParams.softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE;
-
-        freezeWebView.loadUrl("file:///android_asset/public/overlay.html?mode=freeze");
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            freezeParams.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+        }
     }
 
-    private void showFreezeWindowWithPayload(String payloadJson) {
-        pendingFreezePayloadJson = payloadJson;
+    private void showNativeFreezeWindow(
+        Bitmap bmp,
+        List<NativeFreezeOverlayView.FreezeToken> tokens,
+        List<String> lines,
+        String defaultDeck
+    ) {
         mainHandler.post(() -> {
-            if (windowManager == null) return;
-            ensureFreezeWebViewCreated();
+            cancelScanWatchdog();
+            isScanning = false;
+            isFreezeScanInProgress = false;
+
+            if (windowManager == null) {
+                if (!bmp.isRecycled()) bmp.recycle();
+                if (!appInForeground && running) showOverlayPanel();
+                return;
+            }
+
+            ensureNativeFreezeViewCreated();
             detachBubble();
             hidePanelWithoutReattachingBubble();
             detachSubtitleOverlay();
-            if (!isFreezeAttached && freezeContainer != null) {
+
+            nativeFreezeView.setVisibility(View.VISIBLE);
+            nativeFreezeView.setFreezeData(bmp, tokens, lines, defaultDeck);
+
+            if (!isFreezeAttached) {
                 try {
-                    windowManager.addView(freezeContainer, freezeParams);
+                    windowManager.addView(nativeFreezeView, freezeParams);
                     isFreezeAttached = true;
+                } catch (Exception e) {
+                    nativeFreezeView.releaseBitmapSafely();
+                    Toast.makeText(this, "無法顯示定格視窗：" + e.getMessage(), Toast.LENGTH_SHORT).show();
+                    if (!appInForeground && running) showOverlayPanel();
+                }
+            } else {
+                try {
+                    windowManager.updateViewLayout(nativeFreezeView, freezeParams);
                 } catch (Exception ignored) {}
             }
-            flushPendingFreezePayload();
         });
-    }
-
-    private void flushPendingFreezePayload() {
-        String payload = pendingFreezePayloadJson;
-        if (TextUtils.isEmpty(payload) || freezeWebView == null || !isFreezePageLoaded) return;
-        pendingFreezePayloadJson = null;
-        freezeWebView.evaluateJavascript(
-            "if(window.LZHOverlayApp && window.LZHOverlayApp.openFreezeMode){window.LZHOverlayApp.openFreezeMode(" + payload + ");}",
-            null
-        );
     }
 
     private void hideFreezeWindow(boolean restorePanel) {
         mainHandler.post(() -> {
-            if (windowManager != null && freezeContainer != null && isFreezeAttached) {
+            cancelScanWatchdog();
+            isScanning = false;
+            isFreezeScanInProgress = false;
+            if (windowManager != null && nativeFreezeView != null && isFreezeAttached) {
                 try {
-                    windowManager.removeView(freezeContainer);
+                    windowManager.removeView(nativeFreezeView);
                 } catch (Exception ignored) {}
                 isFreezeAttached = false;
+            }
+            if (nativeFreezeView != null) {
+                nativeFreezeView.releaseBitmapSafely();
             }
             if (subtitleDesiredVisible && !appInForeground) {
                 showSubtitleOverlay();
@@ -872,6 +927,23 @@ public class FloatingOverlayService extends Service {
                 }
             }
         });
+    }
+
+    private void saveNativeCardToPendingPrefs(String word, String translation, String langCode, String targetDeck) {
+        if (TextUtils.isEmpty(word)) return;
+        try {
+            SharedPreferences sp = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+            String deck = !TextUtils.isEmpty(targetDeck) ? targetDeck : sp.getString(KEY_DEFAULT_DECK, "我的單字本");
+            JSONArray existing = new JSONArray(sp.getString(KEY_PENDING_CARDS, "[]"));
+            JSONObject card = new JSONObject();
+            card.put("word", word.trim());
+            card.put("meaning", translation != null ? translation.trim() : "");
+            card.put("lang", !TextUtils.isEmpty(langCode) ? langCode : detectLanguageCode(word));
+            card.put("targetDeck", deck);
+            existing.put(card);
+            sp.edit().putString(KEY_PENDING_CARDS, existing.toString()).apply();
+            mainHandler.post(() -> Toast.makeText(this, "已加入待匯入單字：" + word.trim(), Toast.LENGTH_SHORT).show());
+        } catch (Exception ignored) {}
     }
 
     /* ==========================================================================
@@ -1047,12 +1119,15 @@ public class FloatingOverlayService extends Service {
             );
             startActivity(perm);
         } catch (Exception e) {
-            mainHandler.post(() -> Toast.makeText(this, "無法請求螢幕擷取權限", Toast.LENGTH_SHORT).show());
+            finishFreezeScanFailure(activeScanSeq, true, "無法請求螢幕擷取權限");
         }
     }
 
     private void handleMediaProjectionResult(int resultCode, @Nullable Intent data, String purpose) {
         if (resultCode != Activity.RESULT_OK || data == null) {
+            cancelScanWatchdog();
+            isScanning = false;
+            isFreezeScanInProgress = false;
             if ("video_ocr".equals(purpose)) {
                 videoOcrActive = false;
                 notifyWebVideoOcrState(false);
@@ -1067,7 +1142,10 @@ public class FloatingOverlayService extends Service {
         try {
             startServiceForegroundCompat(true);
             MediaProjectionManager mpm = (MediaProjectionManager) getSystemService(Context.MEDIA_PROJECTION_SERVICE);
-            if (mpm == null) return;
+            if (mpm == null) {
+                finishFreezeScanFailure(activeScanSeq, true, "系統無法存取螢幕擷取服務");
+                return;
+            }
 
             releaseVirtualDisplayAndReaderOnly();
             if (mediaProjection != null) {
@@ -1076,12 +1154,18 @@ public class FloatingOverlayService extends Service {
             }
 
             mediaProjection = mpm.getMediaProjection(resultCode, data);
-            if (mediaProjection == null) return;
+            if (mediaProjection == null) {
+                finishFreezeScanFailure(activeScanSeq, true, "螢幕擷取授權無效");
+                return;
+            }
 
             mediaProjection.registerCallback(new MediaProjection.Callback() {
                 @Override
                 public void onStop() {
                     stopScreenCaptureResources();
+                    cancelScanWatchdog();
+                    isScanning = false;
+                    isFreezeScanInProgress = false;
                     if (videoOcrActive) {
                         videoOcrActive = false;
                         notifyWebVideoOcrState(false);
@@ -1089,7 +1173,9 @@ public class FloatingOverlayService extends Service {
                 }
             }, mainHandler);
 
-            ensureVirtualDisplayReady();
+            if (!ensureVirtualDisplayReady()) {
+                return;
+            }
 
             if ("freeze".equals(purpose)) {
                 performFreezeCaptureAfterDelay();
@@ -1099,23 +1185,22 @@ public class FloatingOverlayService extends Service {
             }
         } catch (Exception e) {
             stopScreenCaptureResources();
-            mainHandler.post(() -> Toast.makeText(this, "啟動螢幕擷取失敗，請重試", Toast.LENGTH_SHORT).show());
+            finishFreezeScanFailure(activeScanSeq, true, "啟動螢幕擷取失敗，請重試");
         }
     }
 
     private void notifyWebVideoOcrState(boolean active) {
         mainHandler.post(() -> {
-            if (overlayWebView != null && isWebPageLoaded) {
-                overlayWebView.evaluateJavascript(
-                    "if(window.LZHOverlayApp && window.LZHOverlayApp.applyNativeConfig){window.LZHOverlayApp.applyNativeConfig({});}",
-                    null
-                );
-            }
+            if (overlayWebView == null || !isWebPageLoaded) return;
+            overlayWebView.evaluateJavascript(
+                "if(window.LZHOverlayApp && window.LZHOverlayApp.applyNativeConfig){window.LZHOverlayApp.applyNativeConfig({});}",
+                null
+            );
         });
     }
 
-    private void ensureVirtualDisplayReady() {
-        if (mediaProjection == null || windowManager == null) return;
+    private boolean ensureVirtualDisplayReady() {
+        if (mediaProjection == null || windowManager == null) return false;
 
         DisplayMetrics dm = new DisplayMetrics();
         windowManager.getDefaultDisplay().getRealMetrics(dm);
@@ -1128,25 +1213,50 @@ public class FloatingOverlayService extends Service {
         if ((targetH & 1) == 1) targetH--;
 
         if (virtualDisplay != null && imageReader != null && captureWidth == targetW && captureHeight == targetH) {
-            return;
+            return true;
         }
 
-        releaseVirtualDisplayAndReaderOnly();
-        captureWidth = targetW;
-        captureHeight = targetH;
-        captureDensity = dm.densityDpi;
+        try {
+            if (virtualDisplay != null) {
+                // Android 14+ / HyperOS 禁止重複 createVirtualDisplay：保持單一 VirtualDisplay，尺寸變動時改用 resize + setSurface
+                ImageReader oldReader = imageReader;
+                ImageReader newReader = ImageReader.newInstance(targetW, targetH, PixelFormat.RGBA_8888, 4);
+                captureWidth = targetW;
+                captureHeight = targetH;
+                captureDensity = dm.densityDpi;
+                virtualDisplay.resize(captureWidth, captureHeight, captureDensity);
+                virtualDisplay.setSurface(newReader.getSurface());
+                imageReader = newReader;
+                if (oldReader != null) {
+                    try { oldReader.close(); } catch (Exception ignored) {}
+                }
+                return true;
+            }
 
-        imageReader = ImageReader.newInstance(captureWidth, captureHeight, PixelFormat.RGBA_8888, 2);
-        virtualDisplay = mediaProjection.createVirtualDisplay(
-            "LZHCardScreenCapture",
-            captureWidth,
-            captureHeight,
-            captureDensity,
-            DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-            imageReader.getSurface(),
-            null,
-            captureHandler
-        );
+            captureWidth = targetW;
+            captureHeight = targetH;
+            captureDensity = dm.densityDpi;
+            imageReader = ImageReader.newInstance(captureWidth, captureHeight, PixelFormat.RGBA_8888, 4);
+            virtualDisplay = mediaProjection.createVirtualDisplay(
+                "LZHCardScreenCapture",
+                captureWidth,
+                captureHeight,
+                captureDensity,
+                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                imageReader.getSurface(),
+                null,
+                captureHandler
+            );
+            return true;
+        } catch (SecurityException | IllegalStateException e) {
+            stopScreenCaptureResources();
+            String fallbackPurpose = videoOcrActive ? "video_ocr" : "freeze";
+            cancelScanWatchdog();
+            isScanning = false;
+            isFreezeScanInProgress = false;
+            mainHandler.post(() -> launchMediaProjectionPermission(fallbackPurpose));
+            return false;
+        }
     }
 
     private void releaseVirtualDisplayAndReaderOnly() {
@@ -1212,45 +1322,99 @@ public class FloatingOverlayService extends Service {
     }
 
     /* ==========================================================================
-       6. 全螢幕截圖定格點詞流程（隱藏浮窗 -> 延遲 120ms -> 截圖 -> ML Kit OCR）
+       6. 全螢幕截圖定格點詞流程（狀態鎖 + 8秒 Watchdog + 隱藏浮窗 -> 截圖 -> 原生 ML Kit）
        ========================================================================== */
+
+    private void startScanWatchdog(final long scanToken) {
+        cancelScanWatchdog();
+        activeScanWatchdog = () -> {
+            if (isScanning && activeScanSeq == scanToken) {
+                isScanning = false;
+                isFreezeScanInProgress = false;
+                Toast.makeText(this, "定格掃描逾時，已重設狀態，請再試一次", Toast.LENGTH_SHORT).show();
+                if (!appInForeground && running && !isFreezeAttached) {
+                    showOverlayPanel();
+                }
+            }
+        };
+        mainHandler.postDelayed(activeScanWatchdog, SCAN_WATCHDOG_TIMEOUT_MS);
+    }
+
+    private void cancelScanWatchdog() {
+        if (activeScanWatchdog != null) {
+            mainHandler.removeCallbacks(activeScanWatchdog);
+            activeScanWatchdog = null;
+        }
+    }
+
+    private void finishFreezeScanFailure(long scanToken, boolean restorePanel, String toastMsg) {
+        mainHandler.post(() -> {
+            if (scanToken != activeScanSeq && scanToken != 0L) return;
+            cancelScanWatchdog();
+            isScanning = false;
+            isFreezeScanInProgress = false;
+            if (!TextUtils.isEmpty(toastMsg)) {
+                Toast.makeText(this, toastMsg, Toast.LENGTH_SHORT).show();
+            }
+            if (restorePanel && !appInForeground && running && !isFreezeAttached) {
+                showOverlayPanel();
+            }
+        });
+    }
 
     private void performFreezeCaptureAfterDelay() {
         mainHandler.post(() -> {
+            if (isScanning) {
+                return;
+            }
+            final long scanToken = ++activeScanSeq;
+            isScanning = true;
+            isFreezeScanInProgress = true;
+            startScanWatchdog(scanToken);
+
             hidePanelWithoutReattachingBubble();
             detachBubble();
             detachSubtitleOverlay();
 
             if (mediaProjection == null) {
+                cancelScanWatchdog();
+                isScanning = false;
+                isFreezeScanInProgress = false;
                 launchMediaProjectionPermission("freeze");
                 return;
             }
 
-            ensureVirtualDisplayReady();
+            if (!ensureVirtualDisplayReady()) {
+                return;
+            }
+            drainImageReaderQueue();
 
-            mainHandler.postDelayed(() -> captureFreezeBitmapWithRetry(0), 140);
+            mainHandler.postDelayed(() -> captureFreezeBitmapWithRetry(0, scanToken), 180);
         });
     }
 
-    private void captureFreezeBitmapWithRetry(int attempt) {
+    private void captureFreezeBitmapWithRetry(int attempt, final long scanToken) {
         captureHandler.post(() -> {
+            if (!isScanning || scanToken != activeScanSeq) return;
             Bitmap bmp = acquireLatestScreenBitmap();
-            if (bmp == null && attempt < 5) {
-                captureHandler.postDelayed(() -> captureFreezeBitmapWithRetry(attempt + 1), 65);
+            if (bmp == null && attempt < 8) {
+                captureHandler.postDelayed(() -> captureFreezeBitmapWithRetry(attempt + 1, scanToken), 50);
                 return;
             }
             if (bmp == null) {
-                mainHandler.post(() -> {
-                    Toast.makeText(this, "螢幕畫面尚未就緒，請再試一次", Toast.LENGTH_SHORT).show();
-                    if (!appInForeground) showOverlayPanel();
-                });
+                finishFreezeScanFailure(scanToken, true, "螢幕畫面尚未就緒，請再試一次");
                 return;
             }
-            processFreezeBitmapWithMlKit(bmp);
+            processFreezeBitmapWithMlKit(bmp, scanToken);
         });
     }
 
-    private void processFreezeBitmapWithMlKit(Bitmap bmp) {
+    private void processFreezeBitmapWithMlKit(Bitmap bmp, final long scanToken) {
+        if (!isScanning || scanToken != activeScanSeq) {
+            if (!bmp.isRecycled()) bmp.recycle();
+            return;
+        }
+
         final int bmpW = Math.max(1, bmp.getWidth());
         final int bmpH = Math.max(1, bmp.getHeight());
         final InputImage inputImage = InputImage.fromBitmap(bmp, 0);
@@ -1258,97 +1422,125 @@ public class FloatingOverlayService extends Service {
         List<Task<Text>> tasks = new ArrayList<>();
         if (japaneseRecognizer != null) tasks.add(japaneseRecognizer.process(inputImage));
         if (chineseRecognizer != null) tasks.add(chineseRecognizer.process(inputImage));
+        if (koreanRecognizer != null) tasks.add(koreanRecognizer.process(inputImage));
         if (latinRecognizer != null) tasks.add(latinRecognizer.process(inputImage));
 
         if (tasks.isEmpty()) {
-            bmp.recycle();
-            mainHandler.post(() -> {
-                if (!appInForeground) showOverlayPanel();
-            });
+            if (!bmp.isRecycled()) bmp.recycle();
+            finishFreezeScanFailure(scanToken, true, "文字辨識引擎尚未就緒");
             return;
         }
 
         Tasks.whenAllComplete(tasks).addOnCompleteListener(bgExecutor, done -> {
+            boolean ownershipTransferred = false;
             try {
-                List<TokenBox> tokens = new ArrayList<>();
+                if (!isScanning || scanToken != activeScanSeq) {
+                    return;
+                }
+                List<NativeFreezeOverlayView.FreezeToken> tokens = new ArrayList<>();
+                Set<String> lineSet = new LinkedHashSet<>();
                 for (Task<Text> t : tasks) {
                     if (!t.isSuccessful() || t.getResult() == null) continue;
-                    extractTokensFromMlKitResult(t.getResult(), bmpW, bmpH, tokens);
+                    extractTokensFromMlKitResult(t.getResult(), bmpW, bmpH, tokens, lineSet);
                 }
 
-                ByteArrayOutputStream baos = new ByteArrayOutputStream();
-                bmp.compress(Bitmap.CompressFormat.JPEG, 92, baos);
-                String b64 = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP);
-                bmp.recycle();
+                if (tokens.isEmpty()) {
+                    finishFreezeScanFailure(scanToken, true, "未偵測到文字");
+                    return;
+                }
 
                 SharedPreferences sp = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
-                int nightFlags = getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK;
-                boolean systemDark = (nightFlags == Configuration.UI_MODE_NIGHT_YES);
-                String themePref = sp.getString(KEY_THEME_MODE, "system");
-                boolean isDark = "dark".equalsIgnoreCase(themePref) || ("system".equalsIgnoreCase(themePref) && systemDark);
+                String defaultDeck = sp.getString(KEY_DEFAULT_DECK, "我的單字本");
+                List<String> lines = new ArrayList<>(lineSet);
 
-                JSONArray tokArr = new JSONArray();
-                int limit = Math.min(tokens.size(), 600);
-                for (int i = 0; i < limit; i++) {
-                    TokenBox tb = tokens.get(i);
-                    JSONObject o = new JSONObject();
-                    o.put("text", tb.text);
-                    o.put("lang", tb.lang);
-                    JSONArray normBox = new JSONArray();
-                    normBox.put(tb.ymin);
-                    normBox.put(tb.xmin);
-                    normBox.put(tb.ymax);
-                    normBox.put(tb.xmax);
-                    o.put("box", normBox);
-                    tokArr.put(o);
-                }
-
-                JSONObject payload = new JSONObject();
-                payload.put("imageBase64", b64);
-                payload.put("tokens", tokArr);
-                payload.put("decks", new JSONArray(sp.getString(KEY_DECKS_JSON, "[\"我的單字本\"]")));
-                payload.put("defaultDeck", sp.getString(KEY_DEFAULT_DECK, "我的單字本"));
-                payload.put("nativeLang", sp.getString(KEY_NATIVE_LANG, "zh-TW"));
-                payload.put("isDark", isDark);
-
-                showFreezeWindowWithPayload(payload.toString());
+                ownershipTransferred = true;
+                showNativeFreezeWindow(bmp, tokens, lines, defaultDeck);
             } catch (Exception e) {
-                bmp.recycle();
-                mainHandler.post(() -> {
-                    Toast.makeText(this, "定格辨識失敗，請再試一次", Toast.LENGTH_SHORT).show();
-                    if (!appInForeground) showOverlayPanel();
-                });
+                finishFreezeScanFailure(scanToken, true, "定格辨識失敗，請再試一次");
+            } finally {
+                if (!ownershipTransferred && !bmp.isRecycled()) {
+                    try { bmp.recycle(); } catch (Exception ignored) {}
+                }
             }
         });
     }
 
-    private static class TokenBox {
-        final String text;
-        final String lang;
-        final int ymin;
-        final int xmin;
-        final int ymax;
-        final int xmax;
+    private void processExternalBase64ImageWithNativeFreeze(String base64) {
+        if (TextUtils.isEmpty(base64) || isScanning) return;
+        final long scanToken = ++activeScanSeq;
+        isScanning = true;
+        isFreezeScanInProgress = true;
+        startScanWatchdog(scanToken);
 
-        TokenBox(String text, String lang, int ymin, int xmin, int ymax, int xmax) {
-            this.text = text;
-            this.lang = lang;
-            this.ymin = ymin;
-            this.xmin = xmin;
-            this.ymax = ymax;
-            this.xmax = xmax;
-        }
+        bgExecutor.execute(() -> {
+            Bitmap bmp = null;
+            try {
+                String cleanB64 = base64.contains(",") ? base64.substring(base64.indexOf(',') + 1) : base64;
+                byte[] bytes = Base64.decode(cleanB64, Base64.DEFAULT);
+                bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.length);
+                if (bmp == null) {
+                    finishFreezeScanFailure(scanToken, true, "無法解析圖片");
+                    return;
+                }
+                processFreezeBitmapWithMlKit(bmp, scanToken);
+            } catch (Exception e) {
+                if (bmp != null && !bmp.isRecycled()) {
+                    try { bmp.recycle(); } catch (Exception ignored) {}
+                }
+                finishFreezeScanFailure(scanToken, true, "圖片辨識失敗");
+            }
+        });
     }
 
-    private void extractTokensFromMlKitResult(Text result, int imgW, int imgH, List<TokenBox> dest) {
+    private String cleanAndValidateOcrText(String rawText, @Nullable String forcedSourceLang) {
+        if (TextUtils.isEmpty(rawText)) return "";
+        String cleaned = rawText
+            .replaceAll("[|~`^_\\\\\\[\\]{}]+", " ")
+            .replaceAll("\\s*=+\\s*", " ")
+            .replaceAll("\\s+", " ")
+            .trim();
+        if (cleaned.length() < 2) return "";
+        if (PURE_NOISE_LINE.matcher(cleaned).matches()) return "";
+        if (!HAS_VALID_LANG_CHAR.matcher(cleaned).find()) return "";
+
+        if ("en".equalsIgnoreCase(forcedSourceLang)) {
+            int latinCount = 0;
+            for (int i = 0; i < cleaned.length(); i++) {
+                char ch = cleaned.charAt(i);
+                if ((ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z')) latinCount++;
+            }
+            if (latinCount < 2) return "";
+        }
+        return cleaned;
+    }
+
+    private void extractTokensFromMlKitResult(
+        Text result,
+        int imgW,
+        int imgH,
+        List<NativeFreezeOverlayView.FreezeToken> dest,
+        Set<String> lineSet
+    ) {
         if (result == null) return;
         for (Text.TextBlock block : result.getTextBlocks()) {
             for (Text.Line line : block.getLines()) {
+                float lineConf = line.getConfidence();
+                if (lineConf > 0f && lineConf < 0.65f) continue;
+
+                String rawLine = line.getText() != null ? line.getText().trim() : "";
+                String cleanLine = cleanAndValidateOcrText(rawLine, null);
+                if (TextUtils.isEmpty(cleanLine)) continue;
+                lineSet.add(cleanLine);
+
                 for (Text.Element el : line.getElements()) {
+                    float elConf = el.getConfidence();
+                    if (elConf > 0f && elConf < 0.65f) continue;
+
                     String raw = el.getText() != null ? el.getText().trim() : "";
                     if (raw.isEmpty()) continue;
-                    String cleaned = raw.replaceAll("^[\\p{Punct}\\s]+|[\\p{Punct}\\s]+$", "");
-                    if (cleaned.isEmpty()) continue;
+                    String cleaned = raw.replaceAll("^[\\p{Punct}\\s|~`^_=]+|[\\p{Punct}\\s|~`^_=]+$", "");
+                    if (cleaned.isEmpty() || !HAS_VALID_LANG_CHAR.matcher(cleaned).find()) continue;
+
                     Rect r = el.getBoundingBox();
                     if (r == null || r.width() <= 0 || r.height() <= 0) continue;
 
@@ -1358,14 +1550,22 @@ public class FloatingOverlayService extends Service {
                     int xmax = Math.max(xmin + 8, Math.min(1000, Math.round(r.right * 1000f / imgW)));
 
                     if (isDuplicateBox(dest, cleaned, ymin, xmin, ymax, xmax)) continue;
-                    dest.add(new TokenBox(cleaned, detectLanguageCode(cleaned), ymin, xmin, ymax, xmax));
+                    dest.add(new NativeFreezeOverlayView.FreezeToken(
+                        cleaned,
+                        cleanLine,
+                        detectLanguageCode(cleaned),
+                        ymin,
+                        xmin,
+                        ymax,
+                        xmax
+                    ));
                 }
             }
         }
     }
 
-    private boolean isDuplicateBox(List<TokenBox> list, String txt, int ymin, int xmin, int ymax, int xmax) {
-        for (TokenBox t : list) {
+    private boolean isDuplicateBox(List<NativeFreezeOverlayView.FreezeToken> list, String txt, int ymin, int xmin, int ymax, int xmax) {
+        for (NativeFreezeOverlayView.FreezeToken t : list) {
             int interTop = Math.max(t.ymin, ymin);
             int interLeft = Math.max(t.xmin, xmin);
             int interBottom = Math.min(t.ymax, ymax);
@@ -1383,7 +1583,7 @@ public class FloatingOverlayService extends Service {
     }
 
     /* ==========================================================================
-       7. 連續螢幕底部 ROI 即時翻譯（ML Kit + 本地去重 + 三段式極速譯與精修）
+       7. 連續螢幕底部 ROI 即時翻譯（嚴格裁切 + 字幕區塗黑 + 單語系鎖定 + 信心度過濾）
        ========================================================================== */
 
     private final Runnable videoOcrTickRunnable = new Runnable() {
@@ -1412,35 +1612,40 @@ public class FloatingOverlayService extends Service {
         int h = Math.max(1, fullBmp.getHeight());
         String mode = roiMode != null ? roiMode.trim().toLowerCase(Locale.ROOT) : "bottom25";
 
-        double xPct = 0.0;
-        double yPct = 0.72;
-        double wPct = 1.0;
-        double hPct = 0.26;
+        // 預設嚴格限制在畫面下方安全字幕帶，禁止傳入全螢幕畫面
+        double xPct = 0.12;
+        double yPct = 0.75;
+        double wPct = 0.76;
+        double hPct = 0.18;
 
         if ("bottom40".equals(mode)) {
+            xPct = 0.08;
             yPct = 0.58;
-            hPct = 0.40;
+            wPct = 0.84;
+            hPct = 0.36;
         } else if ("top25".equals(mode)) {
-            yPct = 0.02;
-            hPct = 0.25;
-        } else if ("full".equals(mode)) {
-            yPct = 0.0;
-            hPct = 1.0;
+            xPct = 0.10;
+            yPct = 0.03;
+            wPct = 0.80;
+            hPct = 0.22;
         } else if ("custom".equals(mode)) {
             try {
                 JSONObject rc = new JSONObject(TextUtils.isEmpty(rectJsonStr) ? "{}" : rectJsonStr);
-                xPct = Math.max(0.0, Math.min(0.85, rc.optDouble("xPct", 0.05)));
-                yPct = Math.max(0.0, Math.min(0.85, rc.optDouble("yPct", 0.72)));
-                wPct = Math.max(0.15, Math.min(1.0 - xPct, rc.optDouble("wPct", 0.90)));
-                hPct = Math.max(0.10, Math.min(1.0 - yPct, rc.optDouble("hPct", 0.26)));
+                double rawX = rc.has("xPct") ? rc.optDouble("xPct", 0.12) : rc.optDouble("x", 0.12);
+                double rawY = rc.has("yPct") ? rc.optDouble("yPct", 0.75) : rc.optDouble("y", 0.75);
+                double rawW = rc.has("wPct") ? rc.optDouble("wPct", 0.76) : rc.optDouble("width", 0.76);
+                double rawH = rc.has("hPct") ? rc.optDouble("hPct", 0.18) : rc.optDouble("height", 0.18);
+                xPct = Math.max(0.0, Math.min(0.85, rawX));
+                yPct = Math.max(0.0, Math.min(0.85, rawY));
+                wPct = Math.max(0.15, Math.min(1.0 - xPct, rawW));
+                hPct = Math.max(0.10, Math.min(1.0 - yPct, rawH));
             } catch (Exception ignored) {}
         } else if ("auto".equals(mode)) {
-            // 自動掃描四個垂直區域水平邊緣梯度密度，自動定位高對比字幕帶
             double[][] bands = {
-                {0.02, 0.24},
-                {0.26, 0.24},
-                {0.50, 0.24},
-                {0.72, 0.26}
+                {0.03, 0.20},
+                {0.26, 0.22},
+                {0.50, 0.22},
+                {0.75, 0.18}
             };
             double bestScore = -1.0;
             int bestIdx = 3;
@@ -1453,7 +1658,7 @@ public class FloatingOverlayService extends Service {
                 int stepX = Math.max(8, w / 36);
                 for (int py = sy; py < ey; py += stepY) {
                     int prevLum = -1;
-                    for (int px = Math.round(w * 0.08f); px < Math.round(w * 0.92f); px += stepX) {
+                    for (int px = Math.round(w * 0.12f); px < Math.round(w * 0.88f); px += stepX) {
                         int c = fullBmp.getPixel(px, py);
                         int lum = (((c >> 16) & 0xFF) * 299 + ((c >> 8) & 0xFF) * 587 + (c & 0xFF) * 114) / 1000;
                         if (prevLum >= 0) {
@@ -1465,12 +1670,14 @@ public class FloatingOverlayService extends Service {
                     }
                 }
                 double avgScore = count > 0 ? (double) edgeSum / count : 0.0;
-                if (b == 3) avgScore *= 1.15; // 優先微幅加權底部常見字幕區
+                if (b == 3) avgScore *= 1.15;
                 if (avgScore > bestScore) {
                     bestScore = avgScore;
                     bestIdx = b;
                 }
             }
+            xPct = 0.12;
+            wPct = 0.76;
             yPct = bands[bestIdx][0];
             hPct = bands[bestIdx][1];
         }
@@ -1480,6 +1687,97 @@ public class FloatingOverlayService extends Service {
         int rw = Math.max(20, Math.min(w - rx, (int) Math.round(w * wPct)));
         int rh = Math.max(20, Math.min(h - ry, (int) Math.round(h * hPct)));
         return new Rect(rx, ry, rx + rw, ry + rh);
+    }
+
+    private Bitmap maskSubtitleOverlayOnRoiBitmap(Bitmap roiBmp, Rect roiInFullBmp, int fullW, int fullH) {
+        if (!isSubtitleAttached || subtitleContainer == null || subtitleParams == null || windowManager == null) {
+            return roiBmp;
+        }
+        try {
+            DisplayMetrics dm = new DisplayMetrics();
+            windowManager.getDefaultDisplay().getRealMetrics(dm);
+            int screenW = Math.max(1, dm.widthPixels);
+            int screenH = Math.max(1, dm.heightPixels);
+
+            int hudW = subtitleContainer.getWidth() > 0 ? subtitleContainer.getWidth() : subtitleParams.width;
+            int hudH = subtitleContainer.getHeight() > 0 ? subtitleContainer.getHeight() : dp(96);
+            int hudLeft = Math.round(subtitleParams.x * (fullW / (float) screenW));
+            int hudTop = Math.round(subtitleParams.y * (fullH / (float) screenH));
+            int hudRight = Math.round((subtitleParams.x + hudW) * (fullW / (float) screenW));
+            int hudBottom = Math.round((subtitleParams.y + hudH) * (fullH / (float) screenH));
+
+            Rect hudInFull = new Rect(hudLeft - 4, hudTop - 4, hudRight + 4, hudBottom + 4);
+            Rect overlap = new Rect();
+            if (!overlap.setIntersect(roiInFullBmp, hudInFull)) {
+                return roiBmp;
+            }
+
+            Bitmap mutable = roiBmp.isMutable() ? roiBmp : roiBmp.copy(Bitmap.Config.ARGB_8888, true);
+            if (mutable != roiBmp) {
+                roiBmp.recycle();
+            }
+            Canvas canvas = new Canvas(mutable);
+            Paint blackPaint = new Paint();
+            blackPaint.setColor(Color.BLACK);
+            blackPaint.setStyle(Paint.Style.FILL);
+            canvas.drawRect(
+                overlap.left - roiInFullBmp.left,
+                overlap.top - roiInFullBmp.top,
+                overlap.right - roiInFullBmp.left,
+                overlap.bottom - roiInFullBmp.top,
+                blackPaint
+            );
+            return mutable;
+        } catch (Exception ignored) {
+            return roiBmp;
+        }
+    }
+
+    private TextRecognizer getSingleRecognizerForSourceLang(String sourceLang) {
+        String lang = sourceLang != null ? sourceLang.trim().toLowerCase(Locale.ROOT) : "en";
+        if ("ja".equals(lang) || "jpn".equals(lang)) {
+            return japaneseRecognizer != null ? japaneseRecognizer : latinRecognizer;
+        }
+        if ("ko".equals(lang) || "kor".equals(lang)) {
+            return koreanRecognizer != null ? koreanRecognizer : latinRecognizer;
+        }
+        if (lang.startsWith("zh")) {
+            return chineseRecognizer != null ? chineseRecognizer : latinRecognizer;
+        }
+        return latinRecognizer != null ? latinRecognizer : japaneseRecognizer;
+    }
+
+    private String extractStrictRoiTextFromMlKitResult(Text result, String sourceLang) {
+        if (result == null) return "";
+        StringBuilder sb = new StringBuilder();
+        for (Text.TextBlock block : result.getTextBlocks()) {
+            for (Text.Line line : block.getLines()) {
+                float lineConf = line.getConfidence();
+                if (lineConf > 0f && lineConf < 0.65f) continue;
+
+                StringBuilder lineSb = new StringBuilder();
+                List<Text.Element> elements = line.getElements();
+                if (elements != null && !elements.isEmpty()) {
+                    for (Text.Element el : elements) {
+                        float elConf = el.getConfidence();
+                        if (elConf > 0f && elConf < 0.65f) continue;
+                        String elTxt = el.getText() != null ? el.getText().trim() : "";
+                        if (elTxt.isEmpty()) continue;
+                        if (lineSb.length() > 0) lineSb.append(' ');
+                        lineSb.append(elTxt);
+                    }
+                } else if (line.getText() != null) {
+                    lineSb.append(line.getText().trim());
+                }
+
+                String cleanedLine = cleanAndValidateOcrText(lineSb.toString(), sourceLang);
+                if (!TextUtils.isEmpty(cleanedLine)) {
+                    if (sb.length() > 0) sb.append(' ');
+                    sb.append(cleanedLine);
+                }
+            }
+        }
+        return sb.toString().replaceAll("\\s+", " ").trim();
     }
 
     private void runSingleVideoRoiOcrPass() {
@@ -1495,35 +1793,38 @@ public class FloatingOverlayService extends Service {
                 SharedPreferences sp = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
                 String roiMode = sp.getString(KEY_VIDEO_ROI_MODE, "bottom25");
                 String roiRectJson = sp.getString(KEY_VIDEO_ROI_RECT_JSON, "{}");
+                final String sourceLang = sp.getString(KEY_VIDEO_SOURCE_LANG, "en");
+
+                int fullW = Math.max(1, fullBmp.getWidth());
+                int fullH = Math.max(1, fullBmp.getHeight());
                 Rect roi = resolveVideoRoiRect(fullBmp, roiMode, roiRectJson);
                 roiBmp = Bitmap.createBitmap(fullBmp, roi.left, roi.top, roi.width(), roi.height());
                 fullBmp.recycle();
 
-                InputImage roiImg = InputImage.fromBitmap(roiBmp, 0);
-                List<Task<Text>> tasks = new ArrayList<>();
-                if (japaneseRecognizer != null) tasks.add(japaneseRecognizer.process(roiImg));
-                if (chineseRecognizer != null) tasks.add(chineseRecognizer.process(roiImg));
-                if (latinRecognizer != null && tasks.isEmpty()) tasks.add(latinRecognizer.process(roiImg));
+                // 將自家透明字幕條重疊區域塗黑，防止翻譯結果被二次辨識
+                roiBmp = maskSubtitleOverlayOnRoiBitmap(roiBmp, roi, fullW, fullH);
 
-                if (tasks.isEmpty()) {
+                // 嚴格單一語系辨識鎖定：禁止同時混用多種語系辨識器
+                TextRecognizer singleRecognizer = getSingleRecognizerForSourceLang(sourceLang);
+                if (singleRecognizer == null) {
                     roiBmp.recycle();
                     videoOcrInFlight = false;
                     return;
                 }
+
+                InputImage roiImg = InputImage.fromBitmap(roiBmp, 0);
                 final Bitmap toRecycle = roiBmp;
-                Tasks.whenAllComplete(tasks).addOnCompleteListener(bgExecutor, done -> {
-                    try { toRecycle.recycle(); } catch (Exception ignored) {}
-                    videoOcrInFlight = false;
-                    String bestText = "";
-                    for (Task<Text> t : tasks) {
-                        if (!t.isSuccessful() || t.getResult() == null) continue;
-                        String cand = t.getResult().getText() != null ? t.getResult().getText().replaceAll("\\s+", " ").trim() : "";
-                        if (cand.length() > bestText.length()) {
-                            bestText = cand;
-                        }
-                    }
-                    handleRoiOcrText(bestText);
-                });
+                singleRecognizer.process(roiImg)
+                    .addOnSuccessListener(bgExecutor, textResult -> {
+                        try { toRecycle.recycle(); } catch (Exception ignored) {}
+                        videoOcrInFlight = false;
+                        String filteredText = extractStrictRoiTextFromMlKitResult(textResult, sourceLang);
+                        handleRoiOcrText(filteredText, sourceLang);
+                    })
+                    .addOnFailureListener(bgExecutor, e -> {
+                        try { toRecycle.recycle(); } catch (Exception ignored) {}
+                        videoOcrInFlight = false;
+                    });
             } catch (Exception e) {
                 try { fullBmp.recycle(); } catch (Exception ignored) {}
                 if (roiBmp != null) { try { roiBmp.recycle(); } catch (Exception ignored) {} }
@@ -1532,16 +1833,16 @@ public class FloatingOverlayService extends Service {
         });
     }
 
-    private void handleRoiOcrText(String rawText) {
+    private void handleRoiOcrText(String rawText, String lockedSourceLang) {
         if (!videoOcrActive || TextUtils.isEmpty(rawText)) return;
         String clean = rawText.replaceAll("\\s+", " ").trim();
-        if (clean.length() < 3 || clean.length() > 220) return;
+        if (clean.length() < 2 || clean.length() > 220) return;
 
         double sim = computeCharacterSimilarity(lastRoiOrigText, clean);
         if (sim >= 0.85d) return;
 
         lastRoiOrigText = clean;
-        String srcLang = detectLanguageCode(clean);
+        String srcLang = !TextUtils.isEmpty(lockedSourceLang) ? lockedSourceLang : detectLanguageCode(clean);
         recordRecentContextLine(clean);
 
         runTwoTierSubtitleTranslation(clean, srcLang, false);
@@ -1734,6 +2035,7 @@ public class FloatingOverlayService extends Service {
     private String detectLanguageCode(String text) {
         if (TextUtils.isEmpty(text)) return "en";
         if (JA_KANA_PATTERN.matcher(text).find()) return "ja";
+        if (KO_PATTERN.matcher(text).find()) return "ko";
         if (CJK_PATTERN.matcher(text).find()) return "zh-TW";
         if (EN_PATTERN.matcher(text).find()) return "en";
         return "en";
@@ -1741,6 +2043,7 @@ public class FloatingOverlayService extends Service {
 
     private String toMlKitLanguage(String langCode) {
         if ("ja".equalsIgnoreCase(langCode)) return TranslateLanguage.JAPANESE;
+        if ("ko".equalsIgnoreCase(langCode)) return TranslateLanguage.KOREAN;
         if (langCode != null && langCode.toLowerCase(Locale.ROOT).startsWith("zh")) return TranslateLanguage.CHINESE;
         return TranslateLanguage.ENGLISH;
     }
@@ -1818,7 +2121,10 @@ public class FloatingOverlayService extends Service {
             ctxBlock.append("\n");
         }
         String draftHint = !TextUtils.isEmpty(draft) ? ("Draft translation: " + draft + "\n") : "";
-        String sysPrompt = "You are a low-latency subtitle interpreter. Translate the current subtitle naturally into " + targetLangName + ". Output ONLY the final translated subtitle string with zero quotes or markdown.";
+        String sysPrompt = "You are a low-latency subtitle interpreter. "
+            + "1) Automatically ignore and clean residual OCR edge symbols or broken gibberish tokens (e.g. '| ar Ss = 5'). If the entire input is pure OCR noise with no meaningful words, return an empty string. "
+            + "2) Translate colloquialisms, idioms, and slang contextually into natural " + targetLangName + " (e.g., English 'new whip' means 「新車／座駕」, not literal whip). "
+            + "3) Output ONLY the final translated string with zero quotes or markdown.";
         String userPrompt = ctxBlock.toString() + draftHint + "Subtitle:\n" + text;
 
         if (!TextUtils.isEmpty(groqKey)) {
@@ -2011,6 +2317,75 @@ public class FloatingOverlayService extends Service {
         }
     }
 
+    private String callGoogleTranslatePublicSync(String text, String srcLang, String targetLang) {
+        if (TextUtils.isEmpty(text)) return "";
+        HttpURLConnection conn = null;
+        try {
+            String sl = TextUtils.isEmpty(srcLang) ? "auto" : srcLang;
+            String tl = TextUtils.isEmpty(targetLang) ? "zh-TW" : targetLang;
+            String urlStr = "https://translate.googleapis.com/translate_a/single?client=gtx&sl="
+                + URLEncoder.encode(sl, "UTF-8")
+                + "&tl=" + URLEncoder.encode(tl, "UTF-8")
+                + "&dt=t&q=" + URLEncoder.encode(text, "UTF-8");
+            conn = (HttpURLConnection) new URL(urlStr).openConnection();
+            conn.setRequestMethod("GET");
+            conn.setConnectTimeout(4500);
+            conn.setReadTimeout(6500);
+            if (conn.getResponseCode() < 200 || conn.getResponseCode() >= 300) return "";
+            BufferedReader br = new BufferedReader(new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8));
+            StringBuilder sb = new StringBuilder();
+            String line;
+            while ((line = br.readLine()) != null) sb.append(line);
+            JSONArray root = new JSONArray(sb.toString());
+            JSONArray segments = root.optJSONArray(0);
+            if (segments == null) return "";
+            StringBuilder out = new StringBuilder();
+            for (int i = 0; i < segments.length(); i++) {
+                JSONArray seg = segments.optJSONArray(i);
+                if (seg != null && seg.length() > 0) {
+                    String part = seg.optString(0, "");
+                    if (!TextUtils.isEmpty(part)) out.append(part);
+                }
+            }
+            return out.toString().trim();
+        } catch (Exception ignored) {
+            return "";
+        } finally {
+            if (conn != null) conn.disconnect();
+        }
+    }
+
+    private void translateFreezeTextNative(String text, String srcLangHint, NativeFreezeOverlayView.TranslationResultListener listener) {
+        if (TextUtils.isEmpty(text)) {
+            listener.onResult("");
+            return;
+        }
+        SharedPreferences sp = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        final String nativeLang = sp.getString(KEY_NATIVE_LANG, "zh-TW");
+        final String targetLangName = "ja".equals(nativeLang)
+            ? "Japanese (日本語)"
+            : ("en".equals(nativeLang) ? "English" : "Traditional Chinese (繁體中文)");
+        final String srcLang = !TextUtils.isEmpty(srcLangHint) ? srcLangHint : detectLanguageCode(text);
+
+        bgExecutor.execute(() -> {
+            String result = "";
+            if (isPaidOrPersonalFastRefineEligible()) {
+                result = callDirectByokFastRefineSync(text, "", targetLangName, null);
+                if (TextUtils.isEmpty(result)) {
+                    result = callWorkerFastRefineSync(text, "", srcLang, nativeLang, targetLangName, new ArrayList<>());
+                }
+            }
+            if (TextUtils.isEmpty(result)) {
+                result = callGoogleTranslatePublicSync(text, srcLang, nativeLang);
+            }
+            if (!TextUtils.isEmpty(result)) {
+                listener.onResult(result);
+                return;
+            }
+            translateWithMlKitOffline(text, srcLang, listener::onResult);
+        });
+    }
+
     private void pushSubtitleUpdateToWebView(String orig, String trans, boolean isFinal, String tier, String lang) {
         mainHandler.post(() -> {
             if (overlayWebView == null || !isWebPageLoaded) return;
@@ -2041,7 +2416,7 @@ public class FloatingOverlayService extends Service {
         public void updatePanelHeight(int cssHeight) {
             mainHandler.post(() -> {
                 if (windowManager == null || panelContainer == null || !isPanelAttached || panelParams == null) return;
-                if (isOverlayFullscreen || isSelectingImage) return;
+                if (isOverlayFullscreen || isSelectingImage || isFreezeScanInProgress || isFreezeAttached) return;
                 if (isImageModeActive && isTabletDevice()) return;
                 DisplayMetrics dm = getResources().getDisplayMetrics();
                 int targetPx = Math.round(cssHeight * dm.density);
@@ -2237,6 +2612,19 @@ public class FloatingOverlayService extends Service {
         }
 
         @JavascriptInterface
+        public void setVideoSourceLang(String lang) {
+            getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                .edit()
+                .putString(KEY_VIDEO_SOURCE_LANG, !TextUtils.isEmpty(lang) ? lang : "en")
+                .apply();
+        }
+
+        @JavascriptInterface
+        public void openNativeImageOverlayBase64(String b64) {
+            processExternalBase64ImageWithNativeFreeze(b64);
+        }
+
+        @JavascriptInterface
         public void startNativeStt(String langTag) {
             nativeSttLangTag = !TextUtils.isEmpty(langTag) ? langTag : "en-US";
             nativeSttRunning = true;
@@ -2327,9 +2715,13 @@ public class FloatingOverlayService extends Service {
             try { windowManager.removeView(panelContainer); } catch (Exception ignored) {}
             isPanelAttached = false;
         }
-        if (windowManager != null && freezeContainer != null && isFreezeAttached) {
-            try { windowManager.removeView(freezeContainer); } catch (Exception ignored) {}
+        if (windowManager != null && nativeFreezeView != null && isFreezeAttached) {
+            try { windowManager.removeView(nativeFreezeView); } catch (Exception ignored) {}
             isFreezeAttached = false;
+        }
+        if (nativeFreezeView != null) {
+            nativeFreezeView.releaseBitmapSafely();
+            nativeFreezeView = null;
         }
         detachSubtitleOverlay();
         detachBubble();
@@ -2337,10 +2729,6 @@ public class FloatingOverlayService extends Service {
         if (overlayWebView != null) {
             try { overlayWebView.destroy(); } catch (Exception ignored) {}
             overlayWebView = null;
-        }
-        if (freezeWebView != null) {
-            try { freezeWebView.destroy(); } catch (Exception ignored) {}
-            freezeWebView = null;
         }
         if (latinRecognizer != null) {
             try { latinRecognizer.close(); } catch (Exception ignored) {}
@@ -2350,6 +2738,9 @@ public class FloatingOverlayService extends Service {
         }
         if (chineseRecognizer != null) {
             try { chineseRecognizer.close(); } catch (Exception ignored) {}
+        }
+        if (koreanRecognizer != null) {
+            try { koreanRecognizer.close(); } catch (Exception ignored) {}
         }
         synchronized (translatorCache) {
             for (Translator t : translatorCache.values()) {

@@ -66,7 +66,7 @@
     </div>
 
     <!-- 🔒 未登入 / 條款同意歡迎 Modal (z-[60] 蓋過所有元件) -->
-    <div id="welcomeModal" class="hidden fixed inset-0 z-[60] bg-slate-900/80 backdrop-blur-md flex items-center justify-center p-4">
+    <div id="welcomeModal" class="hidden fixed inset-0 z-[60] bg-slate-900/80 backdrop-blur-md flex items-center justify-center p-4 lzh-safe-modal">
         <div class="bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-100 dark:border-slate-700 space-y-5 max-h-[90vh] flex flex-col">
             
             <!-- 標頭 -->
@@ -99,11 +99,18 @@
                         <span data-i18n="tosItem3Desc">請勿於聊天室中透漏任何個人敏感資訊（如銀行帳密、身份證字號）。本平台不會以私訊要求轉帳或提供信用卡資訊，請提高警覺避免受騙。</span>
                     </li>
                 </ul>
+
+                <div class="pt-1 flex justify-end">
+                    <button type="button" onclick="if(typeof openPrivacyPolicyModal==='function') openPrivacyPolicyModal();" class="min-h-[44px] px-3 py-1.5 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-brand-600 dark:text-brand-400 font-bold text-[11px] hover:underline inline-flex items-center gap-1.5 cursor-pointer">
+                        <i class="fa-solid fa-file-shield"></i>
+                        <span data-i18n="btnOpenPrivacyPolicy">檢視完整隱私權政策</span>
+                    </button>
+                </div>
             </div>
 
             <!-- 勾選框 -->
             <div class="flex items-center space-x-2 flex-shrink-0 pt-1">
-                <input type="checkbox" id="tosCheckbox" onchange="toggleAuthButtons()" class="w-4 h-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500 cursor-pointer">
+                <input type="checkbox" id="tosCheckbox" onchange="toggleAuthButtons()" class="w-5 h-5 rounded border-slate-300 text-brand-600 focus:ring-brand-500 cursor-pointer shrink-0">
                 <label for="tosCheckbox" class="text-xs font-bold text-slate-700 dark:text-slate-200 cursor-pointer select-none" data-i18n="tosCheckLabel">
                     我已閱讀並完全同意上述使用者服務與隱私條款
                 </label>
@@ -112,19 +119,19 @@
             <!-- 登入與訪客按鈕區塊 -->
             <div class="space-y-2.5 flex-shrink-0 pt-2 border-t border-slate-100 dark:border-slate-700">
                 <!-- 1. Google 登入 -->
-                <button type="button" id="welcomeGoogleBtn" onclick="handleWelcomeGoogleLogin()" disabled class="w-full py-3 bg-slate-200 dark:bg-slate-700 text-slate-400 font-bold rounded-xl text-xs flex items-center justify-center space-x-2 transition cursor-not-allowed">
+                <button type="button" id="welcomeGoogleBtn" onclick="handleWelcomeGoogleLogin()" disabled class="w-full min-h-[44px] py-3 bg-slate-200 dark:bg-slate-700 text-slate-400 font-bold rounded-xl text-xs flex items-center justify-center space-x-2 transition cursor-not-allowed">
                     <i class="fa-brands fa-google text-sm"></i>
                     <span data-i18n="btnLoginGoogle">使用 Google 帳號登入</span>
                 </button>
 
                 <!-- 1.5 Apple 登入 (iOS 必備同級按鈕) -->
-                <button type="button" id="welcomeAppleBtn" onclick="handleWelcomeAppleLogin()" disabled class="hidden w-full py-3 bg-slate-200 dark:bg-slate-700 text-slate-400 font-bold rounded-xl text-xs flex items-center justify-center space-x-2 transition cursor-not-allowed">
+                <button type="button" id="welcomeAppleBtn" onclick="handleWelcomeAppleLogin()" disabled class="hidden w-full min-h-[44px] py-3 bg-slate-200 dark:bg-slate-700 text-slate-400 font-bold rounded-xl text-xs flex items-center justify-center space-x-2 transition cursor-not-allowed">
                     <i class="fa-brands fa-apple text-base"></i>
                     <span data-i18n="btnLoginApple">使用 Apple 帳號登入</span>
                 </button>
 
                 <!-- 2. 訪客登入 -->
-                <button type="button" id="welcomeGuestBtn" onclick="handleWelcomeGuestLogin()" disabled class="w-full py-3 bg-slate-200 dark:bg-slate-700 text-slate-400 font-bold rounded-xl text-xs flex items-center justify-center space-x-2 transition cursor-not-allowed">
+                <button type="button" id="welcomeGuestBtn" onclick="handleWelcomeGuestLogin()" disabled class="w-full min-h-[44px] py-3 bg-slate-200 dark:bg-slate-700 text-slate-400 font-bold rounded-xl text-xs flex items-center justify-center space-x-2 transition cursor-not-allowed">
                     <i class="fa-solid fa-user text-sm"></i>
                     <span data-i18n="btnGuestContinue">以訪客身份繼續使用</span>
                 </button>
@@ -139,7 +146,7 @@
     </div>
 
         <!-- ⚙️ 新手快速客製化設定 Modal (z-[62]) -->
-    <div id="onboardingSetupModal" class="hidden fixed inset-0 z-[62] bg-slate-900/80 backdrop-blur-md flex items-center justify-center p-4">
+    <div id="onboardingSetupModal" class="hidden fixed inset-0 z-[62] bg-slate-900/80 backdrop-blur-md flex items-center justify-center p-4 lzh-safe-modal">
         <div class="bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-100 dark:border-slate-700 space-y-5 max-h-[90vh] overflow-y-auto">
             
             <!-- 頂部標號與標頭 -->
@@ -355,6 +362,20 @@
     <!-- 主要內容區 -->
     <main class="max-w-4xl mx-auto w-full px-4 py-6 flex-1">
 
+        <!-- ✈️ 離線模式友善提示橫幅 -->
+        <div id="lzhOfflineNoticeBanner" class="hidden mb-4 bg-sky-50 dark:bg-sky-950/40 border border-sky-200 dark:border-sky-800 rounded-xl px-4 py-3 flex items-center justify-between gap-3 text-sky-900 dark:text-sky-100">
+            <div class="flex items-start gap-2.5 min-w-0">
+                <i class="fa-solid fa-wifi text-sky-600 dark:text-sky-400 text-base mt-0.5 shrink-0"></i>
+                <div class="text-xs leading-relaxed">
+                    <p class="font-extrabold" data-i18n="offlineBannerTitle">目前為離線模式（Offline Mode）</p>
+                    <p class="text-[11px] text-sky-700 dark:text-sky-300 mt-0.5" data-i18n="offlineBannerDesc">您仍可正常進行本機字庫複習、FSRS 記憶卡片與測驗練習；連線恢復後將自動同步雲端進度。</p>
+                </div>
+            </div>
+            <button type="button" id="lzhOfflineBannerDismissBtn" onclick="if(typeof dismissOfflineBanner==='function') dismissOfflineBanner();" class="min-w-[44px] min-h-[44px] rounded-lg text-sky-600 dark:text-sky-300 hover:bg-sky-100 dark:hover:bg-sky-900/60 inline-flex items-center justify-center shrink-0 cursor-pointer" aria-label="關閉離線提示">
+                <i class="fa-solid fa-xmark text-base"></i>
+            </button>
+        </div>
+
         <!-- 全空字庫提示 -->
         <div id="emptyNotice" class="hidden mb-6 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 rounded-xl p-4 flex items-start space-x-3 text-amber-800 dark:text-amber-200">
             <i class="fa-solid fa-circle-info text-amber-600 text-lg mt-0.5"></i>
@@ -390,22 +411,27 @@
                     <span class="text-xs font-extrabold text-slate-800 dark:text-slate-100 truncate" data-i18n="quickAddLabel">快速新增字卡</span>
                 </button>
 
-                <button type="button" id="quickActionTranslateBtn" onclick="if(typeof FloatingTranslator!=='undefined'){ FloatingTranslator.setEnabled(true); FloatingTranslator.open('camera'); }" class="min-h-[48px] px-3 py-2.5 bg-white dark:bg-slate-800 hover:bg-indigo-50/80 dark:hover:bg-slate-700/70 rounded-2xl border border-slate-200 dark:border-slate-700 hover:border-indigo-400 transition shadow-2xs flex items-center gap-2 cursor-pointer group">
+                <button type="button" id="quickActionTranslateBtn" onclick="if(typeof handleHomeFloatingTranslateBtn==='function'){ handleHomeFloatingTranslateBtn(); } else if(typeof FloatingTranslator!=='undefined'){ FloatingTranslator.setEnabled(true); FloatingTranslator.open('camera'); }" class="min-h-[48px] px-3 py-2.5 bg-white dark:bg-slate-800 hover:bg-indigo-50/80 dark:hover:bg-slate-700/70 rounded-2xl border border-slate-200 dark:border-slate-700 hover:border-indigo-400 transition shadow-2xs flex items-center gap-2 cursor-pointer group">
                     <span class="w-8 h-8 rounded-xl bg-indigo-100 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
                         <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg>
                     </span>
                     <span class="text-xs font-extrabold text-slate-800 dark:text-slate-100 truncate" data-i18n="quickTranslateLabel">懸浮翻譯</span>
                 </button>
 
-                <button type="button" id="quickActionFloatingToggleBtn" onclick="if(typeof toggleMasterFloatingOverlay==='function') toggleMasterFloatingOverlay();" aria-pressed="true" class="min-h-[48px] px-3 py-2.5 bg-white dark:bg-slate-800 hover:bg-brand-50/80 dark:hover:bg-slate-700/70 rounded-2xl border border-emerald-300 dark:border-emerald-700 transition shadow-2xs flex items-center justify-between gap-2 cursor-pointer group">
-                    <span class="flex items-center gap-2 min-w-0">
-                        <span id="quickFloatingIconWrap" class="w-8 h-8 rounded-xl bg-emerald-100 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
-                            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M13 10h6v6h-6z"/></svg>
+                <div class="flex items-stretch gap-1.5 min-w-0">
+                    <button type="button" id="quickActionFloatingToggleBtn" onclick="if(typeof toggleMasterFloatingOverlay==='function') toggleMasterFloatingOverlay();" aria-pressed="false" class="flex-1 min-w-0 min-h-[48px] px-3 py-2.5 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700/70 rounded-2xl border border-slate-200 dark:border-slate-700 transition shadow-2xs flex items-center justify-between gap-2 cursor-pointer group">
+                        <span class="flex items-center gap-2 min-w-0">
+                            <span id="quickFloatingIconWrap" class="w-8 h-8 rounded-xl bg-slate-100 dark:bg-slate-700 text-slate-400 dark:text-slate-400 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+                                <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M13 10h6v6h-6z"/></svg>
+                            </span>
+                            <span id="quickFloatingToggleText" class="text-xs font-extrabold text-slate-800 dark:text-slate-100 truncate" data-i18n="quickFloatingToggleLabel">懸浮翻譯視窗</span>
                         </span>
-                        <span class="text-xs font-extrabold text-slate-800 dark:text-slate-100 truncate" data-i18n="quickFloatingToggleLabel">懸浮視窗總開關</span>
-                    </span>
-                    <span id="quickFloatingStateBadge" class="px-1.5 py-0.5 rounded-full text-[10px] font-black bg-emerald-100 dark:bg-emerald-950/70 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700 shrink-0 uppercase">ON</span>
-                </button>
+                        <span id="quickFloatingStateBadge" class="px-1.5 py-0.5 rounded-full text-[10px] font-black bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-slate-600 shrink-0 uppercase">OFF</span>
+                    </button>
+                    <button type="button" id="quickActionIosTranslateSettingsBtn" onclick="if(typeof FloatingTranslator!=='undefined' && typeof FloatingTranslator.openIosScreenTranslate==='function') FloatingTranslator.openIosScreenTranslate({ forceWizard: true });" title="修改螢幕翻譯設定" aria-label="修改螢幕翻譯設定" class="hidden min-h-[48px] px-2.5 bg-white dark:bg-slate-800 hover:bg-indigo-50 dark:hover:bg-slate-700 rounded-2xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 flex items-center justify-center shrink-0 cursor-pointer shadow-2xs transition">
+                        <i class="fa-solid fa-gear text-xs"></i>
+                    </button>
+                </div>
             </div>
 
             <div class="grid grid-cols-1 md:grid-cols-2 gap-5 max-w-2xl mx-auto">
@@ -464,24 +490,24 @@
         <!-- 區塊 1：專注卡片輪播模式 -->
         <section id="sec-flashcard" class="hidden space-y-5">
             <div class="flex items-center justify-between flex-wrap gap-2 text-xs text-slate-500 dark:text-slate-400 font-medium">
-                <div class="flex items-center space-x-2">
-                    <button type="button" onclick="exitFocusMode()" class="px-3 py-1.5 rounded-lg bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 font-bold flex items-center space-x-1 transition">
+                <div class="flex items-center flex-wrap gap-2">
+                    <button type="button" onclick="exitFocusMode()" class="min-h-[44px] px-3.5 py-2 rounded-lg bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 font-bold inline-flex items-center gap-1.5 transition">
                         <i class="fa-solid fa-arrow-left"></i>
                         <span data-i18n="btnExit">退出模式</span>
                     </button>
                     <!-- ⚡ 快速填入按鈕 -->
-                    <button type="button" onclick="openModal('quickAddModal')" class="px-3 py-1.5 rounded-lg bg-brand-50 hover:bg-brand-100 dark:bg-brand-900/40 dark:hover:bg-brand-900/60 text-brand-600 dark:text-brand-300 font-bold flex items-center space-x-1 transition border border-brand-200 dark:border-brand-700">
+                    <button type="button" onclick="openModal('quickAddModal')" class="min-h-[44px] px-3.5 py-2 rounded-lg bg-brand-50 hover:bg-brand-100 dark:bg-brand-900/40 dark:hover:bg-brand-900/60 text-brand-600 dark:text-brand-300 font-bold inline-flex items-center gap-1.5 transition border border-brand-200 dark:border-brand-700">
                         <i class="fa-solid fa-bolt"></i>
                         <span data-i18n="btnQuickAdd">快速填入</span>
                     </button>
                     <!-- ↩️ 還原上一張按鈕 -->
-                    <button type="button" id="undoCardBtn" onclick="if(typeof handleUndoLastCard==='function') handleUndoLastCard();" data-i18n-title="tipUndoCard" title="還原上一張評分" class="px-3 py-1.5 rounded-lg bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/40 dark:hover:bg-amber-900/60 text-amber-700 dark:text-amber-300 font-bold flex items-center space-x-1 transition border border-amber-200 dark:border-amber-800">
+                    <button type="button" id="undoCardBtn" onclick="if(typeof handleUndoLastCard==='function') handleUndoLastCard();" data-i18n-title="tipUndoCard" title="還原上一張評分" class="min-h-[44px] px-3.5 py-2 rounded-lg bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/40 dark:hover:bg-amber-900/60 text-amber-700 dark:text-amber-300 font-bold inline-flex items-center gap-1.5 transition border border-amber-200 dark:border-amber-800">
                         <i class="fa-solid fa-rotate-left"></i>
                         <span data-i18n="btnUndoCard">還原</span>
                     </button>
                 </div>
-                <div class="flex items-center space-x-2">
-                    <button type="button" id="fsrsSessionBadge" onclick="toggleFreePracticeMode()" data-i18n-title="tipToggleFreePractice" title="點擊切換排程 / 自由加練模式" class="px-2.5 py-1 rounded-full text-[11px] font-bold bg-brand-50 hover:bg-brand-100 text-brand-600 dark:bg-brand-950/60 dark:text-brand-300 border border-brand-200 dark:border-brand-800 transition cursor-pointer">
+                <div class="flex items-center gap-2">
+                    <button type="button" id="fsrsSessionBadge" onclick="toggleFreePracticeMode()" data-i18n-title="tipToggleFreePractice" title="點擊切換排程 / 自由加練模式" class="min-h-[44px] px-3 py-1.5 rounded-full text-[11px] font-bold bg-brand-50 hover:bg-brand-100 text-brand-600 dark:bg-brand-950/60 dark:text-brand-300 border border-brand-200 dark:border-brand-800 transition cursor-pointer inline-flex items-center">
                         <span data-i18n="fsrsScheduleBadge">FSRS 排程</span>
                     </button>
                     <div><span data-i18n="stockCount">當前庫存:</span> <span id="cardCountDisplay" class="font-bold text-slate-700 dark:text-slate-200">0</span></div>
@@ -597,14 +623,14 @@
 
         <!-- 區塊 2：專注測驗模式 -->
         <section id="sec-quiz" class="hidden space-y-5">
-            <div class="flex items-center justify-between">
-                <div class="flex items-center space-x-2">
-                    <button type="button" onclick="exitFocusMode()" class="px-3 py-1.5 rounded-lg bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 font-bold text-xs flex items-center space-x-1 transition">
+            <div class="flex items-center justify-between gap-2 flex-wrap">
+                <div class="flex items-center gap-2">
+                    <button type="button" onclick="exitFocusMode()" class="min-h-[44px] px-3.5 py-2 rounded-lg bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 font-bold text-xs inline-flex items-center gap-1.5 transition">
                         <i class="fa-solid fa-arrow-left"></i>
                         <span data-i18n="btnExit">退出模式</span>
                     </button>
                     <!-- ⚡ 快速記生字按鈕 -->
-                    <button type="button" onclick="openModal('quickAddModal')" class="px-3 py-1.5 rounded-lg bg-brand-50 hover:bg-brand-100 dark:bg-brand-900/40 dark:hover:bg-brand-900/60 text-brand-600 dark:text-brand-300 font-bold text-xs flex items-center space-x-1 transition border border-brand-200 dark:border-brand-700">
+                    <button type="button" onclick="openModal('quickAddModal')" class="min-h-[44px] px-3.5 py-2 rounded-lg bg-brand-50 hover:bg-brand-100 dark:bg-brand-900/40 dark:hover:bg-brand-900/60 text-brand-600 dark:text-brand-300 font-bold text-xs inline-flex items-center gap-1.5 transition border border-brand-200 dark:border-brand-700">
                         <i class="fa-solid fa-bolt"></i>
                         <span data-i18n="btnQuickAdd">快速記生字</span>
                     </button>
@@ -1531,7 +1557,7 @@
         <div class="absolute inset-0 bg-slate-900/50 backdrop-blur-xs transition-opacity" onclick="closeChatDrawer()"></div>
 
         <div class="fixed inset-y-0 right-0 max-w-full flex pl-10">
-            <div class="w-screen max-w-md bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 shadow-2xl border-l border-slate-200 dark:border-slate-700 flex flex-col">
+            <div class="safe-area-drawer w-screen max-w-md bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 shadow-2xl border-l border-slate-200 dark:border-slate-700 flex flex-col">
                 
                 <!-- 1. 抽屜頂部標題與關閉按鈕 -->
                 <div class="p-4 border-b border-slate-100 dark:border-slate-700 flex items-center justify-between bg-slate-50 dark:bg-slate-900">
@@ -1540,7 +1566,7 @@
                         <h3 class="font-extrabold text-base text-slate-900 dark:text-white" data-i18n="chatDrawerTitle">交流聊天室</h3>
                         <span id="adminBadge" class="hidden px-2 py-0.5 text-[10px] font-black bg-rose-600 text-white rounded-full" data-i18n="badgeAdmin">管理員</span>
                     </div>
-                    <button type="button" onclick="closeChatDrawer()" class="p-1.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
+                    <button type="button" onclick="closeChatDrawer()" class="min-w-[44px] min-h-[44px] inline-flex items-center justify-center text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded-lg cursor-pointer">
                         <i class="fa-solid fa-xmark text-lg"></i>
                     </button>
                 </div>
@@ -1817,7 +1843,7 @@
                         </div>
                     </div>
 
-                    <!-- 2. 懸浮視窗（獨立第 7 分類：App 內 / App 外雙軌控制 + 電腦桌面小工具 + 7 大品牌教學） -->
+                    <!-- 2. 懸浮視窗（單一跨平台開關 + 本機狀態保存 + iOS PiP + 電腦桌面小工具 + 7 大品牌教學） -->
                     <div data-settings-accordion="floating" class="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900/50 overflow-hidden shadow-2xs">
                         <button type="button" data-settings-accordion-btn="floating" aria-expanded="false" onclick="if(typeof toggleSettingsAccordion==='function') toggleSettingsAccordion('floating')" class="w-full px-3.5 py-3 flex items-center justify-between text-left hover:bg-slate-50 dark:hover:bg-slate-800/60 transition cursor-pointer">
                             <span class="flex items-center gap-2 text-xs font-extrabold text-slate-800 dark:text-slate-100">
@@ -1829,24 +1855,31 @@
                         <div id="settingsAccBody_floating" data-settings-accordion-body="floating" class="hidden px-3.5 pb-3.5 pt-2.5 space-y-3.5 border-t border-slate-100 dark:border-slate-700/80">
                             <div id="settingsFloatingTranslatorSlot" class="flex items-center justify-between gap-2">
                                 <div class="min-w-0">
-                                    <div class="text-xs font-bold text-slate-800 dark:text-slate-100" data-i18n="lblInAppFloating">App 內懸浮翻譯球</div>
-                                    <div class="text-[10px] text-slate-500 dark:text-slate-400" data-i18n="descInAppFloating">在 LZHCard App 畫面內顯示可拖曳懸浮球與即時翻譯視窗（按 Alt+T 可展開）</div>
+                                    <div id="settingsFloatingTranslatorTitle" class="text-xs font-bold text-slate-800 dark:text-slate-100" data-i18n="lblInAppFloating">懸浮翻譯視窗</div>
+                                    <div id="settingsFloatingTranslatorDesc" class="text-[10px] text-slate-500 dark:text-slate-400" data-i18n="descInAppFloating">統一控制跨平台懸浮翻譯視窗（網頁懸浮球 / Android 系統懸浮窗 / iOS PiP / 電腦桌面小工具；僅儲存於本機裝置，預設關閉）</div>
+                                    <div id="systemOverlayStatusText" class="hidden text-[11px] font-semibold text-slate-500 dark:text-slate-400 mt-1"></div>
                                 </div>
                                 <label class="relative inline-flex items-center cursor-pointer shrink-0">
-                                    <input type="checkbox" id="floatingTranslatorToggle" onchange="if(typeof handleFloatingTranslatorChange==='function') handleFloatingTranslatorChange(this.checked)" class="sr-only peer">
+                                    <input type="checkbox" id="floatingTranslatorToggle" onchange="if(typeof toggleMasterFloatingOverlay==='function'){ toggleMasterFloatingOverlay(this.checked); }else if(typeof handleFloatingTranslatorChange==='function'){ handleFloatingTranslatorChange(this.checked); }" class="sr-only peer">
                                     <div class="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-slate-600 peer-checked:bg-purple-600"></div>
                                 </label>
                             </div>
 
-                            <div id="settingsSystemOverlaySlot" class="flex items-center justify-between gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
-                                <div class="min-w-0">
-                                    <div class="text-xs font-bold text-slate-800 dark:text-slate-100" data-i18n="lblSystemOverlay">App 外系統懸浮視窗 (Android)</div>
-                                    <div class="text-[10px] text-slate-500 dark:text-slate-400" data-i18n="descSystemOverlay">獨立開關：離開 App 後仍於其他軟體最上層顯示系統級懸浮球（需開啟系統懸浮窗權限）</div>
+                            <div id="settingsIosScreenTranslateConfigSlot" class="hidden p-3 rounded-xl bg-indigo-50/80 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-800/70 space-y-2">
+                                <div>
+                                    <div class="text-xs font-extrabold text-indigo-900 dark:text-indigo-200">iOS 子母畫面（PiP）螢幕翻譯</div>
+                                    <div class="text-[10px] text-indigo-700/80 dark:text-indigo-300/80 mt-0.5">使用純淨中文字幕子母畫面跨 App 即時翻譯（支援 Apple 離線翻譯與自訂區域）</div>
                                 </div>
-                                <label class="relative inline-flex items-center cursor-pointer shrink-0">
-                                    <input type="checkbox" id="systemOverlayToggle" onchange="if(typeof handleSystemOverlayToggle==='function') handleSystemOverlayToggle(this.checked)" class="sr-only peer">
-                                    <div class="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-slate-600 peer-checked:bg-indigo-600"></div>
-                                </label>
+                                <div class="grid grid-cols-2 gap-2">
+                                    <button type="button" id="btnLaunchIosScreenTranslateSettings" onclick="closeSettingsDrawer(); if(typeof FloatingTranslator!=='undefined' && typeof FloatingTranslator.openIosScreenTranslate==='function') FloatingTranslator.openIosScreenTranslate({ forceWizard: false });" class="py-2 px-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold rounded-xl text-xs transition flex items-center justify-center gap-1 cursor-pointer">
+                                        <i class="fa-solid fa-play"></i>
+                                        <span>啟動螢幕翻譯</span>
+                                    </button>
+                                    <button type="button" id="btnEditIosScreenTranslateConfig" onclick="closeSettingsDrawer(); if(typeof FloatingTranslator!=='undefined' && typeof FloatingTranslator.openIosScreenTranslate==='function') FloatingTranslator.openIosScreenTranslate({ forceWizard: true });" class="py-2 px-2.5 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-700 font-bold rounded-xl text-xs transition flex items-center justify-center gap-1 cursor-pointer">
+                                        <i class="fa-solid fa-sliders"></i>
+                                        <span>修改螢幕翻譯設定</span>
+                                    </button>
+                                </div>
                             </div>
 
                             <div id="settingsDesktopWidgetSlot" class="p-3 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 space-y-2.5">
@@ -2139,6 +2172,17 @@
                                     <div class="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-slate-600 peer-checked:bg-brand-600"></div>
                                 </label>
                             </div>
+
+                            <div class="pt-2.5 border-t border-slate-100 dark:border-slate-700/80 space-y-2">
+                                <button type="button" onclick="if(typeof openPrivacyPolicyModal==='function') openPrivacyPolicyModal();" class="w-full min-h-[44px] px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-200 flex items-center justify-between gap-2 cursor-pointer">
+                                    <span class="flex items-center gap-2"><i class="fa-solid fa-file-shield text-brand-600 dark:text-brand-400"></i><span data-i18n="btnOpenPrivacyPolicy">檢視完整隱私權政策</span></span>
+                                    <i class="fa-solid fa-chevron-right text-[10px] text-slate-400"></i>
+                                </button>
+                                <button type="button" onclick="if(typeof ensureAiPrivacyConsent==='function') ensureAiPrivacyConsent({ forceOpen: true });" class="w-full min-h-[44px] px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-200 flex items-center justify-between gap-2 cursor-pointer">
+                                    <span class="flex items-center gap-2"><i class="fa-solid fa-robot text-indigo-500"></i><span data-i18n="btnManageAiConsent">AI 資料傳輸隱私授權設定</span></span>
+                                    <i class="fa-solid fa-chevron-right text-[10px] text-slate-400"></i>
+                                </button>
+                            </div>
                         </div>
                     </div>
 
@@ -2246,7 +2290,7 @@
     </div>
 
     <!-- 🔐 帳號在另一台裝置上線防搶登通知 Modal -->
-    <div id="sessionKickedModal" class="hidden fixed inset-0 z-[95] bg-slate-950/75 backdrop-blur-xs items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="sessionKickedModalTitle">
+    <div id="sessionKickedModal" class="hidden fixed inset-0 z-[95] bg-slate-950/75 backdrop-blur-xs items-center justify-center p-4 lzh-safe-modal" role="dialog" aria-modal="true" aria-labelledby="sessionKickedModalTitle">
         <div class="bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-2xl max-w-sm w-full p-6 space-y-4 shadow-2xl border border-amber-200 dark:border-amber-800">
             <div class="flex items-start gap-3">
                 <div class="w-11 h-11 rounded-2xl bg-amber-100 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0">
@@ -2257,18 +2301,24 @@
                     <p id="sessionKickedModalBody" class="text-xs text-slate-600 dark:text-slate-300 mt-1.5 leading-relaxed" data-i18n="sessionKickedBody">您的帳號已在另一台裝置上線，為確保學習進度與資料安全，目前裝置已自動登出。</p>
                 </div>
             </div>
-            <div class="flex items-center gap-2 pt-1">
-                <button type="button" onclick="if(typeof closeSessionKickedModal==='function') closeSessionKickedModal();" class="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 text-xs font-bold rounded-xl transition cursor-pointer" data-i18n="btnConfirm">我知道了</button>
-                <button type="button" onclick="if(typeof closeSessionKickedModal==='function') closeSessionKickedModal(); if(typeof loginWithGoogle==='function') loginWithGoogle();" class="flex-1 py-2.5 bg-brand-600 hover:bg-brand-700 text-white text-xs font-extrabold rounded-xl shadow-xs transition cursor-pointer flex items-center justify-center gap-1.5">
-                    <i class="fa-solid fa-right-to-bracket"></i>
-                    <span data-i18n="btnReLogin">重新登入</span>
+            <div class="flex flex-col gap-2 pt-1">
+                <div class="flex items-center gap-2">
+                    <button type="button" onclick="if(typeof closeSessionKickedModal==='function') closeSessionKickedModal();" class="flex-1 min-h-[44px] py-2.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 text-xs font-bold rounded-xl transition cursor-pointer" data-i18n="btnConfirm">我知道了</button>
+                    <button type="button" onclick="if(typeof closeSessionKickedModal==='function') closeSessionKickedModal(); if(typeof loginWithGoogle==='function') loginWithGoogle();" class="flex-1 min-h-[44px] py-2.5 bg-brand-600 hover:bg-brand-700 text-white text-xs font-extrabold rounded-xl shadow-xs transition cursor-pointer flex items-center justify-center gap-1.5">
+                        <i class="fa-brands fa-google"></i>
+                        <span data-i18n="btnReLogin">Google 重新登入</span>
+                    </button>
+                </div>
+                <button type="button" id="sessionKickedAppleBtn" onclick="if(typeof closeSessionKickedModal==='function') closeSessionKickedModal(); if(typeof loginWithApple==='function') loginWithApple();" class="hidden w-full min-h-[44px] py-2.5 bg-slate-900 hover:bg-black text-white border border-slate-800 text-xs font-extrabold rounded-xl shadow-xs transition flex items-center justify-center gap-2 cursor-pointer">
+                    <i class="fa-brands fa-apple text-base"></i>
+                    <span data-i18n="btnLoginApple">使用 Apple 帳號登入</span>
                 </button>
             </div>
         </div>
     </div>
 
     <!-- 📢 發布公告 Modal (僅管理員可見) -->
-    <div id="announceModal" class="hidden fixed inset-0 z-[65] bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+    <div id="announceModal" class="hidden fixed inset-0 z-[65] bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 lzh-safe-modal">
         <div class="bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl border border-slate-100 dark:border-slate-700">
             <h3 class="font-bold text-base" data-i18n="modalAnnounceTitle">📢 發布官方公告</h3>
             <input type="text" id="annTitle" data-i18n-placeholder="phAnnTitle" placeholder="公告標題" class="w-full p-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-semibold">
@@ -2276,15 +2326,15 @@
                 <textarea id="annContent" rows="6" data-i18n-placeholder="phAnnContent" placeholder="公告內容（支援 Enter 換行與空行分段）..." class="w-full p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-xs leading-relaxed whitespace-pre-wrap"></textarea>
                 <p class="text-[10px] text-slate-400" data-i18n="annNewlineHint">💡 按 Enter 可自由換行與空白分段，讀者點擊公告即可展開大視窗閱讀完整排版。</p>
             </div>
-            <div class="flex justify-end space-x-2">
-                <button type="button" onclick="closeModal('announceModal')" class="px-4 py-2 bg-slate-100 dark:bg-slate-700 text-xs font-bold rounded-xl cursor-pointer" data-i18n="btnCancel">取消</button>
-                <button type="button" onclick="submitAnnouncement()" class="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold rounded-xl cursor-pointer" data-i18n="btnPubAnnounceSubmit">發布公告</button>
+            <div class="flex justify-end gap-2">
+                <button type="button" onclick="closeModal('announceModal')" class="min-h-[44px] px-4 py-2 bg-slate-100 dark:bg-slate-700 text-xs font-bold rounded-xl cursor-pointer" data-i18n="btnCancel">取消</button>
+                <button type="button" onclick="submitAnnouncement()" class="min-h-[44px] px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold rounded-xl cursor-pointer" data-i18n="btnPubAnnounceSubmit">發布公告</button>
             </div>
         </div>
     </div>
 
     <!-- 📢 官方公告完整閱讀大彈窗 (z-[66]) -->
-    <div id="announcementDetailModal" class="hidden fixed inset-0 z-[66] bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-5" style="padding-top: max(12px, env(safe-area-inset-top, 0px)); padding-bottom: max(12px, env(safe-area-inset-bottom, 0px));" role="dialog" aria-modal="true" onclick="if(event.target===this) closeModal('announcementDetailModal')">
+    <div id="announcementDetailModal" class="hidden fixed inset-0 z-[66] bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-5 lzh-safe-modal" role="dialog" aria-modal="true" onclick="if(event.target===this) closeModal('announcementDetailModal')">
         <div class="bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-2xl max-w-2xl w-full shadow-2xl border border-slate-200 dark:border-slate-700 max-h-[86vh] flex flex-col overflow-hidden">
             <div class="px-5 py-4 border-b border-slate-100 dark:border-slate-700 flex items-start justify-between gap-3 bg-slate-50 dark:bg-slate-900/70 shrink-0">
                 <div class="min-w-0 space-y-1">
@@ -2298,19 +2348,19 @@
                         <span id="annDetailTime" class="font-mono"></span>
                     </div>
                 </div>
-                <button type="button" onclick="closeModal('announcementDetailModal')" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1.5 rounded-lg cursor-pointer shrink-0">
+                <button type="button" onclick="closeModal('announcementDetailModal')" class="min-w-[44px] min-h-[44px] inline-flex items-center justify-center text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1.5 rounded-lg cursor-pointer shrink-0">
                     <i class="fa-solid fa-xmark text-lg"></i>
                 </button>
             </div>
             <div id="annDetailBody" class="p-5 sm:p-6 overflow-y-auto flex-1 text-sm text-slate-700 dark:text-slate-200 leading-relaxed space-y-3"></div>
             <div class="px-5 py-3 border-t border-slate-100 dark:border-slate-700 flex justify-end shrink-0 bg-slate-50/70 dark:bg-slate-900/40">
-                <button type="button" onclick="closeModal('announcementDetailModal')" class="px-5 py-2 bg-brand-600 hover:bg-brand-700 text-white text-xs font-extrabold rounded-xl shadow-xs cursor-pointer" data-i18n="btnClose">關閉</button>
+                <button type="button" onclick="closeModal('announcementDetailModal')" class="min-h-[44px] px-5 py-2 bg-brand-600 hover:bg-brand-700 text-white text-xs font-extrabold rounded-xl shadow-xs cursor-pointer" data-i18n="btnClose">關閉</button>
             </div>
         </div>
     </div>
 
     <!-- 👑 個人開發者會員贊助中心 Modal (z-[68]) -->
-    <div id="membershipModal" class="hidden fixed inset-0 z-[68] bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-5" style="padding-top: max(12px, env(safe-area-inset-top, 0px)); padding-bottom: max(12px, env(safe-area-inset-bottom, 0px));" role="dialog" aria-modal="true" onclick="if(event.target===this && typeof closeMembershipModal==='function') closeMembershipModal()">
+    <div id="membershipModal" class="hidden fixed inset-0 z-[68] bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-5 lzh-safe-modal" role="dialog" aria-modal="true" onclick="if(event.target===this && typeof closeMembershipModal==='function') closeMembershipModal()">
         <div class="bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-2xl max-w-3xl w-full shadow-2xl border border-slate-200 dark:border-slate-700 max-h-[90vh] flex flex-col overflow-hidden">
             <div class="px-5 py-4 border-b border-slate-100 dark:border-slate-700 flex items-center justify-between gap-3 bg-gradient-to-r from-amber-50/80 via-white to-purple-50/70 dark:from-slate-900 dark:via-slate-800 dark:to-purple-950/30 shrink-0">
                 <div class="min-w-0">
@@ -2320,7 +2370,7 @@
                     </h3>
                     <p class="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5" data-i18n="memModalSub">核心記憶／離線翻譯永久免費 · 雲端 AI 分級額度與 BYOK 無上限</p>
                 </div>
-                <button type="button" onclick="if(typeof closeMembershipModal==='function') closeMembershipModal()" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1.5 rounded-lg cursor-pointer shrink-0">
+                <button type="button" onclick="if(typeof closeMembershipModal==='function') closeMembershipModal()" class="min-w-[44px] min-h-[44px] inline-flex items-center justify-center text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1.5 rounded-lg cursor-pointer shrink-0">
                     <i class="fa-solid fa-xmark text-lg"></i>
                 </button>
             </div>
@@ -2329,14 +2379,14 @@
     </div>
 
     <!-- 📱 7 大手機品牌 Android 系統懸浮窗權限設定教學 Modal (z-[76]) -->
-    <div id="overlayPermissionGuideModal" class="hidden fixed inset-0 z-[76] bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4" style="padding-top: max(12px, env(safe-area-inset-top, 0px)); padding-bottom: max(12px, env(safe-area-inset-bottom, 0px));" role="dialog" aria-modal="true" onclick="if(event.target===this && typeof closeOverlayPermissionGuideModal==='function') closeOverlayPermissionGuideModal()">
+    <div id="overlayPermissionGuideModal" class="hidden fixed inset-0 z-[76] bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 lzh-safe-modal" role="dialog" aria-modal="true" onclick="if(event.target===this && typeof closeOverlayPermissionGuideModal==='function') closeOverlayPermissionGuideModal()">
         <div class="bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-2xl max-w-2xl w-full shadow-2xl border border-slate-200 dark:border-slate-700 max-h-[90vh] flex flex-col overflow-hidden">
             <div class="px-5 py-4 border-b border-slate-100 dark:border-slate-700 flex items-center justify-between gap-3 shrink-0">
                 <div class="min-w-0">
                     <h3 class="font-extrabold text-base text-slate-900 dark:text-white truncate" data-i18n="overlayGuideTitle">📱 各品牌 Android 懸浮窗權限設定教學</h3>
                     <p class="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5" data-i18n="overlayGuideSub">小米、OPPO、vivo 與華為除系統懸浮窗外，常需額外開啟「後台彈出介面」才能在其他 App 上層顯示</p>
                 </div>
-                <button type="button" onclick="if(typeof closeOverlayPermissionGuideModal==='function') closeOverlayPermissionGuideModal();" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1.5 rounded-lg cursor-pointer shrink-0">
+                <button type="button" onclick="if(typeof closeOverlayPermissionGuideModal==='function') closeOverlayPermissionGuideModal();" class="min-w-[44px] min-h-[44px] inline-flex items-center justify-center text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1.5 rounded-lg cursor-pointer shrink-0" aria-label="關閉">
                     <i class="fa-solid fa-xmark text-lg"></i>
                 </button>
             </div>
@@ -2349,10 +2399,10 @@
                     <span id="overlayDetectedBrandBadge" class="hidden px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-100 text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300"></span>
                 </div>
                 <div class="flex items-center gap-2">
-                    <button type="button" onclick="if(typeof refreshSystemOverlayStatus==='function') refreshSystemOverlayStatus(true)" class="px-2.5 py-1.5 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 text-slate-700 dark:text-slate-200 text-xs font-bold hover:bg-slate-100 dark:hover:bg-slate-700 transition cursor-pointer">
+                    <button type="button" onclick="if(typeof refreshSystemOverlayStatus==='function') refreshSystemOverlayStatus(true)" class="min-h-[44px] px-3 py-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 text-slate-700 dark:text-slate-200 text-xs font-bold hover:bg-slate-100 dark:hover:bg-slate-700 transition cursor-pointer">
                         <i class="fa-solid fa-rotate mr-1"></i><span data-i18n="btnRefreshOverlayPerm">重新檢查權限</span>
                     </button>
-                    <button type="button" id="btnGoOverlaySettings" onclick="if(typeof requestNativeOverlayPermission==='function') requestNativeOverlayPermission()" class="px-3.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-extrabold shadow-xs transition cursor-pointer flex items-center gap-1.5">
+                    <button type="button" id="btnGoOverlaySettings" onclick="if(typeof requestNativeOverlayPermission==='function') requestNativeOverlayPermission()" class="min-h-[44px] px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-extrabold shadow-xs transition cursor-pointer flex items-center gap-1.5">
                         <i class="fa-solid fa-arrow-up-right-from-square"></i>
                         <span data-i18n="btnGoOverlaySettings">一鍵前往系統授權設定</span>
                     </button>
@@ -2368,14 +2418,14 @@
     </div>
 
     <!-- 電腦版獨立桌面懸浮小工具下載 & 使用說明 Modal (z-[76]) -->
-    <div id="desktopWidgetGuideModal" class="hidden fixed inset-0 z-[76] bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4" style="padding-top: max(12px, env(safe-area-inset-top, 0px)); padding-bottom: max(12px, env(safe-area-inset-bottom, 0px));" role="dialog" aria-modal="true" onclick="if(event.target===this && typeof closeModal==='function') closeModal('desktopWidgetGuideModal')">
+    <div id="desktopWidgetGuideModal" class="hidden fixed inset-0 z-[76] bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 lzh-safe-modal" role="dialog" aria-modal="true" onclick="if(event.target===this && typeof closeModal==='function') closeModal('desktopWidgetGuideModal')">
         <div class="bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-2xl max-w-lg w-full shadow-2xl border border-slate-200 dark:border-slate-700 max-h-[88vh] flex flex-col overflow-hidden">
             <div class="px-5 py-4 border-b border-slate-100 dark:border-slate-700 flex items-center justify-between gap-3 shrink-0">
                 <div class="min-w-0">
                     <h3 class="font-extrabold text-base text-slate-900 dark:text-white truncate" data-i18n="desktopGuideTitle">電腦版獨立桌面懸浮小工具 (.exe)</h3>
                     <p class="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5" data-i18n="desktopGuideSub">無邊框透明、永遠置頂（alwaysOnTop）脫離瀏覽器懸浮於其他軟體上方</p>
                 </div>
-                <button type="button" onclick="if(typeof closeModal==='function') closeModal('desktopWidgetGuideModal');" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1.5 rounded-lg cursor-pointer shrink-0">
+                <button type="button" onclick="if(typeof closeModal==='function') closeModal('desktopWidgetGuideModal');" class="min-w-[44px] min-h-[44px] inline-flex items-center justify-center text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1.5 rounded-lg cursor-pointer shrink-0">
                     <i class="fa-solid fa-xmark text-lg"></i>
                 </button>
             </div>
@@ -2384,7 +2434,7 @@
                     <div class="font-extrabold text-brand-700 dark:text-brand-300">1. 直接下載 Windows 桌面版 (.exe)</div>
                     <p class="text-slate-600 dark:text-slate-300">免繁瑣環境設定，點擊下方按鈕下載執行檔即可在桌面上方獨立懸浮使用即時翻譯與好友聊天。</p>
                     <!-- 在此貼上exe下載連結 -->
-                    <a href="在此貼上exe下載連結" download="LZHCard-Desktop-Widget.exe" class="w-full py-2.5 px-3 rounded-xl bg-brand-600 hover:bg-brand-700 text-white font-extrabold text-xs transition flex items-center justify-center gap-1.5 shadow-2xs cursor-pointer">
+                    <a href="在此貼上exe下載連結" download="LZHCard-Desktop-Widget.exe" class="w-full min-h-[44px] py-2.5 px-3 rounded-xl bg-brand-600 hover:bg-brand-700 text-white font-extrabold text-xs transition flex items-center justify-center gap-1.5 shadow-2xs cursor-pointer">
                         <svg class="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
                         <span data-i18n="btnDownloadDesktopExe">下載 Windows 桌面版 (.exe)</span>
                     </a>
@@ -2394,15 +2444,15 @@
                     <p class="text-slate-600 dark:text-slate-300">• 雙擊下載的 <code class="px-1 py-0.5 rounded bg-white dark:bg-slate-800 font-mono text-[10px]">.exe</code> 執行檔（如跳出保護視窗請點「其他資訊 → 仍要執行」）。<br>• 按 <kbd class="px-1.5 py-0.5 rounded bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 font-mono text-[10px]">Alt + T</kbd> 全域快速展開／收合懸浮翻譯視窗。<br>• 拖曳懸浮球放開後自動吸附桌面邊緣並記憶座標；右鍵系統匣圖示可切換置頂或退出。</p>
                 </div>
                 <div class="flex justify-end gap-2 pt-1">
-                    <button type="button" onclick="if(typeof closeModal==='function') closeModal('desktopWidgetGuideModal'); if(typeof FloatingTranslator!=='undefined' && typeof FloatingTranslator.openPipWindow==='function') FloatingTranslator.openPipWindow();" class="px-3.5 py-2 rounded-xl bg-purple-600 hover:bg-purple-700 text-white font-extrabold text-xs cursor-pointer">立即體驗瀏覽器 PiP 置頂</button>
-                    <button type="button" onclick="if(typeof closeModal==='function') closeModal('desktopWidgetGuideModal')" class="px-3.5 py-2 rounded-xl bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold text-xs cursor-pointer" data-i18n="btnClose">關閉</button>
+                    <button type="button" onclick="if(typeof closeModal==='function') closeModal('desktopWidgetGuideModal'); if(typeof FloatingTranslator!=='undefined' && typeof FloatingTranslator.openPipWindow==='function') FloatingTranslator.openPipWindow();" class="min-h-[44px] px-3.5 py-2 rounded-xl bg-purple-600 hover:bg-purple-700 text-white font-extrabold text-xs cursor-pointer">立即體驗瀏覽器 PiP 置頂</button>
+                    <button type="button" onclick="if(typeof closeModal==='function') closeModal('desktopWidgetGuideModal')" class="min-h-[44px] px-3.5 py-2 rounded-xl bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold text-xs cursor-pointer" data-i18n="btnClose">關閉</button>
                 </div>
             </div>
         </div>
     </div>
 
     <!-- 📖 App 獨家特色指南 & FSRS 記憶原理 FAQ Modal (z-[65]) -->
-    <div id="helpManualModal" class="hidden fixed inset-0 z-[65] bg-slate-900/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4" style="padding-top: max(12px, env(safe-area-inset-top, 0px)); padding-bottom: max(12px, env(safe-area-inset-bottom, 0px));" role="dialog" aria-modal="true" onclick="if(event.target===this && typeof HelpManualModal!=='undefined') HelpManualModal.close()">
+    <div id="helpManualModal" class="hidden fixed inset-0 z-[65] bg-slate-900/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 lzh-safe-modal" role="dialog" aria-modal="true" onclick="if(event.target===this && typeof HelpManualModal!=='undefined') HelpManualModal.close()">
         <div class="bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-2xl max-w-2xl w-full shadow-2xl border border-slate-200 dark:border-slate-700 max-h-[88vh] flex flex-col overflow-hidden">
             <div class="px-5 py-4 border-b border-slate-100 dark:border-slate-700 flex items-center justify-between gap-3 flex-shrink-0">
                 <div class="min-w-0">
@@ -2410,10 +2460,10 @@
                     <p class="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5" data-i18n="helpManualSub">點擊下方分頁與問題標題即可展開完整說明</p>
                 </div>
                 <div class="flex items-center gap-2 shrink-0">
-                    <button type="button" onclick="if(typeof HelpManualModal!=='undefined') HelpManualModal.replayTour();" data-i18n="btnReplayTourShort" class="px-2.5 py-1.5 rounded-lg bg-brand-50 hover:bg-brand-100 dark:bg-brand-950/60 dark:hover:bg-brand-900 text-brand-600 dark:text-brand-300 border border-brand-200 dark:border-brand-800 text-[11px] font-bold transition cursor-pointer">
+                    <button type="button" onclick="if(typeof HelpManualModal!=='undefined') HelpManualModal.replayTour();" data-i18n="btnReplayTourShort" class="min-h-[44px] px-3 py-2 rounded-lg bg-brand-50 hover:bg-brand-100 dark:bg-brand-950/60 dark:hover:bg-brand-900 text-brand-600 dark:text-brand-300 border border-brand-200 dark:border-brand-800 text-[11px] font-bold transition cursor-pointer">
                         🧭 重新觀看新手教學
                     </button>
-                    <button type="button" onclick="if(typeof HelpManualModal!=='undefined') HelpManualModal.close();" aria-label="Close" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1.5 rounded-lg cursor-pointer">
+                    <button type="button" onclick="if(typeof HelpManualModal!=='undefined') HelpManualModal.close();" aria-label="Close" class="min-w-[44px] min-h-[44px] inline-flex items-center justify-center text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1.5 rounded-lg cursor-pointer">
                         <i class="fa-solid fa-xmark text-lg"></i>
                     </button>
                 </div>
@@ -2489,6 +2539,80 @@
             <div class="flex items-center justify-end gap-2 pt-1">
                 <button type="button" id="lzhConfirmCancelBtn" class="min-h-[44px] px-4 py-2 rounded-xl bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 text-xs font-bold transition cursor-pointer">取消</button>
                 <button type="button" id="lzhConfirmOkBtn" class="min-h-[44px] px-4 py-2 rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-xs font-extrabold shadow-xs transition cursor-pointer">確定</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 🤖 App Store 5.1.2 合規：AI 資料傳輸隱私授權同意 Modal (z-[96]) -->
+    <div id="aiPrivacyConsentModal" class="hidden fixed inset-0 z-[96] bg-slate-950/75 backdrop-blur-xs items-center justify-center p-4 lzh-safe-modal" role="dialog" aria-modal="true" aria-labelledby="aiPrivacyConsentTitle">
+        <div class="bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-2xl max-w-md w-full p-5 sm:p-6 space-y-4 shadow-2xl border border-indigo-200 dark:border-indigo-800 max-h-[88vh] flex flex-col overflow-hidden">
+            <div class="flex items-start justify-between gap-2 shrink-0">
+                <div class="flex items-center gap-2.5 min-w-0">
+                    <div class="w-10 h-10 rounded-2xl bg-indigo-100 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-300 flex items-center justify-center shrink-0">
+                        <i class="fa-solid fa-shield-halved text-lg"></i>
+                    </div>
+                    <div class="min-w-0">
+                        <h3 id="aiPrivacyConsentTitle" class="font-extrabold text-base text-slate-900 dark:text-white" data-i18n="aiConsentTitle">AI 雲端解析資料隱私授權</h3>
+                        <p class="text-[11px] text-slate-500 dark:text-slate-400" data-i18n="aiConsentSub">僅於您主動使用雲端 AI 翻譯、拍照 OCR 或螢幕翻譯時傳輸必要資料</p>
+                    </div>
+                </div>
+                <button type="button" id="aiPrivacyDeclineXBtn" onclick="if(typeof declineAiPrivacyConsent==='function') declineAiPrivacyConsent();" class="min-w-[44px] min-h-[44px] inline-flex items-center justify-center rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer shrink-0" aria-label="關閉">
+                    <i class="fa-solid fa-xmark text-lg"></i>
+                </button>
+            </div>
+            <div class="overflow-y-auto space-y-3 text-xs text-slate-600 dark:text-slate-300 leading-relaxed bg-slate-50 dark:bg-slate-900/60 p-3.5 rounded-xl border border-slate-200 dark:border-slate-700">
+                <p class="font-bold text-slate-800 dark:text-slate-100" data-i18n="aiConsentLead">當您啟用雲端 AI 功能時，LZHCard 會依所選服務將以下資料進行加密傳輸：</p>
+                <ul class="list-disc pl-4 space-y-1.5 text-[11px]">
+                    <li data-i18n="aiConsentItem1">傳送內容：您主動拍攝或選取的照片影像、欲查詢或翻譯的字詞與例句文字片段。</li>
+                    <li data-i18n="aiConsentItem2">第三方 AI 處理方：Google Gemini API、Groq API 及 LZHCard Cloudflare Worker 中繼站，僅用於即時回傳釋義、OCR 辨識與翻譯結果，不會用於廣告追蹤或身分販售。</li>
+                    <li data-i18n="aiConsentItem3">離線選擇：若您不同意雲端傳輸，核心單字卡記憶（FSRS）、本機字庫複習及 Apple 裝置端離線翻譯／Tesseract 本地辨識仍可正常運作。</li>
+                </ul>
+                <div class="pt-1">
+                    <button type="button" onclick="if(typeof openPrivacyPolicyModal==='function') openPrivacyPolicyModal();" class="min-h-[44px] px-3 py-1.5 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-brand-600 dark:text-brand-400 text-[11px] font-bold hover:underline inline-flex items-center gap-1.5 cursor-pointer">
+                        <i class="fa-solid fa-file-shield"></i>
+                        <span data-i18n="btnOpenPrivacyPolicy">檢視完整隱私權政策</span>
+                    </button>
+                </div>
+            </div>
+            <div class="flex flex-col sm:flex-row gap-2 pt-1 shrink-0">
+                <button type="button" id="aiPrivacyDeclineBtn" onclick="if(typeof declineAiPrivacyConsent==='function') declineAiPrivacyConsent();" class="flex-1 min-h-[44px] px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 text-xs font-bold transition cursor-pointer" data-i18n="btnAiConsentLocalOnly">僅使用離線與本機功能</button>
+                <button type="button" id="aiPrivacyAcceptBtn" onclick="if(typeof grantAiPrivacyConsent==='function') grantAiPrivacyConsent();" class="flex-1 min-h-[44px] px-4 py-2.5 rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-xs font-extrabold shadow-sm transition cursor-pointer" data-i18n="btnAiConsentAgree">同意並繼續使用 AI</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 📜 完整隱私權政策 Modal (z-[97]) -->
+    <div id="privacyPolicyModal" class="hidden fixed inset-0 z-[97] bg-slate-950/75 backdrop-blur-xs items-center justify-center p-4 lzh-safe-modal" role="dialog" aria-modal="true" aria-labelledby="privacyPolicyTitle" onclick="if(event.target===this && typeof closePrivacyPolicyModal==='function') closePrivacyPolicyModal()">
+        <div class="bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-2xl max-w-2xl w-full shadow-2xl border border-slate-200 dark:border-slate-700 max-h-[88vh] flex flex-col overflow-hidden">
+            <div class="px-5 py-4 border-b border-slate-100 dark:border-slate-700 flex items-center justify-between gap-2 bg-slate-50 dark:bg-slate-900/70 shrink-0">
+                <div class="flex items-center gap-2 min-w-0">
+                    <i class="fa-solid fa-file-shield text-brand-600 dark:text-brand-400"></i>
+                    <h3 id="privacyPolicyTitle" class="font-extrabold text-base text-slate-900 dark:text-white truncate" data-i18n="privacyModalTitle">LZHCard 隱私權政策 (Privacy Policy)</h3>
+                </div>
+                <button type="button" onclick="if(typeof closePrivacyPolicyModal==='function') closePrivacyPolicyModal();" class="min-w-[44px] min-h-[44px] inline-flex items-center justify-center text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded-lg cursor-pointer shrink-0" aria-label="關閉隱私權政策">
+                    <i class="fa-solid fa-xmark text-lg"></i>
+                </button>
+            </div>
+            <div class="p-5 overflow-y-auto flex-1 space-y-4 text-xs text-slate-600 dark:text-slate-300 leading-relaxed select-text">
+                <div>
+                    <h4 class="font-extrabold text-sm text-slate-900 dark:text-white mb-1" data-i18n="privacySec1Title">1. 資料收集範圍與本機優先原則</h4>
+                    <p data-i18n="privacySec1Body">LZHCard 以裝置端學習體驗為核心。您的單字庫、FSRS 記憶進度與個人偏好設定預設儲存在裝置的 LocalStorage 與 IndexedDB 中；僅當您選擇使用 Google 或 Apple 帳號登入時，才會透過 Firebase Authentication 與 Cloud Firestore 同步您的學習紀錄與公開名片資料。</p>
+                </div>
+                <div>
+                    <h4 class="font-extrabold text-sm text-slate-900 dark:text-white mb-1" data-i18n="privacySec2Title">2. 相機、照片與螢幕翻譯（AI 資料傳輸）</h4>
+                    <p data-i18n="privacySec2Body">您可優先選擇裝置端離線辨識（Apple Vision / Translation 或本地 Tesseract）。僅於您明確同意授權並觸發雲端 AI 功能（如單字解析、拍照 OCR 翻譯、字幕語境精修）時，系統才會透過 HTTPS 加密將必要文字或影像片段傳送至 Google Gemini API、Groq API 或 LZHCard Cloudflare Worker 中繼服務即時運算，運算完成後不會留存您的私人影像。</p>
+                </div>
+                <div>
+                    <h4 class="font-extrabold text-sm text-slate-900 dark:text-white mb-1" data-i18n="privacySec3Title">3. 不進行跨 App 廣告追蹤與資料販售</h4>
+                    <p data-i18n="privacySec3Body">本應用程式不包含第三方廣告 SDK，不追蹤您於其他公司應用程式或網站的活動（NSPrivacyTracking = false），亦絕不販售或出租任何個人資料。</p>
+                </div>
+                <div>
+                    <h4 class="font-extrabold text-sm text-slate-900 dark:text-white mb-1" data-i18n="privacySec4Title">4. 帳號刪除與資料控制權</h4>
+                    <p data-i18n="privacySec4Body">您可隨時於「設定 → 帳號與備份」匯出 JSON 備份，或使用「永久註銷帳號」功能立即清除雲端 Firestore 分片資料、公開名片與認證帳號，以及本機所有快取。</p>
+                </div>
+            </div>
+            <div class="px-5 py-3 border-t border-slate-100 dark:border-slate-700 flex justify-end gap-2 bg-slate-50/70 dark:bg-slate-900/40 shrink-0">
+                <button type="button" onclick="if(typeof closePrivacyPolicyModal==='function') closePrivacyPolicyModal();" class="min-h-[44px] px-5 py-2 rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-xs font-extrabold cursor-pointer" data-i18n="btnClose">關閉</button>
             </div>
         </div>
     </div>

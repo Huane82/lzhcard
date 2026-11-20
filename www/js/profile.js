@@ -919,10 +919,18 @@
                         </div>
 
                         ${isGuest ? `
-                            <button type="button" onclick="loginWithGoogle()" class="px-3.5 py-2 bg-white dark:bg-slate-900 hover:bg-slate-50 border border-slate-300 dark:border-slate-600 rounded-xl text-xs font-bold text-slate-700 dark:text-slate-200 flex items-center gap-2 shadow-2xs self-start sm:self-end cursor-pointer">
-                                <i class="fa-brands fa-google text-red-500"></i>
-                                <span>${escapeProfileHTML(profileTr('btnLoginGoogle', '使用 Google 帳號登入'))}</span>
-                            </button>
+                            <div class="flex flex-wrap items-center gap-2 self-start sm:self-end">
+                                <button type="button" onclick="loginWithGoogle()" class="min-h-[44px] px-3.5 py-2 bg-white dark:bg-slate-900 hover:bg-slate-50 border border-slate-300 dark:border-slate-600 rounded-xl text-xs font-bold text-slate-700 dark:text-slate-200 inline-flex items-center gap-2 shadow-2xs cursor-pointer">
+                                    <i class="fa-brands fa-google text-red-500"></i>
+                                    <span>${escapeProfileHTML(profileTr('btnLoginGoogle', '使用 Google 帳號登入'))}</span>
+                                </button>
+                                ${(typeof getDetectedUiPlatform === 'function' ? getDetectedUiPlatform() === 'ios' : (Boolean(window.Capacitor && typeof window.Capacitor.getPlatform === 'function' && window.Capacitor.getPlatform() === 'ios') || /iPhone|iPad|iPod/i.test(navigator.userAgent || ''))) ? `
+                                    <button type="button" onclick="if(typeof loginWithApple==='function') loginWithApple();" class="min-h-[44px] px-3.5 py-2 bg-slate-900 hover:bg-black border border-slate-800 rounded-xl text-xs font-bold text-white inline-flex items-center gap-2 shadow-2xs cursor-pointer">
+                                        <i class="fa-brands fa-apple text-sm"></i>
+                                        <span>${escapeProfileHTML(profileTr('btnLoginApple', '使用 Apple 帳號登入'))}</span>
+                                    </button>
+                                ` : ''}
+                            </div>
                         ` : ''}
                     </div>
 

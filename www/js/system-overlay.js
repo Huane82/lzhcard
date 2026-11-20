@@ -158,6 +158,7 @@
 
         const videoRoiMode = localStorage.getItem('lzhcard_ft_video_roi_mode_v1') || 'bottom25';
         const videoRoiRectJson = localStorage.getItem('lzhcard_ft_video_roi_cfg_v1') || '{}';
+        const videoSourceLang = localStorage.getItem('lzhcard_ft_video_source_lang_v1') || 'en';
 
         return {
             nativeLang,
@@ -172,7 +173,8 @@
             aiUsageJson: JSON.stringify(aiUsageObj),
             chatSessionJson: JSON.stringify(buildChatSessionSummaryObject(idToken)),
             videoRoiMode,
-            videoRoiRectJson
+            videoRoiRectJson,
+            videoSourceLang
         };
     }
 
@@ -204,6 +206,20 @@
         return { toggle, statusEl };
     }
 
+    function persistDeviceLocalFloatingState(flag) {
+        const strVal = flag ? 'true' : 'false';
+        try {
+            localStorage.setItem(SYSTEM_OVERLAY_STORAGE_KEY, strVal);
+            localStorage.setItem('lzhcard_floating_translator_enabled', strVal);
+        } catch (e) {}
+        try {
+            const prefs = global.Capacitor && global.Capacitor.Plugins && global.Capacitor.Plugins.Preferences;
+            if (prefs && typeof prefs.set === 'function') {
+                prefs.set({ key: 'lzhcard_floating_translator_enabled', value: strVal }).catch(() => {});
+            }
+        } catch (e) {}
+    }
+
     function updateSystemOverlayUIState({ supported, granted, running }) {
         global._nativeSystemOverlayStatus = {
             supported: Boolean(supported),
@@ -221,23 +237,23 @@
         if (supported) {
             const ftToggle = document.getElementById('floatingTranslatorToggle');
             if (ftToggle) {
-                ftToggle.checked = activeOn || (localStorage.getItem('lzhcard_floating_translator_enabled') !== 'false');
+                ftToggle.checked = activeOn;
             }
         }
 
         if (statusEl) {
             if (!supported) {
-                statusEl.textContent = '僅限 Android 安裝版 App 使用（電腦/網頁版請使用懸浮球或桌面小工具）';
-                statusEl.className = 'text-[11px] font-semibold text-slate-500 dark:text-slate-400 mt-0.5';
+                statusEl.textContent = '';
+                statusEl.className = 'hidden text-[11px] font-semibold text-slate-500 dark:text-slate-400 mt-1';
             } else if (granted && running) {
-                statusEl.textContent = '● 已啟用（App 內自動隱藏，切出至其他 App 時自動浮現 🌐）';
-                statusEl.className = 'text-[11px] font-bold text-emerald-600 dark:text-emerald-400 mt-0.5';
+                statusEl.textContent = '● 已啟用系統懸浮視窗（App 內自動隱藏，切出至其他 App 時自動浮現 🌐）';
+                statusEl.className = 'text-[11px] font-bold text-emerald-600 dark:text-emerald-400 mt-1';
             } else if (granted && !running) {
-                statusEl.textContent = '✓ 已取得懸浮權限（目前為關閉狀態）';
-                statusEl.className = 'text-[11px] font-semibold text-brand-600 dark:text-brand-400 mt-0.5';
+                statusEl.textContent = '✓ 已取得系統懸浮權限（目前為關閉狀態）';
+                statusEl.className = 'text-[11px] font-semibold text-brand-600 dark:text-brand-400 mt-1';
             } else {
-                statusEl.textContent = '⚠️ 尚未開啟「顯示在其他應用程式上層」權限';
-                statusEl.className = 'text-[11px] font-semibold text-amber-600 dark:text-amber-400 mt-0.5';
+                statusEl.textContent = '⚠️ 尚未開啟「顯示在其他應用程式上層」權限（開啟開關將引導授權）';
+                statusEl.className = 'text-[11px] font-semibold text-amber-600 dark:text-amber-400 mt-1';
             }
         }
 
@@ -323,15 +339,14 @@
                 const startRes = await plugin.startOverlayService(payload);
                 running = Boolean(startRes && startRes.running);
                 if (running) {
-                    localStorage.setItem(SYSTEM_OVERLAY_STORAGE_KEY, 'true');
-                    localStorage.setItem('lzhcard_floating_translator_enabled', 'true');
+                    persistDeviceLocalFloatingState(true);
                     if (global.FloatingTranslator && typeof global.FloatingTranslator.setEnabled === 'function') {
                         global.FloatingTranslator.setEnabled(true);
                     }
-                    notifyUser('✅ 已授權並啟用懸浮視窗（App 內隱藏，切出至其他 App 自動顯示）', 'success');
+                    notifyUser('✅ 已授權並啟用懸浮翻譯視窗（App 內自動隱藏，切出至其他 App 自動浮現）', 'success');
                 }
             } else if (!granted) {
-                localStorage.setItem(SYSTEM_OVERLAY_STORAGE_KEY, 'false');
+                persistDeviceLocalFloatingState(false);
             }
 
             updateSystemOverlayUIState({ supported: true, granted, running });
@@ -371,15 +386,19 @@
         try {
             if (!wantEnable) {
                 pendingOverlayAutoStart = false;
-                localStorage.setItem(SYSTEM_OVERLAY_STORAGE_KEY, 'false');
+                persistDeviceLocalFloatingState(false);
                 await plugin.stopOverlayService();
+                if (global.FloatingTranslator && typeof global.FloatingTranslator.setEnabled === 'function') {
+                    global.FloatingTranslator.setEnabled(false);
+                }
                 await refreshSystemOverlayStatus(true);
-                notifyUser('已關閉系統懸浮視窗', 'info');
+                notifyUser('已關閉懸浮翻譯視窗', 'info');
                 return true;
             }
 
             const perm = await plugin.checkOverlayPermission();
             if (!perm || !perm.granted) {
+                persistDeviceLocalFloatingState(false);
                 updateSystemOverlayUIState({ supported: true, granted: false, running: false });
                 pendingOverlayAutoStart = true;
                 notifyUser('請先開啟「顯示在其他應用程式上層」權限，授權後返回即自動啟用', 'warning');
@@ -390,22 +409,20 @@
             const payload = await getCurrentOverlayConfigPayloadAsync();
             const startRes = await plugin.startOverlayService(payload);
             const isRunning = Boolean(startRes && startRes.running);
-            localStorage.setItem(SYSTEM_OVERLAY_STORAGE_KEY, isRunning ? 'true' : 'false');
-            if (isRunning) {
-                localStorage.setItem('lzhcard_floating_translator_enabled', 'true');
-                if (global.FloatingTranslator && typeof global.FloatingTranslator.setEnabled === 'function') {
-                    global.FloatingTranslator.setEnabled(true);
-                }
+            persistDeviceLocalFloatingState(isRunning);
+            if (global.FloatingTranslator && typeof global.FloatingTranslator.setEnabled === 'function') {
+                global.FloatingTranslator.setEnabled(isRunning);
             }
             await refreshSystemOverlayStatus(true);
 
             if (isRunning) {
-                notifyUser('🌐 已啟用系統懸浮視窗（App 內自動隱藏，切出至其他 App 立即浮現）', 'success');
+                notifyUser('🌐 已啟用懸浮翻譯視窗（App 內自動隱藏，切出至其他 App 立即浮現）', 'success');
             }
             return isRunning;
         } catch (err) {
+            persistDeviceLocalFloatingState(false);
             updateSystemOverlayUIState({ supported: true, granted: false, running: false });
-            notifyUser('啟動系統懸浮球失敗：' + (err && err.message ? err.message : '請確認權限設定'), 'error');
+            notifyUser('啟動懸浮翻譯視窗失敗：' + (err && err.message ? err.message : '請確認權限設定'), 'error');
             return false;
         }
     }
@@ -704,9 +721,22 @@
 
     async function initSystemOverlayBridge() {
         bindOverlayLifecycleListeners();
+        try {
+            const prefs = global.Capacitor && global.Capacitor.Plugins && global.Capacitor.Plugins.Preferences;
+            if (prefs && typeof prefs.get === 'function' && localStorage.getItem('lzhcard_floating_translator_enabled') === null) {
+                const prefRes = await prefs.get({ key: 'lzhcard_floating_translator_enabled' });
+                if (prefRes && (prefRes.value === 'true' || prefRes.value === 'false')) {
+                    localStorage.setItem('lzhcard_floating_translator_enabled', prefRes.value);
+                    localStorage.setItem(SYSTEM_OVERLAY_STORAGE_KEY, prefRes.value);
+                }
+            }
+        } catch (e) {}
         const status = await refreshSystemOverlayStatus(true);
         await syncPendingDataFromNativeOverlay();
-        if (status.supported && status.granted && !status.running && localStorage.getItem(SYSTEM_OVERLAY_STORAGE_KEY) === 'true') {
+        const localSavedOn =
+            localStorage.getItem('lzhcard_floating_translator_enabled') === 'true' ||
+            localStorage.getItem(SYSTEM_OVERLAY_STORAGE_KEY) === 'true';
+        if (status.supported && status.granted && !status.running && localSavedOn) {
             handleSystemOverlayToggle(true);
         } else if (status.running) {
             syncConfigToNativeOverlay();

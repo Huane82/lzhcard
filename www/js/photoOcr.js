@@ -25,6 +25,10 @@
         isRecognizing: false,
         mode: 'lookup', // 'lookup' | 'select'
         tokens: [],     // [{ id, rawText, cleanWord, normKey, bbox: { x0, y0, x1, y1 } }]
+        fullRawText: '',
+        articleTranslation: '',
+        isTranslatingArticle: false,
+        articleViewMode: 'trans', // 'trans' | 'both'
         selectedItems: [], // [{ id, word, normKey, sourceTokenId }]
         activeTokenId: null,
         lookupSeq: 0,
@@ -474,6 +478,10 @@
 
         // 5. 輕量 Gemini AI 後援翻譯並快取於 session
         if (typeof global.callGeminiApi === 'function') {
+            if (typeof global.ensureAiPrivacyConsent === 'function' && (!global.hasAiPrivacyConsent || !global.hasAiPrivacyConsent())) {
+                const consented = await global.ensureAiPrivacyConsent({ feature: 'def_fill' });
+                if (!consented) return null;
+            }
             const nativeName = (typeof global.getLanguageConfig === 'function')
                 ? global.getLanguageConfig().nativeName
                 : 'Traditional Chinese (繁體中文)';
@@ -624,12 +632,267 @@ Return ONLY raw JSON object:
         return tokens;
     }
 
+    function ensurePhotoOcrModalDom() {
+        if (typeof document === 'undefined') return null;
+        let modal = document.getElementById('photoOcrModal');
+        if (!modal) {
+            modal = document.createElement('div');
+            modal.id = 'photoOcrModal';
+            modal.className = 'hidden fixed inset-0 z-[70] bg-slate-950/70 backdrop-blur-xs items-center justify-center p-3 sm:p-5 lzh-safe-modal';
+            modal.innerHTML = `
+                <div class="w-full max-w-3xl max-h-[90vh] bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-700 shadow-2xl flex flex-col overflow-hidden">
+                    <div class="px-4 py-3 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between gap-2">
+                        <div class="text-sm font-black text-slate-900 dark:text-white">📷 拍照 OCR 點詞與整篇翻譯</div>
+                        <button type="button" onclick="if(typeof PhotoOcrImporter!=='undefined') PhotoOcrImporter.close()" class="w-11 h-11 min-w-[44px] min-h-[44px] rounded-full bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-600 dark:text-slate-300 font-bold flex items-center justify-center cursor-pointer" aria-label="關閉">✕</button>
+                    </div>
+                    <div class="p-4 overflow-y-auto space-y-3">
+                        <input type="file" id="photoOcrCameraInput" accept="image/*" capture="environment" class="hidden">
+                        <input type="file" id="photoOcrGalleryInput" accept="image/*" class="hidden">
+                        <div class="flex flex-wrap items-center justify-between gap-2">
+                            <div class="flex flex-wrap items-center gap-2">
+                                <button type="button" onclick="PhotoOcrImporter.triggerCapture(true)" class="min-h-[44px] px-3.5 py-2 rounded-xl bg-brand-600 text-white text-xs font-extrabold cursor-pointer">拍照</button>
+                                <button type="button" onclick="PhotoOcrImporter.triggerCapture(false)" class="min-h-[44px] px-3.5 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs font-bold cursor-pointer">相簿選圖</button>
+                                <button type="button" id="photoOcrModeLookupBtn" onclick="PhotoOcrImporter.setMode('lookup')" class="min-h-[44px] px-3 py-2 rounded-lg text-xs font-extrabold bg-brand-600 text-white cursor-pointer">👆 點擊查翻譯</button>
+                                <button type="button" id="photoOcrModeSelectBtn" onclick="PhotoOcrImporter.setMode('select')" class="min-h-[44px] px-3 py-2 rounded-lg text-xs font-bold bg-slate-100 dark:bg-slate-700 text-slate-600 cursor-pointer">☑️ 選取入庫</button>
+                            </div>
+                            <select id="photoOcrLangSelect" onchange="PhotoOcrImporter.setOcrLang(this.value)" class="min-h-[44px] px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-bold outline-none">
+                                <option value="eng">英文 OCR</option>
+                                <option value="eng+chi_tra">中英混排 OCR</option>
+                            </select>
+                        </div>
+                        <div id="photoOcrModeHint" class="text-[11px] text-slate-500 dark:text-slate-400"></div>
+                        <div id="photoOcrProgressBox" class="hidden p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 space-y-1.5">
+                            <div class="flex justify-between text-[11px] font-bold text-slate-600 dark:text-slate-300">
+                                <span id="photoOcrProgressText">正在辨識...</span>
+                                <span id="photoOcrProgressPct">0%</span>
+                            </div>
+                            <div class="w-full h-2 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden">
+                                <div id="photoOcrProgressBar" class="h-full bg-brand-600 transition-all" style="width:0%"></div>
+                            </div>
+                        </div>
+                        <div id="photoOcrStageHost" class="flex justify-center bg-slate-100 dark:bg-slate-950 rounded-2xl p-2 border border-slate-200 dark:border-slate-800 min-h-[160px] items-center">
+                            <div id="photoOcrEmptyPlaceholder" class="text-xs text-slate-500 py-8">請拍照或從相簿選擇照片開始辨識</div>
+                            <div id="photoOcrImageWrapper" class="hidden relative">
+                                <img id="photoOcrImage" alt="OCR Preview">
+                                <div id="photoOcrOverlay" class="absolute inset-0"></div>
+                            </div>
+                        </div>
+                        <div id="photoOcrLookupCard" class="hidden p-3 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-brand-200 dark:border-brand-700 space-y-1.5">
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <span id="photoOcrLookupWord" class="text-sm font-black text-slate-900 dark:text-white"></span>
+                                    <span id="photoOcrLookupMeta" class="ml-2 text-[11px] text-slate-500"></span>
+                                </div>
+                                <div class="flex items-center gap-1.5">
+                                    <button type="button" id="photoOcrLookupSpeakBtn" class="px-2 py-1 rounded-lg bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-xs font-bold cursor-pointer">🔊 發音</button>
+                                    <button type="button" id="photoOcrLookupAddBtn" class="px-2.5 py-1 rounded-lg bg-emerald-600 text-white text-xs font-bold cursor-pointer">＋ 入庫</button>
+                                </div>
+                            </div>
+                            <div id="photoOcrLookupMeaning" class="text-xs font-semibold text-slate-700 dark:text-slate-200"></div>
+                        </div>
+                        <div id="photoOcrArticleTranslateBar"></div>
+                        <div class="p-3 rounded-2xl bg-emerald-50/70 dark:bg-slate-800/80 border border-emerald-200 dark:border-emerald-800 space-y-2">
+                            <div class="flex items-center justify-between text-xs font-bold">
+                                <span>已選取單字 (<span id="photoOcrSelectedCountBadge">0</span>)</span>
+                                <div class="flex gap-1.5">
+                                    <button type="button" onclick="PhotoOcrImporter.selectAllRecognizedWords()" class="px-2 py-0.5 rounded bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-[11px] cursor-pointer">全選</button>
+                                    <button type="button" onclick="PhotoOcrImporter.clearSelectedWords()" class="px-2 py-0.5 rounded bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-[11px] cursor-pointer">清空</button>
+                                </div>
+                            </div>
+                            <div id="photoOcrSelectedChips" class="flex flex-wrap gap-1.5"></div>
+                            <div class="flex flex-wrap items-center gap-2">
+                                <select id="photoOcrTargetDeck" onchange="PhotoOcrImporter.handleDeckSelectChange(this.value)" class="flex-1 min-w-[130px] px-2.5 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-bold"></select>
+                                <input type="text" id="photoOcrNewDeckInput" placeholder="輸入新字庫名稱" class="hidden flex-1 min-w-[120px] px-2.5 py-2 rounded-xl bg-white dark:bg-slate-900 border border-emerald-400 text-xs font-bold">
+                                <button type="button" id="photoOcrConfirmImportBtn" onclick="PhotoOcrImporter.confirmImportAndAiFill()" class="px-4 py-2 rounded-xl bg-emerald-600 text-white text-xs font-extrabold cursor-pointer">確認加入並 AI 生成</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(modal);
+            bindModalEvents();
+        }
+        ensureArticleTranslationBarMounted(modal);
+        return modal;
+    }
+
+    function ensureArticleTranslationBarMounted(scopeEl) {
+        const root = scopeEl || (typeof document !== 'undefined' ? document.getElementById('photoOcrModal') : null);
+        if (!root) return null;
+        let bar = root.querySelector('#photoOcrArticleTranslateBar');
+        if (!bar) {
+            bar = document.createElement('div');
+            bar.id = 'photoOcrArticleTranslateBar';
+            const anchor = root.querySelector('#photoOcrLookupCard') || root.querySelector('#photoOcrImageWrapper')?.parentElement || root.firstElementChild;
+            if (anchor && anchor.parentElement) {
+                anchor.parentElement.insertBefore(bar, anchor.nextSibling);
+            } else {
+                root.appendChild(bar);
+            }
+        }
+        return bar;
+    }
+
+    function getEffectiveRawArticleText() {
+        if (state.fullRawText && state.fullRawText.trim()) return state.fullRawText.trim();
+        if (Array.isArray(state.tokens) && state.tokens.length > 0) {
+            return state.tokens.map(t => t.cleanWord).filter(Boolean).join(' ');
+        }
+        return '';
+    }
+
+    function renderArticleTranslationSection() {
+        const bar = ensureArticleTranslationBarMounted();
+        if (!bar) return;
+        const hasSource = Boolean(state.imageSrc || getEffectiveRawArticleText());
+        if (!hasSource) {
+            bar.innerHTML = '';
+            return;
+        }
+
+        const rawText = getEffectiveRawArticleText();
+        const trans = String(state.articleTranslation || '').trim();
+        const busy = Boolean(state.isTranslatingArticle);
+
+        bar.className = 'p-3 rounded-2xl bg-amber-50/70 dark:bg-slate-800/80 border border-amber-200 dark:border-amber-700/70 space-y-2';
+        bar.innerHTML = `
+            <div class="flex flex-wrap items-center gap-2">
+                <button type="button" id="photoOcrTranslateArticleBtn" ${busy ? 'disabled' : ''} class="px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 disabled:opacity-60 text-white text-xs font-extrabold inline-flex items-center gap-1.5 shadow-xs cursor-pointer">
+                    <span>✨</span><span>${busy ? '整篇翻譯中...' : '整篇翻譯成中文'}</span>
+                </button>
+                ${trans ? `
+                    <button type="button" id="photoOcrCopyArticleBtn" class="px-3 py-2 rounded-xl bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold cursor-pointer">複製整篇譯文</button>
+                    <button type="button" id="photoOcrToggleViewArticleBtn" class="px-3 py-2 rounded-xl bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 text-xs font-bold cursor-pointer">${state.articleViewMode === 'both' ? '僅看譯文' : '原文對照'}</button>
+                ` : ''}
+            </div>
+            ${trans ? `
+                <div id="photoOcrArticleResultCard" class="p-3 rounded-xl bg-white dark:bg-slate-900 border border-amber-200 dark:border-slate-700 max-h-56 overflow-y-auto space-y-2 select-text">
+                    ${state.articleViewMode === 'both' && rawText ? `
+                        <div class="text-xs text-slate-500 dark:text-slate-400 whitespace-pre-wrap leading-relaxed pb-2 border-b border-slate-100 dark:border-slate-800">${escapeOcrHtml(rawText)}</div>
+                    ` : ''}
+                    <div class="text-xs sm:text-sm font-semibold text-slate-800 dark:text-slate-100 whitespace-pre-wrap leading-relaxed">${escapeOcrHtml(trans)}</div>
+                </div>
+            ` : '<div class="text-[11px] text-amber-800/80 dark:text-amber-300/80">點擊上方按鈕即可保留段落格式將整篇文章翻譯成流暢繁體中文；仍可點擊圖片單字入庫。</div>'}
+        `;
+
+        const transBtn = document.getElementById('photoOcrTranslateArticleBtn');
+        if (transBtn) transBtn.onclick = () => translateFullArticleToChinese();
+        const copyBtn = document.getElementById('photoOcrCopyArticleBtn');
+        if (copyBtn) copyBtn.onclick = () => copyArticleTranslation();
+        const toggleBtn = document.getElementById('photoOcrToggleViewArticleBtn');
+        if (toggleBtn) {
+            toggleBtn.onclick = () => {
+                state.articleViewMode = state.articleViewMode === 'both' ? 'trans' : 'both';
+                renderArticleTranslationSection();
+            };
+        }
+    }
+
+    async function copyArticleTranslation() {
+        const text = String(state.articleTranslation || '').trim();
+        if (!text) {
+            if (typeof global.showToast === 'function') global.showToast('尚無整篇譯文可複製', 'info');
+            return false;
+        }
+        let copied = false;
+        try {
+            if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+                await navigator.clipboard.writeText(text);
+                copied = true;
+            }
+        } catch (e) {}
+        if (!copied) {
+            try {
+                const ta = document.createElement('textarea');
+                ta.value = text;
+                ta.setAttribute('readonly', 'true');
+                ta.style.position = 'fixed';
+                ta.style.opacity = '0';
+                document.body.appendChild(ta);
+                ta.select();
+                copied = Boolean(document.execCommand('copy'));
+                document.body.removeChild(ta);
+            } catch (e) {}
+        }
+        if (typeof global.showToast === 'function') {
+            global.showToast(copied ? '已複製整篇中文譯文' : '複製失敗，請手動選取複製', copied ? 'success' : 'warning');
+        }
+        return copied;
+    }
+
+    async function translateFullArticleToChinese() {
+        if (state.isTranslatingArticle) return '';
+        const sourceText = getEffectiveRawArticleText();
+        if (!sourceText) {
+            if (typeof global.showToast === 'function') {
+                global.showToast('請先拍照／選圖並等待文字辨識完成', 'warning');
+            }
+            return '';
+        }
+
+        let aiConsentOk = true;
+        if (typeof global.ensureAiPrivacyConsent === 'function') {
+            aiConsentOk = await global.ensureAiPrivacyConsent({ feature: 'def_fill' });
+        }
+        if (!aiConsentOk) {
+            return '';
+        }
+
+        state.isTranslatingArticle = true;
+        renderArticleTranslationSection();
+
+        try {
+            let translated = '';
+            if (typeof global.callGeminiApi === 'function') {
+                try {
+                    const prompt = `請將以下整篇文章／圖片 OCR 原文完整翻譯成自然流暢的「繁體中文」，嚴格保留原本的段落換行結構，僅直接輸出中文譯文（不要加額外說明或 Markdown 框）：\n\n${sourceText}`;
+                    translated = await global.callGeminiApi(prompt, { silent: true, feature: 'def_fill' });
+                } catch (e) {
+                    console.warn('[PhotoOcr] Gemini full-article translation failed, trying fallback:', e);
+                }
+            }
+
+            if (!translated) {
+                try {
+                    const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=zh-TW&dt=t&q=${encodeURIComponent(sourceText.slice(0, 3500))}`;
+                    const resp = await fetch(url);
+                    if (resp.ok) {
+                        const data = await resp.json();
+                        if (Array.isArray(data) && Array.isArray(data[0])) {
+                            translated = data[0].map(seg => (Array.isArray(seg) ? seg[0] : '')).join('').trim();
+                        }
+                    }
+                } catch (e) {}
+            }
+
+            translated = String(translated || '').trim();
+            if (!translated) {
+                if (typeof global.showToast === 'function') {
+                    global.showToast('整篇翻譯失敗，請檢查網路連線或 API Key 設定', 'error');
+                }
+                return '';
+            }
+
+            state.articleTranslation = translated;
+            if (typeof global.showToast === 'function') {
+                global.showToast('整篇文章翻譯成中文完成！', 'success');
+            }
+            return translated;
+        } finally {
+            state.isTranslatingArticle = false;
+            renderArticleTranslationSection();
+        }
+    }
+
     async function runOcrOnLoadedImage() {
         if (!state.imageSrc) return;
         const myRunToken = ++state.lastRecognizeToken;
         state.isRecognizing = true;
         state.tokens = [];
+        state.fullRawText = '';
+        state.articleTranslation = '';
         renderHotspotsOverlay();
+        renderArticleTranslationSection();
         hideLookupCard();
 
         updateProgressUI(true, 5, '正在準備 OCR 辨識引擎...');
@@ -662,6 +925,7 @@ Return ONLY raw JSON object:
             if (myRunToken !== state.lastRecognizeToken) return;
 
             const data = result && result.data ? result.data : {};
+            state.fullRawText = String(data.text || '').trim();
             state.tokens = extractOcrTokensFromData(data);
 
             updateProgressUI(true, 100, `辨識完成，共找到 ${state.tokens.length} 個單字熱區`);
@@ -670,6 +934,7 @@ Return ONLY raw JSON object:
             }, 900);
 
             renderHotspotsOverlay();
+            renderArticleTranslationSection();
 
             if (state.tokens.length === 0 && typeof global.showToast === 'function') {
                 global.showToast('未偵測到清晰的英文單字，請換一張光線充足且字體清晰的照片', 'warning');
@@ -749,6 +1014,7 @@ Return ONLY raw JSON object:
     }
 
     function displayLoadedImage(dataUrl) {
+        ensurePhotoOcrModalDom();
         const placeholder = document.getElementById('photoOcrEmptyPlaceholder');
         const stage = document.getElementById('photoOcrImageWrapper');
         const img = document.getElementById('photoOcrImage');
@@ -757,9 +1023,12 @@ Return ONLY raw JSON object:
 
         state.imageSrc = dataUrl;
         state.tokens = [];
+        state.fullRawText = '';
+        state.articleTranslation = '';
         state.activeTokenId = null;
         hideLookupCard();
         renderHotspotsOverlay();
+        renderArticleTranslationSection();
 
         img.onload = () => {
             state.naturalWidth = img.naturalWidth || img.width || 1;
@@ -1004,9 +1273,11 @@ Return ONLY raw JSON object:
     }
 
     function open(options = {}) {
+        ensurePhotoOcrModalDom();
         populateDeckSelector();
         updateModeToolbarUI();
         renderSelectedChipsBar();
+        renderArticleTranslationSection();
 
         if (typeof global.openModal === 'function') {
             global.openModal('photoOcrModal');
@@ -1109,6 +1380,8 @@ Return ONLY raw JSON object:
         computeBoxPercentages,
         isValidOcrWord,
         cleanOcrWordToken,
+        translateFullArticleToChinese,
+        copyArticleTranslation,
         getState: () => state
     };
 })(typeof window !== 'undefined' ? window : globalThis);

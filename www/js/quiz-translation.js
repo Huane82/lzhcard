@@ -609,7 +609,9 @@ Return ONLY a valid raw JSON object:
         if (!text) return;
         const clean = String(text).split('/')[0].replace(/\b[A-B]\b/g, '').replace(/\s+/g, ' ').trim();
         if (!clean) return;
-        if (typeof global.speakText === 'function') {
+        if (typeof window !== 'undefined' && window.LZHAudioTts && typeof window.LZHAudioTts.speak === 'function') {
+            window.LZHAudioTts.speak(clean, 'en-US').catch(() => {});
+        } else if (typeof global.speakText === 'function') {
             global.speakText(clean, 'en-US');
         } else if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
             try {

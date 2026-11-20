@@ -47,6 +47,19 @@
       font-size: 13px;
       line-height: 1.45;
       overflow: hidden;
+      -webkit-user-select: none;
+      user-select: none;
+      -webkit-touch-callout: none;
+    }
+    button, [role="button"] {
+      -webkit-user-select: none;
+      user-select: none;
+      -webkit-touch-callout: none;
+    }
+    input, textarea, select, [contenteditable="true"] {
+      -webkit-user-select: text;
+      user-select: text;
+      -webkit-touch-callout: default;
     }
     .hidden { display: none !important; }
 
@@ -72,16 +85,18 @@
       max-height: none !important;
       inset: 0 !important;
       border-radius: 0 !important;
+      padding-top: calc(env(safe-area-inset-top, 0px) + 12px);
+      padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 12px);
     }
     .panel.ft-fullscreen .body {
-      max-height: calc(100vh - 96px);
+      max-height: calc(100vh - 116px);
       flex: 1;
     }
     .header {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 6px;
+      gap: 8px;
       padding: 9px 11px;
       background: var(--surface);
       border-bottom: 1px solid var(--border);
@@ -90,13 +105,14 @@
       touch-action: none;
       flex-shrink: 0;
     }
-    .header-actions { display: flex; align-items: center; gap: 5px; flex-shrink: 0; }
+    .header-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
     .mode-switch-pill {
       position: relative;
       display: inline-flex;
       align-items: center;
       gap: 4px;
-      padding: 4px 9px;
+      min-height: 44px;
+      padding: 6px 10px;
       border-radius: 11px;
       background: var(--brand-soft);
       border: 1px solid rgba(99, 102, 241, 0.35);
@@ -119,16 +135,19 @@
       font-size: 11px;
       font-weight: 700;
       border-radius: 8px;
-      padding: 4px 7px;
+      min-height: 44px;
+      padding: 6px 10px;
       cursor: pointer;
     }
     .icon-btn {
-      width: 28px;
-      height: 28px;
+      min-width: 44px;
+      min-height: 44px;
+      width: 44px;
+      height: 44px;
       border: 0;
       background: var(--surface-2);
       color: var(--text);
-      border-radius: 8px;
+      border-radius: 10px;
       font-weight: 800;
       cursor: pointer;
       display: inline-flex;
@@ -138,7 +157,7 @@
     .tabs {
       display: grid;
       grid-template-columns: repeat(3, 1fr);
-      gap: 6px;
+      gap: 8px;
       padding: 7px 10px;
       border-bottom: 1px solid var(--border);
       background: var(--bg);
@@ -147,7 +166,8 @@
     .tab-btn {
       border: 0;
       border-radius: 11px;
-      padding: 6px 5px;
+      min-height: 44px;
+      padding: 8px 6px;
       font-size: 11px;
       font-weight: 800;
       background: var(--surface-2);
@@ -180,13 +200,14 @@
       flex-direction: column;
       gap: 7px;
     }
-    .row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
-    .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 5px; }
+    .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
     .btn {
       border: 0;
       border-radius: 10px;
-      padding: 7px 10px;
+      min-height: 44px;
+      padding: 8px 12px;
       font-size: 11px;
       font-weight: 800;
       cursor: pointer;
@@ -201,7 +222,7 @@
     .btn-rose { background: var(--rose); color: #ffffff; }
     .btn-amber { background: var(--amber); color: #ffffff; }
     .btn-chip { background: var(--surface-2); color: var(--text); border: 1px solid var(--border); }
-    .btn-sm { padding: 4px 8px; font-size: 10.5px; border-radius: 8px; }
+    .btn-sm { min-height: 44px; padding: 6px 10px; font-size: 11px; border-radius: 8px; }
     .label-xs { font-size: 11px; font-weight: 800; color: var(--muted); }
     .muted { font-size: 11px; color: var(--muted); }
     textarea, input[type="text"], select {
@@ -599,8 +620,8 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 6px;
-      padding: calc(env(safe-area-inset-top, 0px) + 8px) 10px 8px;
+      gap: 8px;
+      padding: calc(env(safe-area-inset-top, 0px) + 12px) 12px 10px;
       background: rgba(15, 23, 42, 0.94);
       border-bottom: 1px solid rgba(148, 163, 184, 0.25);
       flex-shrink: 0;
@@ -657,14 +678,116 @@
       border-color: #6366f1;
     }
     .freeze-footer {
-      padding: 8px 10px calc(env(safe-area-inset-bottom, 0px) + 8px);
+      padding: 10px 12px calc(env(safe-area-inset-bottom, 0px) + 12px);
       background: rgba(15, 23, 42, 0.94);
       border-top: 1px solid rgba(16, 185, 129, 0.35);
       display: flex;
       flex-direction: column;
-      gap: 6px;
+      gap: 8px;
       flex-shrink: 0;
     }
+
+    /* ================== Canva 風格視覺框選器 Modal ================== */
+    .ov-crop-modal {
+      position: fixed;
+      inset: 0;
+      width: 100vw;
+      height: 100vh;
+      z-index: 999999;
+      background: rgba(2, 6, 23, 0.92);
+      backdrop-filter: blur(8px);
+      color: #f8fafc;
+      display: flex;
+      flex-direction: column;
+      padding: calc(env(safe-area-inset-top, 0px) + 12px) 12px calc(env(safe-area-inset-bottom, 0px) + 12px);
+      gap: 8px;
+    }
+    .ov-crop-toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      background: rgba(15, 23, 42, 0.9);
+      border: 1px solid rgba(148, 163, 184, 0.24);
+      border-radius: 12px;
+      padding: 8px 10px;
+      flex-shrink: 0;
+    }
+    .ov-crop-stage-wrap {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+    .ov-crop-canvas {
+      position: relative;
+      width: 100%;
+      max-width: 100%;
+      aspect-ratio: 16 / 9;
+      max-height: 100%;
+      border-radius: 12px;
+      overflow: hidden;
+      border: 1px solid rgba(148, 163, 184, 0.35);
+      background-color: rgba(15, 23, 42, 0.76);
+      background-image:
+        linear-gradient(to right, rgba(255, 255, 255, 0.08) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(255, 255, 255, 0.08) 1px, transparent 1px);
+      background-size: 24px 24px;
+      touch-action: none;
+      user-select: none;
+    }
+    .ov-crop-bg-img {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: fill;
+      pointer-events: none;
+      user-select: none;
+    }
+    .ov-crop-box {
+      position: absolute;
+      background: rgba(34, 197, 94, 0.22);
+      border: 2px solid #22c55e;
+      box-shadow: 0 0 0 9999px rgba(2, 6, 23, 0.42);
+      cursor: move;
+      touch-action: none;
+    }
+    .ov-crop-box-label {
+      position: absolute;
+      top: 4px;
+      left: 6px;
+      background: rgba(15, 23, 42, 0.85);
+      color: #86efac;
+      font-size: 10px;
+      font-weight: 800;
+      padding: 2px 6px;
+      border-radius: 6px;
+      pointer-events: none;
+      white-space: nowrap;
+    }
+    .ov-crop-handle {
+      position: absolute;
+      width: 14px;
+      height: 14px;
+      border-radius: 999px;
+      background: #ffffff;
+      border: 2px solid #16a34a;
+      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
+      transform: translate(-50%, -50%);
+      touch-action: none;
+    }
+    .ov-crop-handle[data-dir="nw"] { left: 0%; top: 0%; cursor: nwse-resize; }
+    .ov-crop-handle[data-dir="n"]  { left: 50%; top: 0%; cursor: ns-resize; }
+    .ov-crop-handle[data-dir="ne"] { left: 100%; top: 0%; cursor: nesw-resize; }
+    .ov-crop-handle[data-dir="e"]  { left: 100%; top: 50%; cursor: ew-resize; }
+    .ov-crop-handle[data-dir="se"] { left: 100%; top: 100%; cursor: nwse-resize; }
+    .ov-crop-handle[data-dir="s"]  { left: 50%; top: 100%; cursor: ns-resize; }
+    .ov-crop-handle[data-dir="sw"] { left: 0%; top: 100%; cursor: nesw-resize; }
+    .ov-crop-handle[data-dir="w"]  { left: 0%; top: 50%; cursor: ew-resize; }
   </style>
 </head>
 <body>
@@ -715,6 +838,43 @@
   <!-- 模式 B：全螢幕截圖定格點詞 / 拍照全螢幕熱區檢視器 -->
   <div class="freeze-shell hidden" id="freezeShell"></div>
 
+  <!-- 模式 C：Canva 風格視覺自訂 ROI 字幕框選器 -->
+  <div class="ov-crop-modal hidden" id="ovVisualRoiModal">
+    <div class="ov-crop-toolbar">
+      <div class="row" style="flex-wrap:wrap;">
+        <strong style="font-size:12px;">自訂字幕掃描框選器</strong>
+        <label class="btn btn-sm btn-chip" style="cursor:pointer;">
+          <span>放上截圖（選填）</span>
+          <input type="file" id="ovCropFileInput" accept="image/*" style="display:none;">
+        </label>
+        <button type="button" class="btn btn-sm btn-chip" id="ovCropClearImgBtn">移除底圖</button>
+        <button type="button" class="btn btn-sm btn-chip" id="ovCropFullscreenBtn">切換全螢幕</button>
+      </div>
+      <div class="row">
+        <button type="button" class="btn btn-sm btn-chip" id="ovCropResetBtn">重整</button>
+        <button type="button" class="btn btn-sm btn-chip" id="ovCropCancelBtn">取消</button>
+        <button type="button" class="btn btn-sm btn-emerald" id="ovCropConfirmBtn">確認</button>
+      </div>
+    </div>
+    <div class="ov-crop-stage-wrap">
+      <div class="ov-crop-canvas" id="ovCropCanvas">
+        <img class="ov-crop-bg-img hidden" id="ovCropBgImg" alt="">
+        <div class="ov-crop-box" id="ovCropBox">
+          <div class="ov-crop-box-label" id="ovCropBoxLabel">X:15% Y:72% W:70% H:16%</div>
+          <div class="ov-crop-handle" data-dir="nw"></div>
+          <div class="ov-crop-handle" data-dir="n"></div>
+          <div class="ov-crop-handle" data-dir="ne"></div>
+          <div class="ov-crop-handle" data-dir="e"></div>
+          <div class="ov-crop-handle" data-dir="se"></div>
+          <div class="ov-crop-handle" data-dir="s"></div>
+          <div class="ov-crop-handle" data-dir="sw"></div>
+          <div class="ov-crop-handle" data-dir="w"></div>
+        </div>
+      </div>
+    </div>
+    <div class="muted" style="text-align:center;color:#cbd5e1;">直接拖曳綠色區域或四邊／四角圓點調整字幕擷取位置，也可不放底圖直接調整。</div>
+  </div>
+
 <script>
 (function () {
   'use strict';
@@ -755,6 +915,10 @@
     photoDataUrl: '',
     photoBase64: '',
     photoSummary: '',
+    photoRawText: '',
+    photoArticleTranslation: '',
+    isPhotoArticleTranslating: false,
+    photoArticleShowOrig: false,
     photoTokens: [],
     photoSelectedIds: new Set(),
     photoActiveId: '',
@@ -773,8 +937,9 @@
     subMode: 'video', // 'video' | 'stt' | 'youtube'
     subtitleOverlayVisible: true,
     nativeVideoOcrRunning: false,
-    videoRoiMode: 'bottom25', // 'bottom25' | 'bottom40' | 'top25' | 'auto' | 'custom' | 'full'
-    videoRoiRect: { xPct: 0.08, yPct: 0.72, wPct: 0.84, hPct: 0.24 },
+    videoSourceLang: 'en', // 'en' | 'ja' | 'ko' | 'zh-TW'
+    videoRoiMode: 'bottom25', // 'bottom25' | 'bottom40' | 'top25' | 'auto' | 'custom'
+    videoRoiRect: { xPct: 0.12, yPct: 0.75, wPct: 0.76, hPct: 0.18 },
     nativeSttRunning: false,
     sttLang: 'en-US',
     sttInterim: '',
@@ -1024,7 +1189,11 @@
         ? `前文語境：${contextLines.slice(-3).join(' / ')}\n`
         : '';
       const draftHint = draft ? `初稿：${draft}\n` : '';
-      const refinePrompt = `將以下口語／影片字幕自然翻成「${cfg.aiName}」，僅輸出精修譯文：\n${ctx}${draftHint}原文：${String(text || '').trim()}`;
+      const refinePrompt = `將以下 OCR 辨識或語音口語字幕自然翻成「${cfg.aiName}」：
+1. 自動忽略句首或句尾殘留的 OCR 亂碼符號（如 | ar Ss = 5），只針對語意連貫的句子翻譯；若整段純屬雜訊請回傳空字串。
+2. 遇到口語慣用語或俚語依語境自然意譯（如 new whip -> 新車／座駕）。
+僅輸出精修譯文：
+${ctx}${draftHint}原文：${String(text || '').trim()}`;
       if (groqKey) {
         try {
           const out = await callGroqDirect(refinePrompt, 'llama-3.1-8b-instant');
@@ -1091,10 +1260,14 @@
 
   function clampOvRoiRect(r) {
     const src = r && typeof r === 'object' ? r : {};
-    const xPct = Math.max(0, Math.min(0.9, Number(src.xPct ?? 0.08) || 0));
-    const yPct = Math.max(0, Math.min(0.9, Number(src.yPct ?? 0.72) || 0));
-    const wPct = Math.max(0.1, Math.min(1 - xPct, Number(src.wPct ?? 0.84) || 0.84));
-    const hPct = Math.max(0.08, Math.min(1 - yPct, Number(src.hPct ?? 0.24) || 0.24));
+    const rawX = src.xPct !== undefined ? src.xPct : src.x;
+    const rawY = src.yPct !== undefined ? src.yPct : src.y;
+    const rawW = src.wPct !== undefined ? src.wPct : src.width;
+    const rawH = src.hPct !== undefined ? src.hPct : src.height;
+    const xPct = Math.max(0, Math.min(0.9, Number(rawX ?? 0.12) || 0));
+    const yPct = Math.max(0, Math.min(0.9, Number(rawY ?? 0.75) || 0));
+    const wPct = Math.max(0.1, Math.min(1 - xPct, Number(rawW ?? 0.76) || 0.76));
+    const hPct = Math.max(0.08, Math.min(1 - yPct, Number(rawH ?? 0.18) || 0.18));
     return {
       xPct: Number(xPct.toFixed(3)),
       yPct: Number(yPct.toFixed(3)),
@@ -1104,14 +1277,14 @@
   }
 
   function applyVideoRoiConfig(mode, rectOverride, skipNativeSync) {
-    const allowed = ['bottom25', 'bottom40', 'top25', 'auto', 'custom', 'full'];
+    const allowed = ['bottom25', 'bottom40', 'top25', 'auto', 'custom'];
     const m = allowed.includes(mode) ? mode : 'bottom25';
     state.videoRoiMode = m;
-    if (rectOverride) state.videoRoiRect = clampOvRoiRect(rectOverride);
-    else if (m === 'bottom25') state.videoRoiRect = { xPct: 0.08, yPct: 0.72, wPct: 0.84, hPct: 0.24 };
-    else if (m === 'bottom40') state.videoRoiRect = { xPct: 0.06, yPct: 0.58, wPct: 0.88, hPct: 0.38 };
-    else if (m === 'top25') state.videoRoiRect = { xPct: 0.08, yPct: 0.04, wPct: 0.84, hPct: 0.24 };
-    else if (m === 'full') state.videoRoiRect = { xPct: 0.0, yPct: 0.0, wPct: 1.0, hPct: 1.0 };
+    if (rectOverride && typeof rectOverride === 'object' && Object.keys(rectOverride).length > 0) {
+      state.videoRoiRect = clampOvRoiRect(rectOverride);
+    } else if (m === 'bottom25') state.videoRoiRect = { xPct: 0.12, yPct: 0.75, wPct: 0.76, hPct: 0.18 };
+    else if (m === 'bottom40') state.videoRoiRect = { xPct: 0.08, yPct: 0.58, wPct: 0.84, hPct: 0.36 };
+    else if (m === 'top25') state.videoRoiRect = { xPct: 0.12, yPct: 0.04, wPct: 0.76, hPct: 0.22 };
 
     if (!skipNativeSync) {
       try {
@@ -2150,7 +2323,25 @@
         </div>
       ` : `<div class="card-box" style="text-align:center;align-items:center;padding:16px 12px;"><div>${OV_SVG.cameraLg}</div><div class="muted">點擊「拍照／相簿」或「螢幕點譯」，即可在全螢幕圖片上點擊單字查義或批次入庫</div></div>`}
 
-      ${state.photoSummary ? `<div class="card-box"><div class="label-xs">全文語意翻譯</div><div style="font-size:12px;font-weight:600;">${esc(state.photoSummary)}</div></div>` : ''}
+      ${state.photoSummary ? `<div class="card-box"><div class="label-xs">圖片重點摘要</div><div style="font-size:12px;font-weight:600;">${esc(state.photoSummary)}</div></div>` : ''}
+
+      ${state.photoDataUrl ? `
+        <div class="card-box" style="border-color:rgba(245,158,11,0.45);background:rgba(245,158,11,0.06);">
+          <div class="row" style="flex-wrap:wrap;gap:6px;">
+            <button type="button" class="btn btn-amber btn-sm" id="pFullTranslateBtn" ${state.isPhotoArticleTranslating ? 'disabled' : ''}>${OV_SVG.sparkle}<span>${state.isPhotoArticleTranslating ? '整篇翻譯中...' : '整篇翻譯成中文'}</span></button>
+            ${state.photoArticleTranslation ? `
+              <button type="button" class="btn btn-chip btn-sm" id="pCopyFullTransBtn">複製整篇譯文</button>
+              <button type="button" class="btn btn-chip btn-sm" id="pToggleOrigTransBtn">${state.photoArticleShowOrig ? '僅看譯文' : '原文對照'}</button>
+            ` : ''}
+          </div>
+          ${state.photoArticleTranslation ? `
+            <div style="margin-top:6px;padding:8px 10px;border-radius:10px;background:var(--surface);border:1px solid var(--border);max-height:170px;overflow-y:auto;user-select:text;">
+              ${state.photoArticleShowOrig && getOverlayEffectiveRawText() ? `<div style="font-size:11px;color:var(--muted);white-space:pre-wrap;line-height:1.5;padding-bottom:6px;margin-bottom:6px;border-bottom:1px solid var(--border);">${esc(getOverlayEffectiveRawText())}</div>` : ''}
+              <div style="font-size:12.5px;font-weight:700;white-space:pre-wrap;line-height:1.6;">${esc(state.photoArticleTranslation)}</div>
+            </div>
+          ` : `<div class="muted">可保留原本段落結構，一鍵翻譯整篇成為繁體中文</div>`}
+        </div>
+      ` : ''}
 
       ${(state.photoMode === 'select' || selCount > 0) ? `
         <div class="sel-box">
@@ -2241,27 +2432,37 @@
 
       ${state.subMode === 'video' ? `
         <div class="card-box">
-          <div class="label-xs">字幕擷取 ROI 掃描區域（即時套用至原生螢幕掃描）</div>
+          <div class="label-xs">嚴格鎖定單一辨識來源語系（禁止多語混測）</div>
+          <div class="grid-4" style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;">
+            <button type="button" class="btn btn-sm ${state.videoSourceLang === 'en' ? 'btn-brand' : 'btn-chip'}" data-ov-srclang="en">英文</button>
+            <button type="button" class="btn btn-sm ${state.videoSourceLang === 'ja' ? 'btn-brand' : 'btn-chip'}" data-ov-srclang="ja">日文</button>
+            <button type="button" class="btn btn-sm ${state.videoSourceLang === 'ko' ? 'btn-brand' : 'btn-chip'}" data-ov-srclang="ko">韓文</button>
+            <button type="button" class="btn btn-sm ${state.videoSourceLang === 'zh-TW' ? 'btn-brand' : 'btn-chip'}" data-ov-srclang="zh-TW">中文</button>
+          </div>
+          <div class="label-xs">字幕擷取 ROI 掃描區域（嚴禁全螢幕掃描）</div>
           <div class="grid-3">
-            <button type="button" class="btn btn-sm ${state.videoRoiMode === 'bottom25' ? 'btn-brand' : 'btn-chip'}" data-ov-roi="bottom25">底部 25%</button>
-            <button type="button" class="btn btn-sm ${state.videoRoiMode === 'bottom40' ? 'btn-brand' : 'btn-chip'}" data-ov-roi="bottom40">底部 40%</button>
-            <button type="button" class="btn btn-sm ${state.videoRoiMode === 'top25' ? 'btn-brand' : 'btn-chip'}" data-ov-roi="top25">頂部 25%</button>
-            <button type="button" class="btn btn-sm ${state.videoRoiMode === 'auto' ? 'btn-brand' : 'btn-chip'}" data-ov-roi="auto">自動偵測</button>
+            <button type="button" class="btn btn-sm ${state.videoRoiMode === 'bottom25' ? 'btn-brand' : 'btn-chip'}" data-ov-roi="bottom25">底部安全帶</button>
+            <button type="button" class="btn btn-sm ${state.videoRoiMode === 'bottom40' ? 'btn-brand' : 'btn-chip'}" data-ov-roi="bottom40">底部擴大</button>
+            <button type="button" class="btn btn-sm ${state.videoRoiMode === 'top25' ? 'btn-brand' : 'btn-chip'}" data-ov-roi="top25">頂部 22%</button>
+            <button type="button" class="btn btn-sm ${state.videoRoiMode === 'auto' ? 'btn-brand' : 'btn-chip'}" data-ov-roi="auto">自動定位</button>
             <button type="button" class="btn btn-sm ${state.videoRoiMode === 'custom' ? 'btn-brand' : 'btn-chip'}" data-ov-roi="custom">自訂區域</button>
-            <button type="button" class="btn btn-sm ${state.videoRoiMode === 'full' ? 'btn-brand' : 'btn-chip'}" data-ov-roi="full">全螢幕</button>
           </div>
           ${state.videoRoiMode === 'custom' ? `
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;flex-wrap:wrap;">
+              <span class="muted">目前框選：X ${Math.round((state.videoRoiRect?.xPct || 0.12) * 100)}% · Y ${Math.round((state.videoRoiRect?.yPct || 0.75) * 100)}% · W ${Math.round((state.videoRoiRect?.wPct || 0.76) * 100)}% · H ${Math.round((state.videoRoiRect?.hPct || 0.18) * 100)}%</span>
+              <button type="button" class="btn btn-sm btn-brand" id="ovOpenVisualCropBtn">開啟視覺框選器</button>
+            </div>
             <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;">
-              <label class="muted" style="display:flex;flex-direction:column;gap:2px;">X%<input type="number" id="ovRoiX" min="0" max="90" value="${Math.round((state.videoRoiRect?.xPct || 0.08) * 100)}"></label>
-              <label class="muted" style="display:flex;flex-direction:column;gap:2px;">Y%<input type="number" id="ovRoiY" min="0" max="90" value="${Math.round((state.videoRoiRect?.yPct || 0.72) * 100)}"></label>
-              <label class="muted" style="display:flex;flex-direction:column;gap:2px;">W%<input type="number" id="ovRoiW" min="10" max="100" value="${Math.round((state.videoRoiRect?.wPct || 0.84) * 100)}"></label>
-              <label class="muted" style="display:flex;flex-direction:column;gap:2px;">H%<input type="number" id="ovRoiH" min="8" max="100" value="${Math.round((state.videoRoiRect?.hPct || 0.24) * 100)}"></label>
+              <label class="muted" style="display:flex;flex-direction:column;gap:2px;">X%<input type="number" id="ovRoiX" min="0" max="90" value="${Math.round((state.videoRoiRect?.xPct || 0.12) * 100)}"></label>
+              <label class="muted" style="display:flex;flex-direction:column;gap:2px;">Y%<input type="number" id="ovRoiY" min="0" max="90" value="${Math.round((state.videoRoiRect?.yPct || 0.75) * 100)}"></label>
+              <label class="muted" style="display:flex;flex-direction:column;gap:2px;">W%<input type="number" id="ovRoiW" min="10" max="100" value="${Math.round((state.videoRoiRect?.wPct || 0.76) * 100)}"></label>
+              <label class="muted" style="display:flex;flex-direction:column;gap:2px;">H%<input type="number" id="ovRoiH" min="8" max="100" value="${Math.round((state.videoRoiRect?.hPct || 0.18) * 100)}"></label>
             </div>
           ` : ''}
           <button type="button" class="btn ${state.nativeVideoOcrRunning ? 'btn-rose' : 'btn-emerald'}" id="toggleNativeVideoOcrBtn">
             ${state.nativeVideoOcrRunning ? `${OV_SVG.stop}<span>停止螢幕 ROI 字幕掃描 (250ms)</span>` : `${OV_SVG.play}<span>啟動螢幕 ML Kit 畫面字幕（免費零延遲）</span>`}
           </button>
-          <div class="muted">支援底部／頂部／自動／自訂／全螢幕 ROI（最高 250ms 偵測），本地相似去重並先顯示離線草稿再背景精修。</div>
+          <div class="muted">強制依框選字幕區裁切並濾除低信心雜訊，本地相似去重後先顯示草稿再背景精修。</div>
         </div>
       ` : state.subMode === 'stt' ? `
         <div class="card-box">
@@ -2513,6 +2714,22 @@
         ` : ''}
       </div>
 
+      <div style="padding:8px 12px;background:rgba(15,23,42,0.95);border-top:1px solid rgba(148,163,184,0.2);display:flex;flex-direction:column;gap:6px;">
+        <div class="row" style="flex-wrap:wrap;gap:6px;">
+          <button type="button" class="btn btn-sm btn-amber" id="fsFullTranslateBtn" ${state.isPhotoArticleTranslating ? 'disabled' : ''}>${OV_SVG.sparkle}<span>${state.isPhotoArticleTranslating ? '整篇翻譯中...' : '整篇翻譯成中文'}</span></button>
+          ${state.photoArticleTranslation ? `
+            <button type="button" class="btn btn-sm btn-chip" id="fsCopyFullTransBtn">複製整篇譯文</button>
+            <button type="button" class="btn btn-sm btn-chip" id="fsToggleOrigBtn">${state.photoArticleShowOrig ? '僅看譯文' : '原文對照'}</button>
+          ` : ''}
+        </div>
+        ${state.photoArticleTranslation ? `
+          <div style="padding:8px 10px;border-radius:10px;background:rgba(2,6,23,0.85);border:1px solid rgba(245,158,11,0.35);max-height:140px;overflow-y:auto;user-select:text;color:#fef3c7;">
+            ${state.photoArticleShowOrig && getOverlayEffectiveRawText() ? `<div style="font-size:11px;color:#94a3b8;white-space:pre-wrap;line-height:1.5;padding-bottom:6px;margin-bottom:6px;border-bottom:1px solid rgba(148,163,184,0.2);">${esc(getOverlayEffectiveRawText())}</div>` : ''}
+            <div style="font-size:12.5px;font-weight:700;white-space:pre-wrap;line-height:1.6;">${esc(state.photoArticleTranslation)}</div>
+          </div>
+        ` : ''}
+      </div>
+
       ${(state.photoMode === 'select' || selCount > 0) ? `
         <div class="freeze-footer">
           <div class="chip-wrap">
@@ -2559,6 +2776,12 @@
     if (allBtn) allBtn.onclick = () => { state.photoTokens.forEach(t => state.photoSelectedIds.add(t.id)); state.photoMode = 'select'; render(); };
     const rescanBtn = shell.querySelector('#fsAiRescanBtn');
     if (rescanBtn) rescanBtn.onclick = () => { if (state.photoBase64) analyzePhotoBase64(state.photoBase64, true); };
+    const fsFullTransBtn = shell.querySelector('#fsFullTranslateBtn');
+    if (fsFullTransBtn) fsFullTransBtn.onclick = translateOverlayPhotoArticle;
+    const fsCopyBtn = shell.querySelector('#fsCopyFullTransBtn');
+    if (fsCopyBtn) fsCopyBtn.onclick = copyOverlayPhotoTranslation;
+    const fsOrigBtn = shell.querySelector('#fsToggleOrigBtn');
+    if (fsOrigBtn) fsOrigBtn.onclick = () => { state.photoArticleShowOrig = !state.photoArticleShowOrig; render(); };
 
     shell.querySelectorAll('[data-fstok]').forEach(btn => {
       btn.onclick = () => {
@@ -2761,6 +2984,12 @@
         render();
       };
     }
+    const pFullTrans = document.getElementById('pFullTranslateBtn');
+    if (pFullTrans) pFullTrans.onclick = translateOverlayPhotoArticle;
+    const pCopyTrans = document.getElementById('pCopyFullTransBtn');
+    if (pCopyTrans) pCopyTrans.onclick = copyOverlayPhotoTranslation;
+    const pToggleOrig = document.getElementById('pToggleOrigTransBtn');
+    if (pToggleOrig) pToggleOrig.onclick = () => { state.photoArticleShowOrig = !state.photoArticleShowOrig; render(); };
 
     // 螢幕點詞頁面事件
     const mLook = document.getElementById('modeLookupBtn');
@@ -2825,12 +3054,29 @@
     const togNativeVid = document.getElementById('toggleNativeVideoOcrBtn');
     if (togNativeVid) togNativeVid.onclick = toggleNativeVideoSubtitle;
 
-    document.querySelectorAll('[data-ov-roi]').forEach(btn => {
+    document.querySelectorAll('[data-ov-srclang]').forEach(btn => {
       btn.onclick = () => {
-        applyVideoRoiConfig(btn.getAttribute('data-ov-roi'), null, false);
+        const chosen = btn.getAttribute('data-ov-srclang') || 'en';
+        state.videoSourceLang = ['en', 'ja', 'ko', 'zh-TW'].includes(chosen) ? chosen : 'en';
+        try { window.AndroidOverlay?.setVideoSourceLang?.(state.videoSourceLang); } catch (e) {}
         render();
       };
     });
+
+    document.querySelectorAll('[data-ov-roi]').forEach(btn => {
+      btn.onclick = () => {
+        const chosen = btn.getAttribute('data-ov-roi');
+        applyVideoRoiConfig(chosen, null, false);
+        render();
+        if (chosen === 'custom') {
+          openOvVisualCropper();
+        }
+      };
+    });
+    const openVisCropBtn = document.getElementById('ovOpenVisualCropBtn');
+    if (openVisCropBtn) {
+      openVisCropBtn.onclick = () => openOvVisualCropper();
+    }
     ['ovRoiX', 'ovRoiY', 'ovRoiW', 'ovRoiH'].forEach(fid => {
       const inp = document.getElementById(fid);
       if (inp) {
@@ -2838,8 +3084,8 @@
           const rect = {
             xPct: (Number(document.getElementById('ovRoiX')?.value) || 0) / 100,
             yPct: (Number(document.getElementById('ovRoiY')?.value) || 0) / 100,
-            wPct: (Number(document.getElementById('ovRoiW')?.value) || 84) / 100,
-            hPct: (Number(document.getElementById('ovRoiH')?.value) || 24) / 100
+            wPct: (Number(document.getElementById('ovRoiW')?.value) || 76) / 100,
+            hPct: (Number(document.getElementById('ovRoiH')?.value) || 18) / 100
           };
           applyVideoRoiConfig('custom', rect, false);
           render();
@@ -2878,11 +3124,90 @@
     render();
     try {
       const cfg = nativeCfg();
-      const tr = await callGemini(`將以下文字通順翻譯成「${cfg.aiName}」，僅輸出譯文：\n${txt}`)
+      const tr = await callGemini(`將以下文字通順翻譯成「${cfg.aiName}」。自動忽略句首或句尾殘留的 OCR 亂碼符號，遇到口語俚語依語境自然意譯（如 new whip -> 新車／座駕），僅輸出譯文：\n${txt}`)
         .catch(() => gtxTranslate(txt, detectLang(txt), cfg.code));
       state.scratchTrans = tr || '';
     } finally {
       state.isScratchBusy = false;
+      render();
+    }
+  }
+
+  function getOverlayEffectiveRawText() {
+    if (state.photoRawText && state.photoRawText.trim()) return state.photoRawText.trim();
+    if (Array.isArray(state.photoTokens) && state.photoTokens.length > 0) {
+      return state.photoTokens.map(t => String(t.text || '').trim()).filter(Boolean).join(' ');
+    }
+    return '';
+  }
+
+  async function copyOverlayPhotoTranslation() {
+    const clean = String(state.photoArticleTranslation || '').trim();
+    if (!clean) {
+      window.AndroidOverlay?.showNativeToast?.('尚無整篇譯文可複製');
+      return false;
+    }
+    let copied = false;
+    try {
+      if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+        await navigator.clipboard.writeText(clean);
+        copied = true;
+      }
+    } catch (e) {}
+    if (!copied) {
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = clean;
+        ta.setAttribute('readonly', 'true');
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        copied = Boolean(document.execCommand('copy'));
+        document.body.removeChild(ta);
+      } catch (e) {}
+    }
+    window.AndroidOverlay?.showNativeToast?.(copied ? '已複製整篇中文譯文' : '複製失敗，請手動選取複製');
+    return copied;
+  }
+
+  async function translateOverlayPhotoArticle() {
+    if (state.isPhotoArticleTranslating) return;
+    const rawText = getOverlayEffectiveRawText();
+    const cleanB64 = state.photoBase64 && state.photoBase64.includes(',') ? state.photoBase64.split(',')[1] : (state.photoBase64 || '');
+    if (!rawText && !cleanB64) {
+      window.AndroidOverlay?.showNativeToast?.('請先拍照或選圖後再執行整篇翻譯');
+      return;
+    }
+    state.isPhotoArticleTranslating = true;
+    render();
+    try {
+      let translated = '';
+      try {
+        if (rawText) {
+          const prompt = `請將以下圖片／文章原文完整翻譯成自然流暢的「繁體中文」，嚴格保留原本的段落換行結構，僅直接輸出翻譯結果（不要加解釋或 Markdown）：\n\n${rawText}`;
+          translated = await callGemini(prompt, null, 'def_fill');
+        } else if (cleanB64) {
+          const prompt = `請辨識這張圖片中的所有段落與文字，完整翻譯成自然流暢的「繁體中文」，保留原有段落換行結構，僅直接輸出中文譯文。`;
+          translated = await callGemini(prompt, { mimeType: 'image/jpeg', data: cleanB64 }, 'vision_ocr');
+        }
+      } catch (e) {}
+
+      if (!translated && rawText) {
+        try {
+          translated = await gtxTranslate(rawText.slice(0, 3500), detectLang(rawText), 'zh-TW');
+        } catch (e) {}
+      }
+
+      translated = String(translated || '').trim();
+      if (!translated) {
+        window.AndroidOverlay?.showNativeToast?.('整篇翻譯失敗，請稍後再試');
+        return;
+      }
+      state.photoArticleTranslation = translated;
+      window.AndroidOverlay?.showNativeToast?.('整篇翻譯成中文完成！');
+    } finally {
+      state.isPhotoArticleTranslating = false;
       render();
     }
   }
@@ -2893,6 +3218,9 @@
     state.photoDataUrl = b64.startsWith('data:') ? b64 : ('data:image/jpeg;base64,' + b64);
     state.photoTokens = [];
     state.photoSummary = '';
+    state.photoRawText = '';
+    state.photoArticleTranslation = '';
+    state.isPhotoArticleTranslating = false;
     state.photoSelectedIds.clear();
     state.isVisionBusy = true;
     state.fullscreenOpen = keepFullscreen !== false;
@@ -2900,13 +3228,14 @@
 
     const cfg = nativeCfg();
     const cleanB64 = state.photoBase64.includes(',') ? state.photoBase64.split(',')[1] : state.photoBase64;
-    const prompt = `對這張圖片進行高精準多語 OCR 與詞彙定位。回傳最多 80 個字詞，每個附上正規化邊界框 box:[ymin,xmin,ymax,xmax]（0~1000整數）。
+    const prompt = `對這張圖片進行高精準多語 OCR 與詞彙定位。rawText 請保留並輸出圖片完整原文（依自然閱讀順序與換行）。tokens 回傳最多 80 個字詞，每個附上正規化邊界框 box:[ymin,xmin,ymax,xmax]（0~1000整數）。
 lang 為 en|ja|zh-TW；reading 英文填 IPA、日文必須填純平假名讀音；translation 與 summary 使用「${cfg.aiName}」。
-只輸出純 JSON：{"summary":"","tokens":[{"text":"","lang":"en|ja|zh-TW","reading":"","pos":"","translation":"","box":[0,0,100,200]}]}`;
+只輸出純 JSON：{"rawText":"","summary":"","tokens":[{"text":"","lang":"en|ja|zh-TW","reading":"","pos":"","translation":"","box":[0,0,100,200]}]}`;
     try {
       const raw = await callGemini(prompt, { mimeType: 'image/jpeg', data: cleanB64 }, 'vision_ocr');
       const obj = safeJson(raw);
       state.photoSummary = obj.summary || '';
+      state.photoRawText = String(obj.rawText || '').trim();
       state.photoTokens = (Array.isArray(obj.tokens) ? obj.tokens : []).map((t, i) => ({
         id: 'pt_' + i,
         text: String(t.text || '').trim(),
@@ -2916,6 +3245,9 @@ lang 為 en|ja|zh-TW；reading 英文填 IPA、日文必須填純平假名讀音
         translation: String(t.translation || '').trim(),
         box: normalizeBox1000(t.box) || [0, 0, 100, 100]
       })).filter(x => x.text);
+      if (!state.photoRawText && state.photoTokens.length > 0) {
+        state.photoRawText = state.photoTokens.map(t => t.text).join(' ');
+      }
     } catch (e) {
       if (e && e.code === 'QUOTA_EXCEEDED') {
         window.AndroidOverlay?.showNativeToast('雲端 AI 拍照額度已達上限，請使用「螢幕定格點詞 (免費 ML Kit)」或升級方案／填寫個人 Key');
@@ -3026,6 +3358,188 @@ lang 為 en|ja|zh-TW；reading 英文填 IPA、日文必須填純平假名讀音
     }
   });
 
+  // Canva 風格視覺 ROI 框選器控制器
+  let ovCropDraft = { xPct: 0.15, yPct: 0.72, wPct: 0.70, hPct: 0.16 };
+  let ovCropBgUrl = '';
+  let ovCropFsWasOn = false;
+
+  function renderOvCropBox() {
+    const box = document.getElementById('ovCropBox');
+    const lbl = document.getElementById('ovCropBoxLabel');
+    if (!box) return;
+    box.style.left = (ovCropDraft.xPct * 100).toFixed(2) + '%';
+    box.style.top = (ovCropDraft.yPct * 100).toFixed(2) + '%';
+    box.style.width = (ovCropDraft.wPct * 100).toFixed(2) + '%';
+    box.style.height = (ovCropDraft.hPct * 100).toFixed(2) + '%';
+    if (lbl) {
+      lbl.textContent = `X:${Math.round(ovCropDraft.xPct * 100)}% Y:${Math.round(ovCropDraft.yPct * 100)}% W:${Math.round(ovCropDraft.wPct * 100)}% H:${Math.round(ovCropDraft.hPct * 100)}%`;
+    }
+  }
+
+  function closeOvVisualCropper(restoreFs) {
+    const modal = document.getElementById('ovVisualRoiModal');
+    if (modal) modal.classList.add('hidden');
+    if (restoreFs && !ovCropFsWasOn && state.panelFullscreen) {
+      togglePanelFullscreen(false);
+    }
+  }
+
+  function openOvVisualCropper() {
+    const modal = document.getElementById('ovVisualRoiModal');
+    if (!modal) return;
+    ovCropFsWasOn = Boolean(state.panelFullscreen);
+    ovCropDraft = clampOvRoiRect(state.videoRoiRect || { xPct: 0.15, yPct: 0.72, wPct: 0.70, hPct: 0.16 });
+    const bgImg = document.getElementById('ovCropBgImg');
+    if (bgImg) {
+      if (ovCropBgUrl) {
+        bgImg.src = ovCropBgUrl;
+        bgImg.classList.remove('hidden');
+      } else {
+        bgImg.removeAttribute('src');
+        bgImg.classList.add('hidden');
+      }
+    }
+    if (!state.panelFullscreen) {
+      togglePanelFullscreen(true);
+    }
+    modal.classList.remove('hidden');
+    renderOvCropBox();
+  }
+
+  (function bindOvVisualCropper() {
+    const modal = document.getElementById('ovVisualRoiModal');
+    const canvas = document.getElementById('ovCropCanvas');
+    const box = document.getElementById('ovCropBox');
+    const bgImg = document.getElementById('ovCropBgImg');
+    const fileInp = document.getElementById('ovCropFileInput');
+    const clearImgBtn = document.getElementById('ovCropClearImgBtn');
+    const fsBtn = document.getElementById('ovCropFullscreenBtn');
+    const resetBtn = document.getElementById('ovCropResetBtn');
+    const cancelBtn = document.getElementById('ovCropCancelBtn');
+    const confirmBtn = document.getElementById('ovCropConfirmBtn');
+    if (!modal || !canvas || !box) return;
+
+    if (fileInp) {
+      fileInp.onchange = () => {
+        const f = fileInp.files && fileInp.files[0];
+        if (!f) return;
+        const reader = new FileReader();
+        reader.onload = () => {
+          ovCropBgUrl = String(reader.result || '');
+          if (bgImg && ovCropBgUrl) {
+            bgImg.src = ovCropBgUrl;
+            bgImg.classList.remove('hidden');
+          }
+        };
+        reader.readAsDataURL(f);
+        fileInp.value = '';
+      };
+    }
+
+    if (clearImgBtn) {
+      clearImgBtn.onclick = () => {
+        ovCropBgUrl = '';
+        if (bgImg) {
+          bgImg.removeAttribute('src');
+          bgImg.classList.add('hidden');
+        }
+      };
+    }
+
+    if (fsBtn) {
+      fsBtn.onclick = () => togglePanelFullscreen();
+    }
+
+    if (resetBtn) {
+      resetBtn.onclick = () => {
+        ovCropDraft = { xPct: 0.12, yPct: 0.75, wPct: 0.76, hPct: 0.18 };
+        renderOvCropBox();
+      };
+    }
+
+    if (cancelBtn) {
+      cancelBtn.onclick = () => closeOvVisualCropper(true);
+    }
+
+    if (confirmBtn) {
+      confirmBtn.onclick = () => {
+        applyVideoRoiConfig('custom', ovCropDraft, false);
+        closeOvVisualCropper(true);
+        render();
+      };
+    }
+
+    let dragOp = null;
+    canvas.addEventListener('pointerdown', (e) => {
+      const handleEl = e.target.closest('.ov-crop-handle');
+      const isBox = handleEl || e.target === box || e.target.closest('#ovCropBox');
+      if (!isBox) return;
+      e.preventDefault();
+      const rect = canvas.getBoundingClientRect();
+      if (!rect.width || !rect.height) return;
+      dragOp = {
+        dir: handleEl ? handleEl.getAttribute('data-dir') : 'move',
+        startX: e.clientX,
+        startY: e.clientY,
+        cw: rect.width,
+        ch: rect.height,
+        orig: { ...ovCropDraft },
+        pointerId: e.pointerId
+      };
+      try { canvas.setPointerCapture(e.pointerId); } catch (err) {}
+    });
+
+    canvas.addEventListener('pointermove', (e) => {
+      if (!dragOp) return;
+      e.preventDefault();
+      const dx = (e.clientX - dragOp.startX) / dragOp.cw;
+      const dy = (e.clientY - dragOp.startY) / dragOp.ch;
+      const minW = Math.max(0.08, 48 / dragOp.cw);
+      const minH = Math.max(0.06, 48 / dragOp.ch);
+      let { xPct, yPct, wPct, hPct } = dragOp.orig;
+      const dir = dragOp.dir;
+
+      if (dir === 'move') {
+        xPct = Math.max(0, Math.min(1 - wPct, xPct + dx));
+        yPct = Math.max(0, Math.min(1 - hPct, yPct + dy));
+      } else {
+        if (dir.includes('w')) {
+          const maxShift = wPct - minW;
+          const shift = Math.max(-xPct, Math.min(maxShift, dx));
+          xPct += shift;
+          wPct -= shift;
+        }
+        if (dir.includes('e')) {
+          wPct = Math.max(minW, Math.min(1 - xPct, wPct + dx));
+        }
+        if (dir.includes('n')) {
+          const maxShift = hPct - minH;
+          const shift = Math.max(-yPct, Math.min(maxShift, dy));
+          yPct += shift;
+          hPct -= shift;
+        }
+        if (dir.includes('s')) {
+          hPct = Math.max(minH, Math.min(1 - yPct, hPct + dy));
+        }
+      }
+      ovCropDraft = {
+        xPct: Number(xPct.toFixed(3)),
+        yPct: Number(yPct.toFixed(3)),
+        wPct: Number(wPct.toFixed(3)),
+        hPct: Number(hPct.toFixed(3))
+      };
+      renderOvCropBox();
+    });
+
+    const stopCropDrag = (e) => {
+      if (!dragOp) return;
+      try { canvas.releasePointerCapture(dragOp.pointerId); } catch (err) {}
+      dragOp = null;
+    };
+    canvas.addEventListener('pointerup', stopCropDrag);
+    canvas.addEventListener('pointercancel', stopCropDrag);
+  })();
+
   window.LZHOverlayApp = {
     applyNativeConfig(cfg) {
       if (!cfg) return;
@@ -3039,10 +3553,19 @@ lang 為 en|ja|zh-TW；reading 英文填 IPA、日文必須填純平假名讀音
         state.membershipTier = cfg.membershipTier;
       }
       if (cfg.aiUsage !== undefined) state.aiUsage = cfg.aiUsage;
-      if (cfg.videoRoiMode || cfg.videoRoiRectJson) {
+      if (cfg.videoSourceLang && ['en', 'ja', 'ko', 'zh-TW'].includes(cfg.videoSourceLang)) {
+        state.videoSourceLang = cfg.videoSourceLang;
+      }
+      if (cfg.videoRoiMode || cfg.videoRoiRectJson || cfg.videoRoiRect) {
         let parsedRect = null;
-        if (cfg.videoRoiRectJson) {
-          try { parsedRect = typeof cfg.videoRoiRectJson === 'string' ? JSON.parse(cfg.videoRoiRectJson) : cfg.videoRoiRectJson; } catch (e) {}
+        const rawRectSrc = cfg.videoRoiRectJson !== undefined ? cfg.videoRoiRectJson : cfg.videoRoiRect;
+        if (rawRectSrc) {
+          try {
+            const tmp = typeof rawRectSrc === 'string' ? JSON.parse(rawRectSrc) : rawRectSrc;
+            if (tmp && typeof tmp === 'object' && Object.keys(tmp).length > 0) {
+              parsedRect = tmp;
+            }
+          } catch (e) {}
         }
         applyVideoRoiConfig(cfg.videoRoiMode || state.videoRoiMode, parsedRect, true);
       }
@@ -3051,7 +3574,9 @@ lang 為 en|ja|zh-TW；reading 英文填 IPA、日文必須填純平假名讀音
       if (cfg.chatSession && typeof cfg.chatSession === 'object') {
         state.chatSession = { ...state.chatSession, ...cfg.chatSession };
       }
-      render();
+      if (!state.isVisionBusy && !state.fullscreenFromFreezeService) {
+        render();
+      }
     },
     onNativeImageCaptured(b64) {
       state.inlineZoom = { scale: 1, tx: 0, ty: 0 };
@@ -3092,6 +3617,8 @@ lang 為 en|ja|zh-TW；reading 英文填 IPA、日文必須填純平假名讀音
       state.fsZoom = { scale: 1, tx: 0, ty: 0 };
       state.photoDataUrl = payload.imageDataUrl || (payload.imageBase64 ? ('data:image/jpeg;base64,' + payload.imageBase64) : '');
       state.photoBase64 = payload.imageBase64 || '';
+      state.photoArticleTranslation = '';
+      state.isPhotoArticleTranslating = false;
       state.photoTokens = (Array.isArray(payload.tokens) ? payload.tokens : []).map((t, i) => ({
         id: 'fz_' + i,
         text: String(t.text || '').trim(),
@@ -3101,6 +3628,7 @@ lang 為 en|ja|zh-TW；reading 英文填 IPA、日文必須填純平假名讀音
         translation: String(t.translation || '').trim(),
         box: normalizeBox1000(t.box) || [0, 0, 100, 100]
       })).filter(x => x.text);
+      state.photoRawText = String(payload.rawText || '').trim() || state.photoTokens.map(t => t.text).join(' ');
       if (Array.isArray(payload.decks) && payload.decks.length > 0) state.decks = payload.decks;
       if (payload.defaultDeck) state.selectedDeck = payload.defaultDeck;
       if (payload.nativeLang) state.nativeLang = payload.nativeLang;
@@ -3136,6 +3664,19 @@ lang 為 en|ja|zh-TW；reading 英文填 IPA、日文必須填純平假名讀音
     stopVoiceRecognitionMode();
     stopScreenSubtitleMode();
     closeChatStreams();
+  });
+
+  document.addEventListener('focusin', (e) => {
+    const target = e && e.target;
+    if (!target || typeof target.scrollIntoView !== 'function') return;
+    const tag = (target.tagName || '').toUpperCase();
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable) {
+      setTimeout(() => {
+        try {
+          target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        } catch (err) {}
+      }, 260);
+    }
   });
 
   try {

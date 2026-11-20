@@ -18,6 +18,8 @@
     const STORAGE_SUBTITLE_POS_KEY = 'lzhcard_ft_subtitle_pos_v1';
     const STORAGE_VIDEO_ROI_MODE_KEY = 'lzhcard_ft_video_roi_mode_v1';
     const STORAGE_VIDEO_ROI_CFG_KEY = 'lzhcard_ft_video_roi_cfg_v1';
+    const STORAGE_VIDEO_SOURCE_LANG_KEY = 'lzhcard_ft_video_source_lang_v1';
+    const STORAGE_IOS_SCREEN_CFG_KEY = 'lzhcard_ios_screen_translate_cfg_v1';
     const IDB_DICT_KEY = 'lzhcard_ft_trilingual_dict_v1';
     const SESSION_DICT_KEY = 'lzhcard_ft_trilingual_session_v1';
     const SHARED_WORKER_BASE = (typeof global.SHARED_BACKEND_URL === 'string' && global.SHARED_BACKEND_URL)
@@ -61,6 +63,7 @@
     let photoFullscreenEl = null;
     let photoFullscreenResizeObs = null;
     let pipWindowRef = null;
+    let iosScreenModalEl = null;
 
     // 狀態控制
     let panelViewMode = 'translator'; // 'translator' | 'chat'
@@ -107,11 +110,33 @@
     let photoNaturalHeight = 0;
     let photoTokens = []; // [{ id, text, lang, reading, pos, translation, box: [ymin,xmin,ymax,xmax] }]
     let photoSummary = '';
+    let photoRawArticleText = '';
+    let photoArticleTranslation = '';
+    let photoArticleViewMode = 'trans'; // 'trans' | 'both'
+    let isPhotoArticleTranslating = false;
     let photoActiveTokenId = null;
     const photoSelectedTokenIds = new Set();
     let inlinePhotoZoom = { scale: 1, tx: 0, ty: 0 };
     let fsPhotoZoom = { scale: 1, tx: 0, ty: 0 };
     let ftPhotoPinchGuardUntil = 0;
+
+    // iOS 子母畫面 (PiP) 螢幕翻譯精靈與狀態
+    let iosScreenWizardStep = 1;
+    let iosScreenCapabilities = null;
+    let iosOfflinePackReady = false;
+    let iosOfflineDownloading = false;
+    let iosPipActive = false;
+    let iosPipPluginBound = false;
+    let iosFallbackNotice = '';
+    let iosScreenConfig = {
+        setupCompleted: false,
+        engine: 'apple_offline',
+        sourceLang: 'en',
+        targetLang: 'zh-TW',
+        customApiKey: '',
+        regionMode: 'auto',
+        region: { x: 0.12, y: 0.75, width: 0.76, height: 0.18 }
+    };
 
     // 螢幕點詞輸入區狀態
     let screenScratchText = '';
@@ -124,8 +149,9 @@
     let subtitlePinnedOverlay = true;
     // 4A. 螢幕 / 影片幀差 OCR
     let videoCaptureStream = null;
-    let videoRoiMode = 'bottom25'; // 'bottom25' | 'bottom40' | 'top25' | 'full' | 'auto' | 'custom'
-    let videoRoiCustomRect = { xPct: 0.08, yPct: 0.72, wPct: 0.84, hPct: 0.24 };
+    let videoRoiMode = 'bottom25'; // 'bottom25' | 'bottom40' | 'top25' | 'auto' | 'custom'
+    let videoRoiCustomRect = { xPct: 0.12, yPct: 0.75, wPct: 0.76, hPct: 0.18 };
+    let videoSourceLang = 'en'; // 'en' | 'ja' | 'ko' | 'zh-TW'
     let videoMonitorTimer = null;
     let videoLastFrameLuma = null;
     let videoLastOcrAt = 0;
@@ -710,6 +736,11 @@
         const resolvedLang = langCode === 'ja'
             ? 'ja-JP'
             : (langCode === 'zh-TW' || langCode === 'zh' ? 'zh-TW' : 'en-US');
+
+        if (global.LZHAudioTts && typeof global.LZHAudioTts.speak === 'function') {
+            global.LZHAudioTts.speak(clean, resolvedLang);
+            return true;
+        }
 
         const capTTS = global.Capacitor?.Plugins?.TextToSpeech;
         if (typeof global.isNativeApp === 'function' && global.isNativeApp() && capTTS && typeof capTTS.speak === 'function') {
@@ -1372,7 +1403,8 @@
         if (!selectionBarEl) {
             selectionBarEl = document.createElement('div');
             selectionBarEl.id = 'ftSelectionFloatingBar';
-            selectionBarEl.className = 'hidden fixed z-[55] bottom-20 left-1/2 -translate-x-1/2 w-[min(94vw,520px)] bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-2xl border border-emerald-300 dark:border-emerald-700 shadow-2xl p-3 space-y-2';
+            selectionBarEl.className = 'hidden fixed z-[55] left-1/2 -translate-x-1/2 w-[min(94vw,520px)] bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-2xl border border-emerald-300 dark:border-emerald-700 shadow-2xl p-3 space-y-2';
+            selectionBarEl.style.bottom = 'calc(5rem + env(safe-area-inset-bottom, 0px))';
             document.body.appendChild(selectionBarEl);
         }
 
@@ -1862,8 +1894,10 @@
         const modal = document.createElement('div');
         modal.id = 'ftPhotoFullscreenModal';
         modal.className = 'hidden fixed inset-0 z-[72] bg-slate-950/95 text-white flex flex-col select-none';
-        modal.style.paddingTop = 'env(safe-area-inset-top, 0px)';
-        modal.style.paddingBottom = 'env(safe-area-inset-bottom, 0px)';
+        modal.style.paddingTop = 'calc(env(safe-area-inset-top, 0px) + 12px)';
+        modal.style.paddingBottom = 'calc(env(safe-area-inset-bottom, 0px) + 12px)';
+        modal.style.paddingLeft = 'env(safe-area-inset-left, 0px)';
+        modal.style.paddingRight = 'env(safe-area-inset-right, 0px)';
         document.body.appendChild(modal);
         photoFullscreenEl = modal;
         return modal;
@@ -1965,6 +1999,26 @@
                 </div>
             ` : ''}
 
+            <div class="px-3 py-2 bg-slate-900/95 border-t border-slate-800 space-y-2 shrink-0">
+                <div class="flex flex-wrap items-center gap-1.5">
+                    <button type="button" id="ftFsFullTranslateBtn" ${isPhotoArticleTranslating ? 'disabled' : ''} class="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 disabled:opacity-60 text-slate-950 text-xs font-extrabold inline-flex items-center gap-1 cursor-pointer shadow-xs">
+                        ${FT_SVG.sparkle}<span>${isPhotoArticleTranslating ? '整篇翻譯中...' : '整篇翻譯成中文'}</span>
+                    </button>
+                    ${photoArticleTranslation ? `
+                        <button type="button" id="ftFsCopyFullTransBtn" class="px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-600 text-slate-100 text-[11px] font-bold cursor-pointer">複製整篇譯文</button>
+                        <button type="button" id="ftFsToggleOrigBtn" class="px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 text-[11px] font-bold cursor-pointer">${photoArticleViewMode === 'both' ? '僅看譯文' : '原文對照'}</button>
+                    ` : ''}
+                </div>
+                ${photoArticleTranslation ? `
+                    <div class="p-2.5 rounded-xl bg-slate-950/90 border border-amber-500/40 max-h-36 overflow-y-auto space-y-1.5 select-text">
+                        ${photoArticleViewMode === 'both' && getEffectivePhotoRawText() ? `
+                            <div class="text-[11px] text-slate-400 whitespace-pre-wrap leading-relaxed pb-1.5 border-b border-slate-800">${escapeHtml(getEffectivePhotoRawText())}</div>
+                        ` : ''}
+                        <div class="text-xs sm:text-sm font-medium text-amber-100 whitespace-pre-wrap leading-relaxed">${escapeHtml(photoArticleTranslation)}</div>
+                    </div>
+                ` : ''}
+            </div>
+
             ${(photoMode === 'select' || selCount > 0) ? `
                 <div class="px-3 py-2 bg-slate-900 border-t border-emerald-800/70 space-y-1.5 shrink-0">
                     <div class="flex flex-wrap gap-1 max-h-14 overflow-y-auto">
@@ -2029,6 +2083,19 @@
             clrBtn.onclick = () => {
                 photoSelectedTokenIds.clear();
                 renderPhotoFullscreenModal();
+            };
+        }
+
+        const fsFullTransBtn = modal.querySelector('#ftFsFullTranslateBtn');
+        if (fsFullTransBtn) fsFullTransBtn.onclick = () => translatePhotoArticleToChinese();
+        const fsCopyTransBtn = modal.querySelector('#ftFsCopyFullTransBtn');
+        if (fsCopyTransBtn) fsCopyTransBtn.onclick = () => copyPhotoArticleTranslation();
+        const fsToggleOrigBtn = modal.querySelector('#ftFsToggleOrigBtn');
+        if (fsToggleOrigBtn) {
+            fsToggleOrigBtn.onclick = () => {
+                photoArticleViewMode = photoArticleViewMode === 'both' ? 'trans' : 'both';
+                renderPhotoFullscreenModal();
+                renderActiveTabBody();
             };
         }
 
@@ -2097,9 +2164,71 @@
         return ftTesseractPromise;
     }
 
-    async function runLocalTesseractPhotoOcr(dataUrl, width, height, nativeCfg) {
+    function mapSourceLangToTesseract(langCode) {
+        const l = String(langCode || '').trim().toLowerCase();
+        if (l.startsWith('ja')) return 'jpn';
+        if (l.startsWith('ko')) return 'kor';
+        if (l.startsWith('zh')) return 'chi_tra';
+        return 'eng';
+    }
+
+    function filterOcrNoiseText(rawText, lockedLang = 'en') {
+        let text = String(rawText || '')
+            .replace(/[|=~^_`\\§©®•·]+/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+        if (!text) return '';
+
+        const lang = String(lockedLang || 'en').toLowerCase();
+        if (lang === 'en' || (!lang.startsWith('ja') && !lang.startsWith('ko') && !lang.startsWith('zh'))) {
+            const kept = text.split(/\s+/).filter((tok) => {
+                const core = tok.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '');
+                if (!core) return false;
+                if (core.length === 1) {
+                    return core === 'a' || core === 'A' || core === 'I';
+                }
+                return /[A-Za-z0-9]/.test(core);
+            });
+            text = kept.join(' ').trim();
+        }
+
+        const meaningfulCount = (text.match(/[\p{L}\p{N}]/gu) || []).length;
+        if (meaningfulCount < 2) return '';
+        if (meaningfulCount / Math.max(1, text.length) < 0.45) return '';
+        return text;
+    }
+
+    function filterOcrResultWordsAndText(ocrResult, lockedLang = 'en', minConfidence = 65) {
+        const data = (ocrResult && ocrResult.data) || {};
+        const words = Array.isArray(data.words) ? data.words : [];
+        if (words.length > 0) {
+            const validWords = [];
+            for (let i = 0; i < words.length; i++) {
+                const w = words[i];
+                if (!w) continue;
+                const conf = Number(w.confidence);
+                if (Number.isFinite(conf) && conf < minConfidence) continue;
+                const cleanedTok = filterOcrNoiseText(w.text, lockedLang);
+                if (!cleanedTok) continue;
+                validWords.push({ ...w, text: cleanedTok });
+            }
+            const joined = filterOcrNoiseText(validWords.map(w => w.text).join(' '), lockedLang);
+            return { text: joined, words: validWords };
+        }
+        const lines = Array.isArray(data.lines) ? data.lines : [];
+        const validLines = lines
+            .filter(l => l && (!Number.isFinite(Number(l.confidence)) || Number(l.confidence) >= minConfidence))
+            .map(l => String(l.text || '').trim())
+            .filter(Boolean);
+        const fallbackRaw = validLines.length ? validLines.join(' ') : String(data.text || '');
+        return { text: filterOcrNoiseText(fallbackRaw, lockedLang), words: [] };
+    }
+
+    async function runLocalTesseractPhotoOcr(dataUrl, width, height, nativeCfg, sourceLangHint = '') {
         const Tesseract = await loadLocalTesseractEngine();
-        const ocrResult = await Tesseract.recognize(dataUrl, 'eng+jpn+chi_tra');
+        const lockedLang = sourceLangHint || videoSourceLang || 'en';
+        const tessLang = mapSourceLangToTesseract(lockedLang);
+        const ocrResult = await Tesseract.recognize(dataUrl, tessLang);
         const words = (ocrResult && ocrResult.data && Array.isArray(ocrResult.data.words)) ? ocrResult.data.words : [];
         const imgW = Math.max(1, Number(width) || 1000);
         const imgH = Math.max(1, Number(height) || 1000);
@@ -2107,8 +2236,10 @@
         const rawTokens = [];
         for (let i = 0; i < words.length && rawTokens.length < 600; i++) {
             const w = words[i];
-            const txt = String((w && w.text) || '').trim();
-            if (!txt || /^[\s.,:;!?'"()\[\]{}\-_/\\|@#$%^&*+=~`<>]+$/.test(txt)) continue;
+            const conf = Number(w && w.confidence);
+            if (Number.isFinite(conf) && conf < 65) continue;
+            const txt = filterOcrNoiseText((w && w.text) || '', lockedLang);
+            if (!txt) continue;
             const bb = (w && w.bbox) || null;
             if (!bb) continue;
             const ymin = clamp(Math.round((bb.y0 / imgH) * 1000), 0, 998);
@@ -2118,7 +2249,7 @@
             rawTokens.push({
                 id: `ltok_${rawTokens.length}`,
                 text: txt,
-                lang: detectScriptLang(txt),
+                lang: detectScriptLang(txt, lockedLang),
                 reading: '',
                 pos: '',
                 translation: '',
@@ -2126,14 +2257,123 @@
             });
         }
 
-        const fullRawText = String((ocrResult && ocrResult.data && ocrResult.data.text) || '').trim();
+        const filteredFull = filterOcrResultWordsAndText(ocrResult, lockedLang, 65);
+        const fullRawText = filteredFull.text || rawTokens.map(t => t.text).join(' ').trim();
         let summary = '';
         if (fullRawText) {
             try {
-                summary = await fetchGoogleTranslateFallback(fullRawText.slice(0, 600), detectScriptLang(fullRawText), nativeCfg.code);
+                summary = await fetchGoogleTranslateFallback(fullRawText.slice(0, 600), detectScriptLang(fullRawText, lockedLang), nativeCfg.code);
             } catch (e) {}
         }
-        return { tokens: rawTokens, summary };
+        return { tokens: rawTokens, summary, rawText: fullRawText };
+    }
+
+    function getEffectivePhotoRawText() {
+        if (photoRawArticleText && photoRawArticleText.trim()) return photoRawArticleText.trim();
+        if (Array.isArray(photoTokens) && photoTokens.length > 0) {
+            return photoTokens.map(tk => String(tk.text || '').trim()).filter(Boolean).join(' ');
+        }
+        return '';
+    }
+
+    async function copyTextWithClipboardFallback(text) {
+        const clean = String(text || '').trim();
+        if (!clean) return false;
+        try {
+            if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+                await navigator.clipboard.writeText(clean);
+                return true;
+            }
+        } catch (e) {}
+        try {
+            const ta = document.createElement('textarea');
+            ta.value = clean;
+            ta.setAttribute('readonly', 'true');
+            ta.style.position = 'fixed';
+            ta.style.opacity = '0';
+            document.body.appendChild(ta);
+            ta.select();
+            const ok = document.execCommand('copy');
+            document.body.removeChild(ta);
+            return Boolean(ok);
+        } catch (e) {
+            return false;
+        }
+    }
+
+    async function copyPhotoArticleTranslation() {
+        if (!photoArticleTranslation || !photoArticleTranslation.trim()) {
+            toast('尚無整篇譯文可複製', 'info');
+            return false;
+        }
+        const ok = await copyTextWithClipboardFallback(photoArticleTranslation);
+        toast(ok ? '已複製整篇中文譯文' : '複製失敗，請手動選取文字複製', ok ? 'success' : 'warning');
+        return ok;
+    }
+
+    async function translatePhotoArticleToChinese() {
+        if (isPhotoArticleTranslating) return '';
+        const sourceText = getEffectivePhotoRawText();
+        if (!sourceText && !photoImageBase64) {
+            toast('請先拍照或選擇圖片並等待文字辨識完成', 'warning');
+            return '';
+        }
+
+        const canUseCloudAi = hasLocalPersonalAiKey() || ((typeof global.MembershipEngine !== 'undefined' && typeof global.MembershipEngine.canConsumeAiQuota === 'function')
+            ? global.MembershipEngine.canConsumeAiQuota('def_fill').allowed
+            : true);
+
+        if (canUseCloudAi && typeof global.ensureAiPrivacyConsent === 'function') {
+            const consentOk = await global.ensureAiPrivacyConsent({ feature: photoImageBase64 && !sourceText ? 'vision_ocr' : 'def_fill' });
+            if (!consentOk) {
+                return '';
+            }
+        }
+
+        isPhotoArticleTranslating = true;
+        renderActiveTabBody();
+        if (photoFullscreenOpen) renderPhotoFullscreenModal();
+
+        try {
+            let translated = '';
+            if (canUseCloudAi && typeof global.callGeminiApi === 'function') {
+                try {
+                    if (sourceText) {
+                        const prompt = `請將以下整篇文章／圖片辨識原文完整翻譯成自然流暢的「繁體中文」，嚴格保留原本的段落換行與條列結構，僅直接輸出翻譯結果（不要加解釋或 Markdown 框）：\n\n${sourceText}`;
+                        translated = await global.callGeminiApi(prompt, { silent: true, feature: 'def_fill' });
+                    } else if (photoImageBase64) {
+                        const prompt = `請辨識圖片中的所有文章／段落文字，並完整翻譯成自然流暢的「繁體中文」，保留原本段落與換行結構，僅直接輸出中文譯文。`;
+                        translated = await global.callGeminiApi(prompt, {
+                            silent: true,
+                            feature: 'vision_ocr',
+                            inlineData: { mimeType: photoImageMime || 'image/jpeg', data: photoImageBase64 }
+                        });
+                    }
+                } catch (aiErr) {
+                    console.warn('[FloatingTranslator] 全篇 AI 翻譯失敗，嘗試免費備援翻譯:', aiErr);
+                }
+            }
+
+            if (!translated && sourceText) {
+                try {
+                    translated = await fetchGoogleTranslateFallback(sourceText.slice(0, 3500), detectScriptLang(sourceText), 'zh-TW');
+                } catch (gtxErr) {}
+            }
+
+            translated = String(translated || '').trim();
+            if (!translated) {
+                toast('整篇翻譯失敗，請檢查網路連線或 API Key 設定', 'error');
+                return '';
+            }
+
+            photoArticleTranslation = translated;
+            toast('整篇文章翻譯成中文完成！', 'success');
+            return translated;
+        } finally {
+            isPhotoArticleTranslating = false;
+            renderActiveTabBody();
+            if (photoFullscreenOpen) renderPhotoFullscreenModal();
+        }
     }
 
     async function analyzeCompressedPhoto({ dataUrl, base64, mimeType, width, height }) {
@@ -2145,6 +2385,9 @@
         photoNaturalHeight = Number(height) || 0;
         photoTokens = [];
         photoSummary = '';
+        photoRawArticleText = '';
+        photoArticleTranslation = '';
+        isPhotoArticleTranslating = false;
         photoActiveTokenId = null;
         photoSelectedTokenIds.clear();
         isVisionBusy = true;
@@ -2156,17 +2399,25 @@
         const nativeCfg = getNativeLangConfig(targetNativeLang);
         const prompt = `請對這張圖片進行高精準多語 OCR 與詞彙定位解析。
 規則：
-1. 辨識圖片中的英文單字、日文單字／片語或中文詞彙（最多回傳 80 個重要字詞，優先實詞）。
-2. 每個 token 必須附上相對於整張圖片的正規化邊界框 box: [ymin, xmin, ymax, xmax]，座標範圍為 0 到 1000 的整數。
-3. lang 為 "en"、"ja" 或 "zh-TW"。
-4. reading：英文填 IPA 音標；日文必須填寫「純平假名讀音」；中文可填拼音或留空。
-5. translation 必須使用「${nativeCfg.aiName}」翻譯該詞彙；summary 為整張圖主要內容的「${nativeCfg.aiName}」通順翻譯摘要。
-6. 只輸出單一純 JSON 物件（不要加 Markdown 語法）：
-{"summary":"","detectedLang":"en|ja|zh-TW","tokens":[{"text":"","lang":"en|ja|zh-TW","reading":"","pos":"","translation":"","box":[0,0,100,200]}]}`;
+1. rawText 欄位請完整保留並輸出圖片中的原文全文（依自然閱讀順序與換行連接）。
+2. tokens 辨識圖片中的英文單字、日文單字／片語或中文詞彙（最多回傳 80 個重要字詞，優先實詞）。
+3. 每個 token 必須附上相對於整張圖片的正規化邊界框 box: [ymin, xmin, ymax, xmax]，座標範圍為 0 到 1000 的整數。
+4. lang 為 "en"、"ja" 或 "zh-TW"。
+5. reading：英文填 IPA 音標；日文必須填寫「純平假名讀音」；中文可填拼音或留空。
+6. translation 必須使用「${nativeCfg.aiName}」翻譯該詞彙；summary 為整張圖主要內容的「${nativeCfg.aiName}」通順翻譯摘要。
+7. 只輸出單一純 JSON 物件（不要加 Markdown 語法）：
+{"rawText":"","summary":"","detectedLang":"en|ja|zh-TW","tokens":[{"text":"","lang":"en|ja|zh-TW","reading":"","pos":"","translation":"","box":[0,0,100,200]}]}`;
 
-        const canUseCloudVision = hasLocalGeminiKey() || ((typeof global.MembershipEngine !== 'undefined' && typeof global.MembershipEngine.canConsumeAiQuota === 'function')
+        let canUseCloudVision = hasLocalGeminiKey() || ((typeof global.MembershipEngine !== 'undefined' && typeof global.MembershipEngine.canConsumeAiQuota === 'function')
             ? global.MembershipEngine.canConsumeAiQuota('vision_ocr').allowed
             : true);
+
+        if (canUseCloudVision && typeof global.ensureAiPrivacyConsent === 'function') {
+            const consentOk = await global.ensureAiPrivacyConsent({ feature: 'vision_ocr' });
+            if (!consentOk) {
+                canUseCloudVision = false;
+            }
+        }
 
         try {
             let usedLocalFallback = false;
@@ -2183,6 +2434,7 @@
                         : JSON.parse(raw);
 
                     photoSummary = String((parsed && parsed.summary) || '').trim();
+                    photoRawArticleText = String((parsed && parsed.rawText) || '').trim();
                     const rawTokens = (parsed && Array.isArray(parsed.tokens)) ? parsed.tokens : [];
                     photoTokens = rawTokens
                         .map((tk, idx) => {
@@ -2203,6 +2455,9 @@
                             };
                         })
                         .filter(Boolean);
+                    if (!photoRawArticleText && photoTokens.length > 0) {
+                        photoRawArticleText = photoTokens.map(t => t.text).join(' ');
+                    }
                 } catch (cloudErr) {
                     if (cloudErr && cloudErr.code === 'QUOTA_EXCEEDED') {
                         usedLocalFallback = true;
@@ -2218,8 +2473,9 @@
                 const localRes = await runLocalTesseractPhotoOcr(photoImageDataUrl, photoNaturalWidth, photoNaturalHeight, nativeCfg);
                 photoTokens = localRes.tokens;
                 photoSummary = localRes.summary;
+                photoRawArticleText = localRes.rawText || localRes.tokens.map(t => t.text).join(' ');
                 toast('已使用免費本地離線 OCR 辨識（點詞將以極速翻譯解析；升級入門／進階方案可啟用雲端 AI 高精準多語熱區）', 'info');
-            } else if (photoTokens.length === 0 && !photoSummary) {
+            } else if (photoTokens.length === 0 && !photoSummary && !photoRawArticleText) {
                 toast('圖片中未偵測到可辨識文字', 'warning');
             } else {
                 toast(`辨識完成，共定位 ${photoTokens.length} 個互動字詞熱區`, 'success');
@@ -2389,22 +2645,46 @@
     function loadVideoRoiPreference() {
         try {
             const savedMode = localStorage.getItem(STORAGE_VIDEO_ROI_MODE_KEY);
-            if (savedMode && ['bottom25', 'bottom40', 'top25', 'full', 'auto', 'custom'].includes(savedMode)) {
+            if (savedMode && ['bottom25', 'bottom40', 'top25', 'auto', 'custom'].includes(savedMode)) {
                 videoRoiMode = savedMode;
+            } else if (savedMode === 'full') {
+                videoRoiMode = 'bottom25';
             }
             const rawCfg = localStorage.getItem(STORAGE_VIDEO_ROI_CFG_KEY);
             if (rawCfg) {
                 const parsed = JSON.parse(rawCfg);
                 if (parsed && typeof parsed === 'object') {
                     videoRoiCustomRect = {
-                        xPct: clamp(Number(parsed.xPct) || 0.08, 0, 0.9),
-                        yPct: clamp(Number(parsed.yPct) || 0.72, 0, 0.9),
-                        wPct: clamp(Number(parsed.wPct) || 0.84, 0.1, 1),
-                        hPct: clamp(Number(parsed.hPct) || 0.24, 0.08, 1)
+                        xPct: clamp(Number(parsed.xPct ?? 0.12), 0, 0.9),
+                        yPct: clamp(Number(parsed.yPct ?? 0.75), 0, 0.9),
+                        wPct: clamp(Number(parsed.wPct ?? 0.76), 0.1, 1),
+                        hPct: clamp(Number(parsed.hPct ?? 0.18), 0.08, 1)
                     };
                 }
             }
+            const savedLang = localStorage.getItem(STORAGE_VIDEO_SOURCE_LANG_KEY);
+            if (savedLang && ['en', 'ja', 'ko', 'zh-TW'].includes(savedLang)) {
+                videoSourceLang = savedLang;
+            }
         } catch (e) {}
+    }
+
+    function normalizeRoiDraftRect(rect) {
+        const src = (rect && typeof rect === 'object') ? rect : {};
+        const rawX = src.xPct !== undefined ? Number(src.xPct) : Number(src.x);
+        const rawY = src.yPct !== undefined ? Number(src.yPct) : Number(src.y);
+        const rawW = src.wPct !== undefined ? Number(src.wPct) : Number(src.width);
+        const rawH = src.hPct !== undefined ? Number(src.hPct) : Number(src.height);
+        const xPct = clamp(Number.isFinite(rawX) ? rawX : 0.12, 0, 0.90);
+        const yPct = clamp(Number.isFinite(rawY) ? rawY : 0.75, 0, 0.90);
+        const wPct = clamp(Number.isFinite(rawW) ? rawW : 0.76, 0.10, 1 - xPct);
+        const hPct = clamp(Number.isFinite(rawH) ? rawH : 0.18, 0.08, 1 - yPct);
+        return {
+            xPct: Number(xPct.toFixed(3)),
+            yPct: Number(yPct.toFixed(3)),
+            wPct: Number(wPct.toFixed(3)),
+            hPct: Number(hPct.toFixed(3))
+        };
     }
 
     function persistVideoRoiConfig() {
@@ -2412,15 +2692,462 @@
         try {
             localStorage.setItem(STORAGE_VIDEO_ROI_MODE_KEY, videoRoiMode);
             localStorage.setItem(STORAGE_VIDEO_ROI_CFG_KEY, rectJson);
+            localStorage.setItem(STORAGE_VIDEO_SOURCE_LANG_KEY, videoSourceLang);
         } catch (e) {}
         try {
             if (global.AndroidOverlay && typeof global.AndroidOverlay.setVideoRoiConfig === 'function') {
                 global.AndroidOverlay.setVideoRoiConfig(videoRoiMode, rectJson);
             }
+            if (global.AndroidOverlay && typeof global.AndroidOverlay.setVideoSourceLang === 'function') {
+                global.AndroidOverlay.setVideoSourceLang(videoSourceLang);
+            }
         } catch (e) {}
         if (typeof global.syncConfigToNativeOverlay === 'function') {
             global.syncConfigToNativeOverlay();
         }
+    }
+
+    let ftVisualCropModalEl = null;
+    let ftCropBgDataUrl = '';
+
+    function ensureVisualRoiCropStyle() {
+        if (typeof document === 'undefined' || !document.head) return;
+        if (document.getElementById('ftVisualRoiCropStyle')) return;
+        const styleEl = document.createElement('style');
+        styleEl.id = 'ftVisualRoiCropStyle';
+        styleEl.textContent = `
+            .ft-crop-modal {
+                position: fixed;
+                inset: 0;
+                width: 100vw;
+                height: 100vh;
+                z-index: 999999;
+                background: rgba(2, 6, 23, 0.92);
+                backdrop-filter: blur(8px);
+                display: flex;
+                flex-direction: column;
+                gap: 10px;
+                padding: calc(env(safe-area-inset-top, 0px) + 12px) calc(env(safe-area-inset-right, 0px) + 12px) calc(env(safe-area-inset-bottom, 0px) + 12px) calc(env(safe-area-inset-left, 0px) + 12px);
+                color: #f8fafc;
+            }
+            .ft-crop-modal.hidden { display: none !important; }
+            .ft-crop-toolbar {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 8px;
+                flex-wrap: wrap;
+                background: rgba(15, 23, 42, 0.92);
+                border: 1px solid rgba(148, 163, 184, 0.28);
+                border-radius: 14px;
+                padding: 8px 12px;
+                flex-shrink: 0;
+            }
+            .ft-crop-btn {
+                border: 1px solid rgba(148, 163, 184, 0.35);
+                background: rgba(30, 41, 59, 0.95);
+                color: #f1f5f9;
+                font-size: 11px;
+                font-weight: 800;
+                border-radius: 9px;
+                padding: 8px 12px;
+                min-height: 44px;
+                min-width: 44px;
+                cursor: pointer;
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                gap: 4px;
+            }
+            .ft-crop-btn:hover { background: rgba(51, 65, 85, 0.98); }
+            .ft-crop-btn--primary {
+                background: #10b981;
+                border-color: #059669;
+                color: #ffffff;
+            }
+            .ft-crop-btn--primary:hover { background: #059669; }
+            .ft-crop-stage-wrap {
+                flex: 1;
+                min-height: 0;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                overflow: hidden;
+            }
+            .ft-crop-canvas {
+                position: relative;
+                width: 100%;
+                max-width: 960px;
+                aspect-ratio: 16 / 9;
+                max-height: 100%;
+                border-radius: 14px;
+                overflow: hidden;
+                border: 1px solid rgba(148, 163, 184, 0.4);
+                background-color: rgba(15, 23, 42, 0.78);
+                background-image:
+                    linear-gradient(to right, rgba(255, 255, 255, 0.08) 1px, transparent 1px),
+                    linear-gradient(to bottom, rgba(255, 255, 255, 0.08) 1px, transparent 1px);
+                background-size: 24px 24px;
+                touch-action: none;
+                user-select: none;
+            }
+            .ft-crop-modal.ft-crop-fs .ft-crop-canvas {
+                max-width: calc(100vw - 24px);
+                max-height: calc(100vh - 115px);
+                width: 100%;
+            }
+            .ft-crop-bg-img {
+                position: absolute;
+                inset: 0;
+                width: 100%;
+                height: 100%;
+                object-fit: fill;
+                pointer-events: none;
+                user-select: none;
+            }
+            .ft-crop-bg-img.hidden { display: none !important; }
+            .ft-crop-box {
+                position: absolute;
+                background: rgba(34, 197, 94, 0.22);
+                border: 2px solid #22c55e;
+                box-shadow: 0 0 0 9999px rgba(2, 6, 23, 0.45);
+                cursor: move;
+                touch-action: none;
+            }
+            .ft-crop-box-label {
+                position: absolute;
+                top: 4px;
+                left: 6px;
+                background: rgba(15, 23, 42, 0.88);
+                color: #86efac;
+                font-size: 10px;
+                font-weight: 800;
+                padding: 2px 6px;
+                border-radius: 6px;
+                pointer-events: none;
+                white-space: nowrap;
+            }
+            .ft-crop-handle {
+                position: absolute;
+                width: 14px;
+                height: 14px;
+                border-radius: 999px;
+                background: #ffffff;
+                border: 2px solid #16a34a;
+                box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
+                transform: translate(-50%, -50%);
+                touch-action: none;
+            }
+            .ft-crop-handle[data-dir="nw"] { left: 0%; top: 0%; cursor: nwse-resize; }
+            .ft-crop-handle[data-dir="n"]  { left: 50%; top: 0%; cursor: ns-resize; }
+            .ft-crop-handle[data-dir="ne"] { left: 100%; top: 0%; cursor: nesw-resize; }
+            .ft-crop-handle[data-dir="e"]  { left: 100%; top: 50%; cursor: ew-resize; }
+            .ft-crop-handle[data-dir="se"] { left: 100%; top: 100%; cursor: nwse-resize; }
+            .ft-crop-handle[data-dir="s"]  { left: 50%; top: 100%; cursor: ns-resize; }
+            .ft-crop-handle[data-dir="sw"] { left: 0%; top: 100%; cursor: nesw-resize; }
+            .ft-crop-handle[data-dir="w"]  { left: 0%; top: 50%; cursor: ew-resize; }
+        `;
+        document.head.appendChild(styleEl);
+    }
+
+    async function captureSingleFrameDataUrlForCropper() {
+        // 若已有正在播放且具備有效寬高的來源 <video>，優先直接取幀
+        if (videoSourceElement && videoSourceElement.readyState >= 2 && videoSourceElement.videoWidth > 0 && videoSourceElement.videoHeight > 0) {
+            const c = document.createElement('canvas');
+            c.width = videoSourceElement.videoWidth;
+            c.height = videoSourceElement.videoHeight;
+            const ctx = c.getContext('2d');
+            ctx.drawImage(videoSourceElement, 0, 0, c.width, c.height);
+            return c.toDataURL('image/jpeg', 0.9);
+        }
+        if (!navigator.mediaDevices || typeof navigator.mediaDevices.getDisplayMedia !== 'function') {
+            throw new Error('此瀏覽器或裝置不支援即時畫面擷取，請使用「放上截圖」');
+        }
+        let stream = null;
+        const hiddenVid = document.createElement('video');
+        hiddenVid.muted = true;
+        hiddenVid.playsInline = true;
+        try {
+            stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+            hiddenVid.srcObject = stream;
+            await new Promise((resolve) => {
+                if (hiddenVid.readyState >= 1) return resolve();
+                hiddenVid.onloadedmetadata = () => resolve();
+                setTimeout(resolve, 1500);
+            });
+            await hiddenVid.play().catch(() => {});
+
+            const deadline = Date.now() + 2500;
+            while ((hiddenVid.readyState < 2 || hiddenVid.videoWidth <= 0 || hiddenVid.videoHeight <= 0) && Date.now() < deadline) {
+                await new Promise(r => setTimeout(r, 45));
+            }
+            if (hiddenVid.readyState < 2 || hiddenVid.videoWidth <= 0 || hiddenVid.videoHeight <= 0) {
+                throw new Error('畫面尚未就緒，請再試一次或改用「放上截圖」');
+            }
+            await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+            const w = hiddenVid.videoWidth;
+            const h = hiddenVid.videoHeight;
+            const c = document.createElement('canvas');
+            c.width = w;
+            c.height = h;
+            const ctx = c.getContext('2d');
+            ctx.drawImage(hiddenVid, 0, 0, w, h);
+            return c.toDataURL('image/jpeg', 0.9);
+        } finally {
+            try { hiddenVid.srcObject = null; } catch (e) {}
+            if (stream && typeof stream.getTracks === 'function') {
+                stream.getTracks().forEach(t => { try { t.stop(); } catch (e) {} });
+            }
+        }
+    }
+
+    function openVisualRoiCropper(options = {}) {
+        ensureVisualRoiCropStyle();
+        if (ftVisualCropModalEl && ftVisualCropModalEl.parentElement) {
+            ftVisualCropModalEl.remove();
+            ftVisualCropModalEl = null;
+        }
+
+        const title = options.title || '自訂字幕掃描框選器';
+        let draft = normalizeRoiDraftRect(options.initialRect || videoRoiCustomRect);
+        let cropFs = false;
+        const prevElectronFs = Boolean(panelFullscreen);
+        const canScreenGrab = Boolean(
+            (videoSourceElement && videoSourceElement.readyState >= 2 && videoSourceElement.videoWidth > 0) ||
+            (navigator.mediaDevices && typeof navigator.mediaDevices.getDisplayMedia === 'function')
+        );
+
+        const modal = document.createElement('div');
+        modal.id = 'ftVisualRoiCropModal';
+        modal.className = 'ft-crop-modal';
+        modal.innerHTML = `
+            <div class="ft-crop-toolbar">
+                <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+                    <strong style="font-size:12px;">${escapeHtml(title)}</strong>
+                    <label class="ft-crop-btn">
+                        <span>放上截圖</span>
+                        <input type="file" id="ftCropFileInput" accept="image/*" style="display:none;">
+                    </label>
+                    ${canScreenGrab ? '<button type="button" class="ft-crop-btn" id="ftCropGrabScreenBtn">擷取畫面</button>' : ''}
+                    <button type="button" class="ft-crop-btn" id="ftCropClearImgBtn">移除底圖</button>
+                    <button type="button" class="ft-crop-btn" id="ftCropFullscreenBtn">切換全螢幕</button>
+                </div>
+                <div style="display:flex;align-items:center;gap:6px;">
+                    <button type="button" class="ft-crop-btn" id="ftCropResetBtn">重整</button>
+                    <button type="button" class="ft-crop-btn" id="ftCropCancelBtn">取消</button>
+                    <button type="button" class="ft-crop-btn ft-crop-btn--primary" id="ftCropConfirmBtn">確認</button>
+                </div>
+            </div>
+            <div class="ft-crop-stage-wrap">
+                <div class="ft-crop-canvas" id="ftCropCanvas">
+                    <img class="ft-crop-bg-img ${ftCropBgDataUrl ? '' : 'hidden'}" id="ftCropBgImg" alt="" ${ftCropBgDataUrl ? `src="${ftCropBgDataUrl}"` : ''}>
+                    <div class="ft-crop-box" id="ftCropBox">
+                        <div class="ft-crop-box-label" id="ftCropBoxLabel"></div>
+                        <div class="ft-crop-handle" data-dir="nw"></div>
+                        <div class="ft-crop-handle" data-dir="n"></div>
+                        <div class="ft-crop-handle" data-dir="ne"></div>
+                        <div class="ft-crop-handle" data-dir="e"></div>
+                        <div class="ft-crop-handle" data-dir="se"></div>
+                        <div class="ft-crop-handle" data-dir="s"></div>
+                        <div class="ft-crop-handle" data-dir="sw"></div>
+                        <div class="ft-crop-handle" data-dir="w"></div>
+                    </div>
+                </div>
+            </div>
+            <div style="text-align:center;font-size:11px;color:#cbd5e1;flex-shrink:0;">
+                可直接於網格畫布拖曳綠框及 8 個圓點調整位置（截圖僅為輔助底圖，未放截圖亦可直接調整儲存）。
+            </div>
+        `;
+        document.body.appendChild(modal);
+        ftVisualCropModalEl = modal;
+
+        const canvas = modal.querySelector('#ftCropCanvas');
+        const box = modal.querySelector('#ftCropBox');
+        const label = modal.querySelector('#ftCropBoxLabel');
+        const bgImg = modal.querySelector('#ftCropBgImg');
+        const fileInp = modal.querySelector('#ftCropFileInput');
+        const grabBtn = modal.querySelector('#ftCropGrabScreenBtn');
+        const clearBtn = modal.querySelector('#ftCropClearImgBtn');
+        const fsBtn = modal.querySelector('#ftCropFullscreenBtn');
+        const resetBtn = modal.querySelector('#ftCropResetBtn');
+        const cancelBtn = modal.querySelector('#ftCropCancelBtn');
+        const confirmBtn = modal.querySelector('#ftCropConfirmBtn');
+
+        const renderBox = () => {
+            const xPct = Math.round(draft.xPct * 100);
+            const yPct = Math.round(draft.yPct * 100);
+            const wPct = Math.round(draft.wPct * 100);
+            const hPct = Math.round(draft.hPct * 100);
+            box.style.left = `${draft.xPct * 100}%`;
+            box.style.top = `${draft.yPct * 100}%`;
+            box.style.width = `${draft.wPct * 100}%`;
+            box.style.height = `${draft.hPct * 100}%`;
+            if (label) label.textContent = `X:${xPct}% Y:${yPct}% W:${wPct}% H:${hPct}%`;
+        };
+
+        const cleanupModal = () => {
+            if (document.fullscreenElement === modal && typeof document.exitFullscreen === 'function') {
+                document.exitFullscreen().catch(() => {});
+            }
+            if (cropFs && !prevElectronFs && hasElectronWidgetBridge() && typeof global.LZHDesktopWidget.setFullscreenViewer === 'function') {
+                global.LZHDesktopWidget.setFullscreenViewer(false).catch(() => {});
+            }
+            modal.remove();
+            if (ftVisualCropModalEl === modal) ftVisualCropModalEl = null;
+        };
+
+        if (fileInp) {
+            fileInp.onchange = () => {
+                const f = fileInp.files && fileInp.files[0];
+                if (!f) return;
+                const reader = new FileReader();
+                reader.onload = () => {
+                    ftCropBgDataUrl = String(reader.result || '');
+                    if (bgImg && ftCropBgDataUrl) {
+                        bgImg.src = ftCropBgDataUrl;
+                        bgImg.classList.remove('hidden');
+                    }
+                };
+                reader.readAsDataURL(f);
+                fileInp.value = '';
+            };
+        }
+
+        if (grabBtn) {
+            grabBtn.onclick = async () => {
+                grabBtn.disabled = true;
+                const origTxt = grabBtn.textContent;
+                grabBtn.textContent = '擷取中...';
+                try {
+                    const dataUrl = await captureSingleFrameDataUrlForCropper();
+                    ftCropBgDataUrl = dataUrl;
+                    if (bgImg) {
+                        bgImg.src = dataUrl;
+                        bgImg.classList.remove('hidden');
+                    }
+                    toast('已擷取畫面作為定位底圖', 'success');
+                } catch (err) {
+                    toast((err && err.message) ? err.message : '擷取畫面失敗', 'warning');
+                } finally {
+                    grabBtn.disabled = false;
+                    grabBtn.textContent = origTxt;
+                }
+            };
+        }
+
+        if (clearBtn) {
+            clearBtn.onclick = () => {
+                ftCropBgDataUrl = '';
+                if (bgImg) {
+                    bgImg.removeAttribute('src');
+                    bgImg.classList.add('hidden');
+                }
+            };
+        }
+
+        if (fsBtn) {
+            fsBtn.onclick = () => {
+                cropFs = !cropFs;
+                modal.classList.toggle('ft-crop-fs', cropFs);
+                if (hasElectronWidgetBridge() && typeof global.LZHDesktopWidget.setFullscreenViewer === 'function') {
+                    global.LZHDesktopWidget.setFullscreenViewer(cropFs || prevElectronFs).catch(() => {});
+                } else if (cropFs && typeof modal.requestFullscreen === 'function') {
+                    modal.requestFullscreen().catch(() => {});
+                } else if (!cropFs && document.fullscreenElement === modal && typeof document.exitFullscreen === 'function') {
+                    document.exitFullscreen().catch(() => {});
+                }
+            };
+        }
+
+        if (resetBtn) {
+            resetBtn.onclick = () => {
+                draft = { xPct: 0.12, yPct: 0.75, wPct: 0.76, hPct: 0.18 };
+                renderBox();
+            };
+        }
+
+        if (cancelBtn) {
+            cancelBtn.onclick = () => {
+                cleanupModal();
+                if (typeof options.onCancel === 'function') options.onCancel();
+            };
+        }
+
+        if (confirmBtn) {
+            confirmBtn.onclick = () => {
+                const confirmed = normalizeRoiDraftRect(draft);
+                cleanupModal();
+                if (typeof options.onConfirm === 'function') {
+                    options.onConfirm(confirmed);
+                }
+            };
+        }
+
+        let dragOp = null;
+        canvas.addEventListener('pointerdown', (e) => {
+            const handleEl = e.target.closest('.ft-crop-handle');
+            const isBox = handleEl || e.target === box || e.target.closest('#ftCropBox');
+            if (!isBox) return;
+            e.preventDefault();
+            const rect = canvas.getBoundingClientRect();
+            if (!rect.width || !rect.height) return;
+            dragOp = {
+                dir: handleEl ? handleEl.getAttribute('data-dir') : 'move',
+                startX: e.clientX,
+                startY: e.clientY,
+                cw: rect.width,
+                ch: rect.height,
+                orig: { ...draft },
+                pointerId: e.pointerId
+            };
+            try { canvas.setPointerCapture(e.pointerId); } catch (err) {}
+        });
+
+        canvas.addEventListener('pointermove', (e) => {
+            if (!dragOp) return;
+            e.preventDefault();
+            const dx = (e.clientX - dragOp.startX) / dragOp.cw;
+            const dy = (e.clientY - dragOp.startY) / dragOp.ch;
+            const minW = Math.max(0.08, 48 / dragOp.cw);
+            const minH = Math.max(0.06, 48 / dragOp.ch);
+            let { xPct, yPct, wPct, hPct } = dragOp.orig;
+            const dir = dragOp.dir;
+
+            if (dir === 'move') {
+                xPct = clamp(xPct + dx, 0, 1 - wPct);
+                yPct = clamp(yPct + dy, 0, 1 - hPct);
+            } else {
+                if (dir.includes('w')) {
+                    const shift = Math.max(-xPct, Math.min(wPct - minW, dx));
+                    xPct += shift;
+                    wPct -= shift;
+                }
+                if (dir.includes('e')) {
+                    wPct = clamp(wPct + dx, minW, 1 - xPct);
+                }
+                if (dir.includes('n')) {
+                    const shift = Math.max(-yPct, Math.min(hPct - minH, dy));
+                    yPct += shift;
+                    hPct -= shift;
+                }
+                if (dir.includes('s')) {
+                    hPct = clamp(hPct + dy, minH, 1 - yPct);
+                }
+            }
+            draft = normalizeRoiDraftRect({ xPct, yPct, wPct, hPct });
+            renderBox();
+        });
+
+        const endDrag = () => {
+            if (!dragOp) return;
+            try { canvas.releasePointerCapture(dragOp.pointerId); } catch (err) {}
+            dragOp = null;
+        };
+        canvas.addEventListener('pointerup', endDrag);
+        canvas.addEventListener('pointercancel', endDrag);
+
+        renderBox();
     }
 
     function detectAutoSubtitleRoiRect(sourceEl, srcW, srcH) {
@@ -2462,39 +3189,92 @@
             }
         }
         if (bestEnergy < 8 * winH) {
-            return { sx: 0, sy: Math.round(srcH * 0.72), sw: srcW, sh: Math.max(20, srcH - Math.round(srcH * 0.72)) };
+            const sx = Math.round(srcW * 0.12);
+            const sy = Math.round(srcH * 0.75);
+            const sw = Math.max(24, Math.round(srcW * 0.76));
+            const sh = Math.max(20, Math.round(srcH * 0.18));
+            return { sx, sy, sw, sh };
         }
+        const sx = Math.round(srcW * 0.08);
+        const sw = Math.max(24, Math.round(srcW * 0.84));
         const sy = Math.max(0, Math.round((bestY / scanH) * srcH));
         const sh = Math.max(20, Math.min(srcH - sy, Math.round((winH / scanH) * srcH)));
-        return { sx: 0, sy, sw: srcW, sh };
+        return { sx, sy, sw, sh };
+    }
+
+    function resolveStrictCropRect(sourceEl, srcW, srcH, roiMode) {
+        if (roiMode === 'bottom40') {
+            return {
+                sx: Math.round(srcW * 0.08),
+                sy: Math.round(srcH * 0.58),
+                sw: Math.max(24, Math.round(srcW * 0.84)),
+                sh: Math.max(20, Math.round(srcH * 0.36))
+            };
+        }
+        if (roiMode === 'top25') {
+            return {
+                sx: Math.round(srcW * 0.12),
+                sy: Math.round(srcH * 0.04),
+                sw: Math.max(24, Math.round(srcW * 0.76)),
+                sh: Math.max(20, Math.round(srcH * 0.22))
+            };
+        }
+        if (roiMode === 'auto') {
+            return detectAutoSubtitleRoiRect(sourceEl, srcW, srcH);
+        }
+        if (roiMode === 'custom') {
+            const xPct = clamp(Number(videoRoiCustomRect.xPct ?? 0.12), 0, 0.90);
+            const yPct = clamp(Number(videoRoiCustomRect.yPct ?? 0.75), 0, 0.90);
+            const wPct = clamp(Number(videoRoiCustomRect.wPct ?? 0.76), 0.10, 1 - xPct);
+            const hPct = clamp(Number(videoRoiCustomRect.hPct ?? 0.18), 0.08, 1 - yPct);
+            return {
+                sx: Math.round(srcW * xPct),
+                sy: Math.round(srcH * yPct),
+                sw: Math.max(24, Math.round(srcW * wPct)),
+                sh: Math.max(20, Math.round(srcH * hPct))
+            };
+        }
+        // 預設強制裁切底部字幕安全帶 (x: 0.12, y: 0.75, width: 0.76, height: 0.18)，嚴禁將全螢幕直接送入 OCR
+        return {
+            sx: Math.round(srcW * 0.12),
+            sy: Math.round(srcH * 0.75),
+            sw: Math.max(24, Math.round(srcW * 0.76)),
+            sh: Math.max(20, Math.round(srcH * 0.18))
+        };
+    }
+
+    function maskSubtitleOverlayOnCanvas(ocrCtx, ocrW, ocrH, cropSx, cropSy, cropSw, cropSh, srcW, srcH) {
+        if (hasElectronWidgetBridge() || !subtitleOverlayEl || subtitleOverlayEl.classList.contains('hidden')) {
+            return;
+        }
+        try {
+            const subRect = subtitleOverlayEl.getBoundingClientRect();
+            if (!subRect || subRect.width <= 0 || subRect.height <= 0) return;
+            const vw = Math.max(1, global.innerWidth || document.documentElement.clientWidth || 1);
+            const vh = Math.max(1, global.innerHeight || document.documentElement.clientHeight || 1);
+
+            const subX0 = (subRect.left / vw) * srcW;
+            const subY0 = (subRect.top / vh) * srcH;
+            const subX1 = ((subRect.left + subRect.width) / vw) * srcW;
+            const subY1 = ((subRect.top + subRect.height) / vh) * srcH;
+
+            const interX0 = Math.max(cropSx, subX0);
+            const interY0 = Math.max(cropSy, subY0);
+            const interX1 = Math.min(cropSx + cropSw, subX1);
+            const interY1 = Math.min(cropSy + cropSh, subY1);
+            if (interX1 <= interX0 || interY1 <= interY0) return;
+
+            const mx = Math.floor(((interX0 - cropSx) / cropSw) * ocrW);
+            const my = Math.floor(((interY0 - cropSy) / cropSh) * ocrH);
+            const mw = Math.ceil(((interX1 - interX0) / cropSw) * ocrW);
+            const mh = Math.ceil(((interY1 - interY0) / cropSh) * ocrH);
+            ocrCtx.fillStyle = '#000000';
+            ocrCtx.fillRect(Math.max(0, mx), Math.max(0, my), Math.min(ocrW, mw), Math.min(ocrH, mh));
+        } catch (e) {}
     }
 
     function extractRoiCanvasAndLuma(sourceEl, srcW, srcH, roiMode) {
-        let sx = 0;
-        let sy = 0;
-        let sw = srcW;
-        let sh = srcH;
-        if (roiMode === 'bottom25') {
-            sy = Math.round(srcH * 0.72);
-            sh = Math.max(20, srcH - sy);
-        } else if (roiMode === 'bottom40') {
-            sy = Math.round(srcH * 0.58);
-            sh = Math.max(20, srcH - sy);
-        } else if (roiMode === 'top25') {
-            sy = Math.round(srcH * 0.02);
-            sh = Math.max(20, Math.round(srcH * 0.25));
-        } else if (roiMode === 'auto') {
-            ({ sx, sy, sw, sh } = detectAutoSubtitleRoiRect(sourceEl, srcW, srcH));
-        } else if (roiMode === 'custom') {
-            const xPct = clamp(Number(videoRoiCustomRect.xPct) || 0, 0, 0.9);
-            const yPct = clamp(Number(videoRoiCustomRect.yPct) || 0, 0, 0.9);
-            const wPct = clamp(Number(videoRoiCustomRect.wPct) || 1, 0.1, 1 - xPct);
-            const hPct = clamp(Number(videoRoiCustomRect.hPct) || 0.25, 0.08, 1 - yPct);
-            sx = Math.round(srcW * xPct);
-            sy = Math.round(srcH * yPct);
-            sw = Math.max(24, Math.round(srcW * wPct));
-            sh = Math.max(20, Math.round(srcH * hPct));
-        }
+        const { sx, sy, sw, sh } = resolveStrictCropRect(sourceEl, srcW, srcH, roiMode);
 
         // 用於 OCR 的高清晰裁切畫布
         const maxOcrW = 960;
@@ -2507,6 +3287,9 @@
         ocrCanvas.height = ocrH;
         const ocrCtx = ocrCanvas.getContext('2d');
         ocrCtx.drawImage(sourceEl, sx, sy, sw, sh, 0, 0, ocrW, ocrH);
+
+        // 網頁／行動端截圖：若懸浮字幕條與裁切區重疊，先塗黑消除循環辨識雜訊
+        maskSubtitleOverlayOnCanvas(ocrCtx, ocrW, ocrH, sx, sy, sw, sh, srcW, srcH);
 
         // 縮採樣亮度矩陣做幀差偵測（極低耗能）
         const sampleW = 160;
@@ -2530,18 +3313,23 @@
         videoOcrInFlight = true;
         try {
             const nativeCfg = getNativeLangConfig(targetNativeLang);
+            const lockedLang = videoSourceLang || 'en';
+            const tessLang = mapSourceLangToTesseract(lockedLang);
             const canCloudVision = hasLocalGeminiKey() || ((typeof global.MembershipEngine !== 'undefined' && typeof global.MembershipEngine.canConsumeAiQuota === 'function')
                 ? global.MembershipEngine.canConsumeAiQuota('vision_ocr').allowed
                 : true);
 
             let orig = '';
             let trans = '';
-            let lang = '';
+            let lang = lockedLang;
 
             if (canCloudVision && typeof global.callGeminiApi === 'function') {
-                const prompt = `請擷取這張畫面裁切區域中最顯著的一行或兩行字幕原文，並翻譯為「${nativeCfg.aiName}」。
-若畫面中完全沒有文字或字幕，請回傳 {"original":"","translation":"","lang":""}。
-只輸出純 JSON 物件：{"original":"","translation":"","lang":"en|ja|zh-TW"}`;
+                const prompt = `請擷取這張畫面裁切區域中語系為「${lockedLang}」的最顯著字幕原文，並自然地翻譯為「${nativeCfg.aiName}」。
+規則：
+1. 自動忽略句首或句尾殘留的 OCR 雜訊或無意義符號（如 \`| ar Ss = 5\`），只針對語意連貫的句子進行翻譯。
+2. 若畫面完全沒有有效字幕或只有雜訊／介面圖示，請回傳 {"original":"","translation":"","lang":""}。
+3. 遇到口語慣用語或俚語時，請依語境自然意譯，切勿死板逐字直譯（例如 "new whip" 譯為「新車／座駕」）。
+只輸出純 JSON 物件：{"original":"","translation":"","lang":"en|ja|ko|zh-TW"}`;
 
                 try {
                     const raw = await global.callGeminiApi(prompt, {
@@ -2553,9 +3341,9 @@
                         ? global.safeParseJSON(raw)
                         : JSON.parse(raw);
 
-                    orig = String((parsed && parsed.original) || '').trim();
+                    orig = filterOcrNoiseText((parsed && parsed.original) || '', lockedLang);
                     trans = String((parsed && parsed.translation) || '').trim();
-                    lang = (parsed && parsed.lang) || detectScriptLang(orig);
+                    lang = (parsed && parsed.lang) || lockedLang;
                 } catch (cloudErr) {
                     if (cloudErr && cloudErr.code !== 'QUOTA_EXCEEDED') throw cloudErr;
                 }
@@ -2563,11 +3351,22 @@
 
             if (!orig && ocrCanvasRef) {
                 const Tesseract = await loadLocalTesseractEngine();
-                const res = await Tesseract.recognize(ocrCanvasRef, 'eng+jpn+chi_tra');
-                orig = String((res && res.data && res.data.text) || '').replace(/\s+/g, ' ').trim();
+                const res = await Tesseract.recognize(ocrCanvasRef, tessLang);
+                const filtered = filterOcrResultWordsAndText(res, lockedLang, 65);
+                orig = filtered.text;
                 if (orig) {
-                    lang = detectScriptLang(orig);
-                    trans = await fetchGoogleTranslateFallback(orig, lang, nativeCfg.code).catch(() => '');
+                    lang = lockedLang;
+                    if (typeof global.callGeminiApi === 'function' && hasLocalGeminiKey()) {
+                        try {
+                            trans = String(await global.callGeminiApi(
+                                `將以下 OCR 辨識出的字幕翻譯為自然道地的「${nativeCfg.aiName}」。自動忽略句首或句尾殘留的亂碼符號（如 | ar Ss = 5），遇到俚語依語境自然意譯（如 new whip -> 新車／座駕），僅輸出最終譯文：\n${orig}`,
+                                { silent: true, feature: 'def_fill' }
+                            ) || '').trim();
+                        } catch (e) {}
+                    }
+                    if (!trans) {
+                        trans = await fetchGoogleTranslateFallback(orig, lang, nativeCfg.code).catch(() => '');
+                    }
                 }
             }
 
@@ -2612,10 +3411,14 @@
             videoSourceElement = pageVideo;
         } else {
             try {
-                videoCaptureStream = await navigator.mediaDevices.getDisplayMedia({
-                    video: { frameRate: { ideal: 15, max: 20 } },
-                    audio: false
-                });
+                const isDesktopWidget = hasElectronWidgetBridge();
+                const displayConstraints = isDesktopWidget
+                    ? { video: true, audio: false }
+                    : {
+                        video: { frameRate: { ideal: 15, max: 20 } },
+                        audio: false
+                    };
+                videoCaptureStream = await navigator.mediaDevices.getDisplayMedia(displayConstraints);
                 const hiddenVid = document.createElement('video');
                 hiddenVid.muted = true;
                 hiddenVid.playsInline = true;
@@ -2632,8 +3435,21 @@
                     });
                 }
             } catch (err) {
+                const isDesktopWidget = hasElectronWidgetBridge();
+                const errName = (err && err.name) ? String(err.name) : 'UnknownError';
+                const errMessage = (err && err.message) ? String(err.message) : String(err || '未知錯誤');
                 stopScreenSubtitleMode();
-                toast('已取消螢幕畫面擷取', 'info');
+                if (!isDesktopWidget && (errName === 'NotAllowedError' || errName === 'AbortError')) {
+                    toast('已取消螢幕畫面擷取', 'info');
+                } else {
+                    console.error('[FloatingTranslator] getDisplayMedia failed:', {
+                        desktopWidget: isDesktopWidget,
+                        name: errName,
+                        message: errMessage,
+                        err
+                    });
+                    toast(`螢幕畫面擷取失敗 (${errName}: ${errMessage})`, 'error');
+                }
                 renderActiveTabBody();
                 return;
             }
@@ -2854,7 +3670,7 @@
             }
             if (!draft && typeof global.callGeminiApi === 'function' && entry) {
                 try {
-                    const fallback = String(await global.callGeminiApi(`將以下口語／字幕自然翻譯成「${nativeCfg.aiName}」，僅回傳譯文：\n${clean}`, { silent: true, feature: 'def_fill' }) || '').trim();
+                    const fallback = String(await global.callGeminiApi(`將以下口語／字幕自然翻譯成「${nativeCfg.aiName}」。自動忽略句首或句尾殘留的 OCR 亂碼符號（如 | ar Ss = 5），遇到俚語依語境自然意譯（如 new whip -> 新車／座駕），僅回傳譯文：\n${clean}`, { silent: true, feature: 'def_fill' }) || '').trim();
                     if (fallback) {
                         entry.trans = fallback;
                         entry.tier = 'refined';
@@ -3463,8 +4279,21 @@
             recordNextChunk();
             toast('分頁／媒體音訊雙語字幕已啟動', 'success');
         } catch (err) {
+            const isDesktopWidget = hasElectronWidgetBridge();
+            const errName = (err && err.name) ? String(err.name) : 'UnknownError';
+            const errMessage = (err && err.message) ? String(err.message) : String(err || '未知錯誤');
             stopSttSubtitleEngine();
-            toast('已取消音訊擷取', 'info');
+            if (!isDesktopWidget && (errName === 'NotAllowedError' || errName === 'AbortError')) {
+                toast('已取消音訊擷取', 'info');
+            } else {
+                console.error('[FloatingTranslator] tab audio getDisplayMedia failed:', {
+                    desktopWidget: isDesktopWidget,
+                    name: errName,
+                    message: errMessage,
+                    err
+                });
+                toast(`音訊擷取失敗 (${errName}: ${errMessage})`, 'error');
+            }
         }
         renderSubtitleOverlay();
         renderActiveTabBody();
@@ -3549,25 +4378,12 @@
         handle.addEventListener('pointercancel', end);
     }
 
-    function renderSubtitleOverlay() {
-        if (!subtitleOverlayEl) {
-            loadSubtitleOverlayPos();
-            subtitleOverlayEl = document.createElement('div');
-            subtitleOverlayEl.id = 'ftLiveSubtitleOverlay';
-            subtitleOverlayEl.className = 'hidden fixed z-[60] rounded-2xl p-3 space-y-1.5 ft-subtitle-bar';
-            document.body.appendChild(subtitleOverlayEl);
-        }
+    let electronSubWindowOpen = false;
 
+    function renderSubtitleOverlay() {
         const latest = subtitleFeed[0] || null;
         const ytActive = ytPlaying ? getCurrentYoutubeCue(ytCurrentMs).cue : null;
         const hasActivity = Boolean(videoMonitorTimer || sttRunning || ytPlaying || sttInterimText || ytActive || latest);
-        if (!subtitlePinnedOverlay || !hasActivity) {
-            subtitleOverlayEl.classList.add('hidden');
-            return;
-        }
-
-        subtitleOverlayEl.classList.remove('hidden');
-        applySubtitleOverlayPosition();
 
         const displayOrig = ytActive
             ? ytActive.text
@@ -3579,6 +4395,53 @@
             ? ytActive.trans
             : (sttInterimText ? sttInterimDraft : ((latest && latest.trans) || ''));
         const isLiveActive = Boolean(videoMonitorTimer || sttRunning || ytPlaying);
+        const tierLabel = ytActive
+            ? '0MS SYNC'
+            : (sttInterimText
+                ? 'LIVE STREAM'
+                : (latest && latest.tier === 'draft' ? 'FAST DRAFT' : 'CONTEXT AI'));
+
+        const useElectronSubWindow = hasElectronWidgetBridge() && typeof global.LZHDesktopWidget.openSubtitleWindow === 'function';
+        if (useElectronSubWindow) {
+            if (subtitleOverlayEl) subtitleOverlayEl.classList.add('hidden');
+            if (!subtitlePinnedOverlay || !hasActivity) {
+                if (electronSubWindowOpen && typeof global.LZHDesktopWidget.closeSubtitleWindow === 'function') {
+                    global.LZHDesktopWidget.closeSubtitleWindow().catch(() => {});
+                }
+                electronSubWindowOpen = false;
+                return;
+            }
+            if (!electronSubWindowOpen) {
+                electronSubWindowOpen = true;
+                global.LZHDesktopWidget.openSubtitleWindow().catch(() => {});
+            }
+            if (typeof global.LZHDesktopWidget.updateSubtitleText === 'function') {
+                global.LZHDesktopWidget.updateSubtitleText({
+                    orig: displayOrig,
+                    trans: displayTrans,
+                    tierLabel,
+                    isLive: isLiveActive
+                });
+            }
+            return;
+        }
+
+        if (!subtitleOverlayEl) {
+            loadSubtitleOverlayPos();
+            subtitleOverlayEl = document.createElement('div');
+            subtitleOverlayEl.id = 'ftLiveSubtitleOverlay';
+            subtitleOverlayEl.className = 'hidden fixed z-[60] rounded-2xl p-3 space-y-1.5 ft-subtitle-bar';
+            document.body.appendChild(subtitleOverlayEl);
+        }
+
+        if (!subtitlePinnedOverlay || !hasActivity) {
+            subtitleOverlayEl.classList.add('hidden');
+            return;
+        }
+
+        subtitleOverlayEl.classList.remove('hidden');
+        applySubtitleOverlayPosition();
+
         const tierBadgeHtml = ytActive
             ? '<span class="ft-tier-badge ft-tier-badge--youtube">0MS SYNC</span>'
             : (sttInterimText
@@ -3631,16 +4494,28 @@
 
     function isFeatureEnabled() {
         if (isDesktopWidgetShell()) return true;
-        const val = localStorage.getItem(STORAGE_ENABLED_KEY);
-        return val === null ? true : val === 'true';
+        return localStorage.getItem(STORAGE_ENABLED_KEY) === 'true';
     }
 
     function setFeatureEnabled(enabled) {
         const flag = Boolean(enabled);
-        localStorage.setItem(STORAGE_ENABLED_KEY, flag ? 'true' : 'false');
+        if (!isDesktopWidgetShell()) {
+            const strVal = flag ? 'true' : 'false';
+            try { localStorage.setItem(STORAGE_ENABLED_KEY, strVal); } catch (e) {}
+            try {
+                const prefs = global.Capacitor && global.Capacitor.Plugins && global.Capacitor.Plugins.Preferences;
+                if (prefs && typeof prefs.set === 'function') {
+                    prefs.set({ key: STORAGE_ENABLED_KEY, value: strVal }).catch(() => {});
+                }
+            } catch (e) {}
+        }
         if (!flag) {
             stopCameraStream();
             stopAllSubtitleEngines();
+            if (electronSubWindowOpen && hasElectronWidgetBridge() && typeof global.LZHDesktopWidget.closeSubtitleWindow === 'function') {
+                global.LZHDesktopWidget.closeSubtitleWindow().catch(() => {});
+                electronSubWindowOpen = false;
+            }
             closePipWindow();
             collapsePanel();
             hideTapBubble();
@@ -3913,6 +4788,14 @@
             });
             pipWindowRef = pipWin;
             syncThemeAndStylesToPip(pipWin.document);
+            pipWin.document.addEventListener('focusin', (ev) => {
+                const t = ev && ev.target;
+                if (!t || typeof t.scrollIntoView !== 'function') return;
+                if (t.tagName !== 'INPUT' && t.tagName !== 'TEXTAREA' && t.tagName !== 'SELECT') return;
+                setTimeout(() => {
+                    try { t.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (err) {}
+                }, 260);
+            });
             pipWin.document.body.appendChild(panelContentEl);
             if (panelHostEl) panelHostEl.classList.add('hidden');
             isOpen = true;
@@ -4004,34 +4887,34 @@
     function buildPanelShellHtml() {
         return `
             <!-- 頂部可拖曳標題列 + 翻譯/聊天切換器 + 母語切換器 + PiP -->
-            <div id="ftPanelDragHandle" class="px-3 py-2.5 bg-slate-50/80 dark:bg-slate-900/80 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between gap-1.5 cursor-move select-none shrink-0" style="touch-action:none;">
-                <div class="flex items-center gap-1.5 min-w-0">
-                    <button type="button" id="ftViewModeToggleBtn" title="切換翻譯 / 好友聊天" class="relative px-2 py-1 rounded-xl bg-brand-50 dark:bg-brand-950/60 border border-brand-200 dark:border-brand-800 text-[11px] font-black text-brand-700 dark:text-brand-300 cursor-pointer flex items-center gap-1 shrink-0">
+            <div id="ftPanelDragHandle" class="px-3 py-2.5 bg-slate-50/80 dark:bg-slate-900/80 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between gap-2 cursor-move select-none shrink-0" style="touch-action:none;">
+                <div class="flex items-center gap-2 min-w-0">
+                    <button type="button" id="ftViewModeToggleBtn" title="切換翻譯 / 好友聊天" class="relative min-h-[44px] px-2.5 py-1.5 rounded-xl bg-brand-50 dark:bg-brand-950/60 border border-brand-200 dark:border-brand-800 text-[11px] font-black text-brand-700 dark:text-brand-300 cursor-pointer flex items-center gap-1 shrink-0">
                         <span id="ftViewModeToggleText" class="inline-flex items-center gap-1">${FT_SVG.globe}<span>翻譯</span>${FT_SVG.arrows}${FT_SVG.chat}<span>聊天</span></span>
                         <span id="ftChatUnreadDot" class="hidden w-2 h-2 rounded-full bg-rose-500"></span>
                     </button>
                 </div>
-                <div class="flex items-center gap-1 shrink-0">
-                    <select id="ftTargetNativeSelect" title="設定目標翻譯母語" class="px-1.5 py-1 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-[11px] font-bold text-slate-700 dark:text-slate-200 outline-none cursor-pointer">
+                <div class="flex items-center gap-1.5 shrink-0">
+                    <select id="ftTargetNativeSelect" title="設定目標翻譯母語" class="min-h-[44px] px-2 py-1.5 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-[11px] font-bold text-slate-700 dark:text-slate-200 outline-none cursor-pointer">
                         <option value="zh-TW">母語: 繁中</option>
                         <option value="en">Native: EN</option>
                         <option value="ja">母語: 日本語</option>
                     </select>
-                    <button type="button" id="ftPipToggleBtn" class="hidden px-2 py-1 rounded-lg bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 text-[11px] font-bold inline-flex items-center gap-1 cursor-pointer">${FT_SVG.pin}<span>置頂</span></button>
-                    <button type="button" id="ftPanelFullscreenBtn" class="w-7 h-7 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-200/70 dark:hover:bg-slate-700 flex items-center justify-center text-xs cursor-pointer" title="切換全螢幕">
+                    <button type="button" id="ftPipToggleBtn" class="hidden min-h-[44px] px-2.5 py-1.5 rounded-lg bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 text-[11px] font-bold inline-flex items-center gap-1 cursor-pointer">${FT_SVG.pin}<span>置頂</span></button>
+                    <button type="button" id="ftPanelFullscreenBtn" class="w-11 h-11 min-w-[44px] min-h-[44px] rounded-lg text-slate-500 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-200/70 dark:hover:bg-slate-700 flex items-center justify-center text-xs cursor-pointer" title="切換全螢幕">
                         ${FT_SVG.expand}
                     </button>
-                    <button type="button" id="ftPanelCloseBtn" class="w-7 h-7 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-200/70 dark:hover:bg-slate-700 flex items-center justify-center text-xs cursor-pointer" title="收合 (Esc)">
+                    <button type="button" id="ftPanelCloseBtn" class="w-11 h-11 min-w-[44px] min-h-[44px] rounded-lg text-slate-500 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-200/70 dark:hover:bg-slate-700 flex items-center justify-center text-xs cursor-pointer" title="收合 (Esc)">
                         ${FT_SVG.close}
                     </button>
                 </div>
             </div>
 
             <!-- 3 大翻譯功能頁籤切換（聊天模式時自動隱藏） -->
-            <div id="ftTranslatorTabStrip" class="px-3 pt-2 pb-1.5 border-b border-slate-100 dark:border-slate-700 grid grid-cols-3 gap-1.5 shrink-0">
-                <button type="button" data-ft-tab="camera" class="py-1.5 px-2 rounded-xl text-[11px] font-extrabold transition inline-flex items-center justify-center gap-1 cursor-pointer">${FT_SVG.camera}<span>拍照翻譯</span></button>
-                <button type="button" data-ft-tab="screen" class="py-1.5 px-2 rounded-xl text-[11px] font-extrabold transition inline-flex items-center justify-center gap-1 cursor-pointer">${FT_SVG.screen}<span>螢幕點詞</span></button>
-                <button type="button" data-ft-tab="subtitle" class="py-1.5 px-2 rounded-xl text-[11px] font-extrabold transition inline-flex items-center justify-center gap-1 cursor-pointer">${FT_SVG.subtitle}<span>即時字幕/語音</span></button>
+            <div id="ftTranslatorTabStrip" class="px-3 pt-2 pb-1.5 border-b border-slate-100 dark:border-slate-700 grid grid-cols-3 gap-2 shrink-0">
+                <button type="button" data-ft-tab="camera" class="min-h-[44px] py-2 px-2 rounded-xl text-[11px] font-extrabold transition inline-flex items-center justify-center gap-1 cursor-pointer">${FT_SVG.camera}<span>拍照翻譯</span></button>
+                <button type="button" data-ft-tab="screen" class="min-h-[44px] py-2 px-2 rounded-xl text-[11px] font-extrabold transition inline-flex items-center justify-center gap-1 cursor-pointer">${FT_SVG.screen}<span>螢幕點詞</span></button>
+                <button type="button" data-ft-tab="subtitle" class="min-h-[44px] py-2 px-2 rounded-xl text-[11px] font-extrabold transition inline-flex items-center justify-center gap-1 cursor-pointer">${FT_SVG.subtitle}<span>即時字幕/語音</span></button>
             </div>
 
             <!-- 內容捲動主區 -->
@@ -4388,7 +5271,32 @@
         }
     }
 
+    async function triggerPanelAppleLogin(btnEl) {
+        if (typeof global.loginWithApple !== 'function') {
+            toast('Apple 登入模組尚未就緒，請稍候再試', 'warning');
+            return;
+        }
+        const origHtml = btnEl ? btnEl.innerHTML : '';
+        if (btnEl) {
+            btnEl.disabled = true;
+            btnEl.innerHTML = '<span>正在連接 Apple 登入...</span>';
+        }
+        try {
+            await global.loginWithApple();
+        } finally {
+            if (btnEl && document.body.contains(btnEl)) {
+                btnEl.disabled = false;
+                btnEl.innerHTML = origHtml;
+            }
+            refreshBallUnread();
+            if (isOpen) {
+                renderActiveTabBody();
+            }
+        }
+    }
+
     function renderDesktopWidgetLoginCard(body) {
+        const showApple = isIosScreenTranslatePlatform() || (typeof global.isAppleSignInAvailable === 'function' && global.isAppleSignInAvailable());
         body.innerHTML = `
             <div class="h-full min-h-[300px] flex flex-col items-center justify-center p-5 text-center space-y-4 ft-motion-enter">
                 <div class="w-14 h-14 rounded-2xl bg-brand-50 dark:bg-brand-950/60 border border-brand-200 dark:border-brand-800 flex items-center justify-center text-brand-600 dark:text-brand-300 shadow-xs">
@@ -4397,18 +5305,30 @@
                 <div class="space-y-1.5 max-w-[280px]">
                     <div class="text-sm font-black text-slate-900 dark:text-white">LZHCard 桌面翻譯小工具</div>
                     <div class="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
-                        請登入 Google 帳號以同步雲端單字本、會員 AI 配額、即時雙語字幕與好友聊天室。
+                        請登入帳號以同步雲端單字本、會員 AI 配額、即時雙語字幕與好友聊天室。
                     </div>
                 </div>
-                <button type="button" id="ftWidgetGoogleLoginBtn" class="w-full max-w-[260px] py-2.5 px-4 rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-xs font-extrabold shadow-md transition flex items-center justify-center gap-2 cursor-pointer">
-                    <i class="fa-brands fa-google text-sm"></i>
-                    <span>登入 Google 帳號以開始使用</span>
-                </button>
+                <div class="w-full max-w-[260px] flex flex-col gap-2">
+                    ${showApple ? `
+                        <button type="button" id="ftWidgetAppleLoginBtn" class="w-full min-h-[44px] py-2.5 px-4 rounded-xl bg-slate-900 hover:bg-black text-white border border-slate-800 text-xs font-extrabold shadow-md transition flex items-center justify-center gap-2 cursor-pointer">
+                            <i class="fa-brands fa-apple text-sm"></i>
+                            <span>使用 Apple 帳號登入</span>
+                        </button>
+                    ` : ''}
+                    <button type="button" id="ftWidgetGoogleLoginBtn" class="w-full min-h-[44px] py-2.5 px-4 rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-xs font-extrabold shadow-md transition flex items-center justify-center gap-2 cursor-pointer">
+                        <i class="fa-brands fa-google text-sm"></i>
+                        <span>登入 Google 帳號以開始使用</span>
+                    </button>
+                </div>
                 <div class="text-[10px] text-slate-400 dark:text-slate-500">
                     登入完成後將自動切換回翻譯／即時字幕功能介面
                 </div>
             </div>
         `;
+        const appleBtn = q('ftWidgetAppleLoginBtn');
+        if (appleBtn) {
+            appleBtn.onclick = () => triggerPanelAppleLogin(appleBtn);
+        }
         const loginBtn = q('ftWidgetGoogleLoginBtn');
         if (loginBtn) {
             loginBtn.onclick = () => triggerPanelGoogleLogin(loginBtn);
@@ -4539,17 +5459,30 @@
     function renderFloatingChatBody(body) {
         const authUser = getSignedInGoogleUser();
         if (!authUser) {
+            const showApple = isIosScreenTranslatePlatform() || (typeof global.isAppleSignInAvailable === 'function' && global.isAppleSignInAvailable());
             body.innerHTML = `
                 <div class="p-6 text-center space-y-3 ft-motion-enter">
                     <div class="w-12 h-12 mx-auto rounded-2xl bg-brand-50 dark:bg-brand-950/60 border border-brand-200 dark:border-brand-800 flex items-center justify-center">${FT_SVG.chatLg}</div>
                     <div class="text-xs font-extrabold text-slate-700 dark:text-slate-200">請先登入帳號即可開啟懸浮好友聊天</div>
                     <div class="text-[11px] text-slate-500 dark:text-slate-400">可與學習好友即時對話，並隨時切回三語翻譯功能</div>
-                    <button type="button" id="ftChatGoogleLoginBtn" class="px-4 py-2 rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-xs font-extrabold shadow-xs transition inline-flex items-center justify-center gap-1.5 cursor-pointer">
-                        <i class="fa-brands fa-google text-xs"></i>
-                        <span>登入 Google 帳號以開始使用</span>
-                    </button>
+                    <div class="flex flex-col items-center gap-2">
+                        ${showApple ? `
+                            <button type="button" id="ftChatAppleLoginBtn" class="w-full max-w-[240px] min-h-[44px] px-4 py-2.5 rounded-xl bg-slate-900 hover:bg-black text-white border border-slate-800 text-xs font-extrabold shadow-xs transition inline-flex items-center justify-center gap-2 cursor-pointer">
+                                <i class="fa-brands fa-apple text-sm"></i>
+                                <span>使用 Apple 帳號登入</span>
+                            </button>
+                        ` : ''}
+                        <button type="button" id="ftChatGoogleLoginBtn" class="w-full max-w-[240px] min-h-[44px] px-4 py-2.5 rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-xs font-extrabold shadow-xs transition inline-flex items-center justify-center gap-2 cursor-pointer">
+                            <i class="fa-brands fa-google text-xs"></i>
+                            <span>登入 Google 帳號以開始使用</span>
+                        </button>
+                    </div>
                 </div>
             `;
+            const chatAppleBtn = q('ftChatAppleLoginBtn');
+            if (chatAppleBtn) {
+                chatAppleBtn.onclick = () => triggerPanelAppleLogin(chatAppleBtn);
+            }
             const chatLoginBtn = q('ftChatGoogleLoginBtn');
             if (chatLoginBtn) {
                 chatLoginBtn.onclick = () => triggerPanelGoogleLogin(chatLoginBtn);
@@ -4817,8 +5750,30 @@
 
             ${photoSummary ? `
                 <div class="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs leading-relaxed">
-                    <div class="text-[10px] font-extrabold text-slate-500 dark:text-slate-400 mb-0.5">全文語意翻譯</div>
+                    <div class="text-[10px] font-extrabold text-slate-500 dark:text-slate-400 mb-0.5">圖片重點摘要</div>
                     <div class="text-slate-700 dark:text-slate-200 font-semibold">${escapeHtml(photoSummary)}</div>
+                </div>
+            ` : ''}
+
+            ${photoImageDataUrl ? `
+                <div class="p-2.5 rounded-xl bg-amber-50/70 dark:bg-slate-900 border border-amber-200 dark:border-amber-800/70 space-y-2">
+                    <div class="flex flex-wrap items-center gap-1.5">
+                        <button type="button" id="ftPhotoFullTranslateBtn" ${isPhotoArticleTranslating ? 'disabled' : ''} class="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 disabled:opacity-60 text-white text-xs font-extrabold inline-flex items-center gap-1 cursor-pointer shadow-2xs">
+                            ${FT_SVG.sparkle}<span>${isPhotoArticleTranslating ? '整篇翻譯中...' : '整篇翻譯成中文'}</span>
+                        </button>
+                        ${photoArticleTranslation ? `
+                            <button type="button" id="ftPhotoCopyFullTransBtn" class="px-2.5 py-1.5 rounded-xl bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-[11px] font-bold cursor-pointer">複製整篇譯文</button>
+                            <button type="button" id="ftPhotoToggleViewBtn" class="px-2.5 py-1.5 rounded-xl bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 text-[11px] font-bold cursor-pointer">${photoArticleViewMode === 'both' ? '僅看譯文' : '原文對照'}</button>
+                        ` : ''}
+                    </div>
+                    ${photoArticleTranslation ? `
+                        <div class="p-2.5 rounded-xl bg-white dark:bg-slate-950 border border-amber-200/80 dark:border-slate-700 max-h-48 overflow-y-auto space-y-1.5 select-text">
+                            ${photoArticleViewMode === 'both' && getEffectivePhotoRawText() ? `
+                                <div class="text-[11px] text-slate-500 dark:text-slate-400 whitespace-pre-wrap leading-relaxed pb-1.5 border-b border-slate-100 dark:border-slate-800">${escapeHtml(getEffectivePhotoRawText())}</div>
+                            ` : ''}
+                            <div class="text-xs sm:text-sm font-semibold text-slate-800 dark:text-slate-100 whitespace-pre-wrap leading-relaxed">${escapeHtml(photoArticleTranslation)}</div>
+                        </div>
+                    ` : '<div class="text-[11px] text-amber-800/80 dark:text-amber-300/80">可保留原本段落與換行，一鍵翻成完整繁體中文文章；也仍可點擊圖片單字入庫。</div>'}
                 </div>
             ` : ''}
 
@@ -4944,6 +5899,19 @@
 
         const confirmBtn = q('ftPhotoConfirmImportBtn');
         if (confirmBtn) confirmBtn.onclick = () => confirmImportSelectedPhotoTokens();
+
+        const fullTransBtn = q('ftPhotoFullTranslateBtn');
+        if (fullTransBtn) fullTransBtn.onclick = () => translatePhotoArticleToChinese();
+        const copyFullBtn = q('ftPhotoCopyFullTransBtn');
+        if (copyFullBtn) copyFullBtn.onclick = () => copyPhotoArticleTranslation();
+        const toggleViewBtn = q('ftPhotoToggleViewBtn');
+        if (toggleViewBtn) {
+            toggleViewBtn.onclick = () => {
+                photoArticleViewMode = photoArticleViewMode === 'both' ? 'trans' : 'both';
+                renderActiveTabBody();
+                if (photoFullscreenOpen) renderPhotoFullscreenModal();
+            };
+        }
     }
 
     function renderScreenTabHtml(body) {
@@ -5012,7 +5980,7 @@
                         : true);
                     if (canCloudScratch && typeof global.callGeminiApi === 'function') {
                         try {
-                            trans = String(await global.callGeminiApi(`將以下文字通順翻譯成「${nativeCfg.aiName}」，僅輸出譯文：\n${screenScratchText}`, { silent: true, feature: 'def_fill' }) || '').trim();
+                            trans = String(await global.callGeminiApi(`將以下文字通順翻譯成「${nativeCfg.aiName}」。自動忽略殘留 OCR 亂碼符號，遇到口語俚語依語境自然意譯（例如 new whip -> 新車／座駕），僅輸出譯文：\n${screenScratchText}`, { silent: true, feature: 'def_fill' }) || '').trim();
                         } catch (e) {}
                     }
                     if (!trans) {
@@ -5057,17 +6025,29 @@
             ${subtitleSubMode === 'video' ? `
                 <div class="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 space-y-2">
                     <div class="flex items-center justify-between gap-2">
+                        <span class="text-[11px] font-bold text-slate-600 dark:text-slate-300">來源語言鎖定</span>
+                        <select id="ftVideoSourceLangSelect" class="px-2 py-1 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-[11px] font-bold">
+                            <option value="en" ${videoSourceLang === 'en' ? 'selected' : ''}>英文 (eng)</option>
+                            <option value="ja" ${videoSourceLang === 'ja' ? 'selected' : ''}>日文 (jpn)</option>
+                            <option value="ko" ${videoSourceLang === 'ko' ? 'selected' : ''}>韓文 (kor)</option>
+                            <option value="zh-TW" ${videoSourceLang === 'zh-TW' ? 'selected' : ''}>繁體中文 (chi_tra)</option>
+                        </select>
+                    </div>
+                    <div class="flex items-center justify-between gap-2">
                         <span class="text-[11px] font-bold text-slate-600 dark:text-slate-300">偵測區域 (ROI)</span>
                         <select id="ftVideoRoiSelect" class="px-2 py-1 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-[11px] font-bold">
-                            <option value="bottom25" ${videoRoiMode === 'bottom25' ? 'selected' : ''}>底部 25% 字幕區（最省流）</option>
-                            <option value="bottom40" ${videoRoiMode === 'bottom40' ? 'selected' : ''}>底部 40% 字幕區</option>
-                            <option value="top25" ${videoRoiMode === 'top25' ? 'selected' : ''}>頂部 25% 字幕區</option>
-                            <option value="auto" ${videoRoiMode === 'auto' ? 'selected' : ''}>自動偵測字幕帶 (Auto)</option>
+                            <option value="bottom25" ${videoRoiMode === 'bottom25' ? 'selected' : ''}>底部字幕安全帶 (76%×18%)</option>
+                            <option value="bottom40" ${videoRoiMode === 'bottom40' ? 'selected' : ''}>底部擴大字幕區 (84%×36%)</option>
+                            <option value="top25" ${videoRoiMode === 'top25' ? 'selected' : ''}>頂部字幕區 (76%×22%)</option>
+                            <option value="auto" ${videoRoiMode === 'auto' ? 'selected' : ''}>自動定位字幕帶 (Auto)</option>
                             <option value="custom" ${videoRoiMode === 'custom' ? 'selected' : ''}>自訂百分比範圍 (Custom)</option>
-                            <option value="full" ${videoRoiMode === 'full' ? 'selected' : ''}>全畫面掃描</option>
                         </select>
                     </div>
                     ${videoRoiMode === 'custom' ? `
+                        <div class="flex items-center justify-between gap-2 flex-wrap">
+                            <span class="text-[10.5px] font-semibold text-slate-500 dark:text-slate-400">目前框選：X ${Math.round(videoRoiCustomRect.xPct * 100)}% · Y ${Math.round(videoRoiCustomRect.yPct * 100)}% · W ${Math.round(videoRoiCustomRect.wPct * 100)}% · H ${Math.round(videoRoiCustomRect.hPct * 100)}%</span>
+                            <button type="button" id="ftOpenVisualRoiCropBtn" class="px-2.5 py-1 rounded-lg bg-brand-600 hover:bg-brand-700 text-white text-[11px] font-extrabold cursor-pointer">開啟視覺框選器</button>
+                        </div>
                         <div class="grid grid-cols-4 gap-1.5 text-[10px] font-bold text-slate-600 dark:text-slate-300">
                             <label class="space-y-0.5"><span>X%</span><input type="number" id="ftRoiCustomX" min="0" max="90" value="${Math.round(videoRoiCustomRect.xPct * 100)}" class="w-full px-1.5 py-1 rounded bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700"></label>
                             <label class="space-y-0.5"><span>Y%</span><input type="number" id="ftRoiCustomY" min="0" max="90" value="${Math.round(videoRoiCustomRect.yPct * 100)}" class="w-full px-1.5 py-1 rounded bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700"></label>
@@ -5179,14 +6159,43 @@
         if (sModeBtn) sModeBtn.onclick = () => { subtitleSubMode = 'stt'; renderActiveTabBody(); };
         if (yModeBtn) yModeBtn.onclick = () => { subtitleSubMode = 'youtube'; renderActiveTabBody(); };
 
+        const openSubVisualCrop = () => {
+            openVisualRoiCropper({
+                title: '字幕擷取範圍視覺框選器',
+                initialRect: videoRoiCustomRect,
+                onConfirm: (nextRect) => {
+                    videoRoiMode = 'custom';
+                    videoRoiCustomRect = nextRect;
+                    videoLastFrameLuma = null;
+                    persistVideoRoiConfig();
+                    renderActiveTabBody();
+                }
+            });
+        };
+
+        const srcLangSel = q('ftVideoSourceLangSelect');
+        if (srcLangSel) {
+            srcLangSel.onchange = () => {
+                videoSourceLang = ['en', 'ja', 'ko', 'zh-TW'].includes(srcLangSel.value) ? srcLangSel.value : 'en';
+                videoLastOriginalText = '';
+                persistVideoRoiConfig();
+            };
+        }
         const roiSel = q('ftVideoRoiSelect');
         if (roiSel) {
             roiSel.onchange = () => {
-                videoRoiMode = roiSel.value;
+                videoRoiMode = roiSel.value === 'full' ? 'bottom25' : roiSel.value;
                 videoLastFrameLuma = null;
                 persistVideoRoiConfig();
                 renderActiveTabBody();
+                if (videoRoiMode === 'custom') {
+                    openSubVisualCrop();
+                }
             };
+        }
+        const openVisualRoiBtn = q('ftOpenVisualRoiCropBtn');
+        if (openVisualRoiBtn) {
+            openVisualRoiBtn.onclick = openSubVisualCrop;
         }
         ['ftRoiCustomX', 'ftRoiCustomY', 'ftRoiCustomW', 'ftRoiCustomH'].forEach((id) => {
             const inp = q(id);
@@ -5194,8 +6203,8 @@
             inp.onchange = () => {
                 const xPct = clamp((Number(q('ftRoiCustomX')?.value) || 0) / 100, 0, 0.9);
                 const yPct = clamp((Number(q('ftRoiCustomY')?.value) || 0) / 100, 0, 0.9);
-                const wPct = clamp((Number(q('ftRoiCustomW')?.value) || 84) / 100, 0.1, 1 - xPct);
-                const hPct = clamp((Number(q('ftRoiCustomH')?.value) || 24) / 100, 0.08, 1 - yPct);
+                const wPct = clamp((Number(q('ftRoiCustomW')?.value) || 76) / 100, 0.1, 1 - xPct);
+                const hPct = clamp((Number(q('ftRoiCustomH')?.value) || 18) / 100, 0.08, 1 - yPct);
                 videoRoiCustomRect = { xPct, yPct, wPct, hPct };
                 videoLastFrameLuma = null;
                 persistVideoRoiConfig();
@@ -5448,6 +6457,632 @@
             stopCameraStream();
             stopAllSubtitleEngines();
         });
+
+        document.addEventListener('focusin', (e) => {
+            const target = e && e.target;
+            if (!target || typeof target.scrollIntoView !== 'function') return;
+            const tag = target.tagName;
+            if (tag !== 'INPUT' && tag !== 'TEXTAREA' && tag !== 'SELECT' && !target.isContentEditable) return;
+            setTimeout(() => {
+                try {
+                    target.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
+                } catch (err) {}
+            }, 260);
+        });
+    }
+
+    /* ==========================================================================
+       6B. iOS 獨家「子母畫面（PiP）螢幕翻譯」引導精靈與原生控制橋接
+       ========================================================================== */
+
+    function isIosScreenTranslatePlatform() {
+        try {
+            if (global.Capacitor && typeof global.Capacitor.getPlatform === 'function') {
+                if (String(global.Capacitor.getPlatform() || '').toLowerCase() === 'ios') return true;
+            }
+            if (typeof global.getPaymentPlatform === 'function' && global.getPaymentPlatform() === 'ios') {
+                return true;
+            }
+        } catch (e) {}
+        const ua = (typeof navigator !== 'undefined' && navigator.userAgent) ? navigator.userAgent : '';
+        if (/iphone|ipad|ipod/i.test(ua)) return true;
+        if (typeof navigator !== 'undefined' && navigator.platform === 'MacIntel' && (navigator.maxTouchPoints || 0) > 1) return true;
+        return false;
+    }
+
+    function getIosNativeScreenPlugin() {
+        const cap = global.Capacitor;
+        if (!cap) return null;
+        if (cap.Plugins && cap.Plugins.IosScreenTranslate) {
+            return cap.Plugins.IosScreenTranslate;
+        }
+        if (typeof cap.registerPlugin === 'function') {
+            try {
+                const reg = cap.registerPlugin('IosScreenTranslate');
+                if (reg) {
+                    cap.Plugins = cap.Plugins || {};
+                    cap.Plugins.IosScreenTranslate = reg;
+                    return reg;
+                }
+            } catch (e) {}
+        }
+        return null;
+    }
+
+    async function stopIosPip() {
+        const plugin = getIosNativeScreenPlugin();
+        if (plugin && typeof plugin.stopPipSubtitle === 'function') {
+            try { await plugin.stopPipSubtitle(); } catch (e) {}
+        }
+        iosPipActive = false;
+        renderIosScreenTranslateModalIfVisible();
+        if (typeof global.updateFloatingMasterSwitchUI === 'function') {
+            global.updateFloatingMasterSwitchUI();
+        }
+        toast('已關閉子母畫面字幕', 'info');
+        return true;
+    }
+
+    function loadIosScreenConfig() {
+        try {
+            const raw = localStorage.getItem(STORAGE_IOS_SCREEN_CFG_KEY);
+            if (raw) {
+                const parsed = JSON.parse(raw);
+                if (parsed && typeof parsed === 'object') {
+                    iosScreenConfig = {
+                        ...iosScreenConfig,
+                        ...parsed,
+                        region: {
+                            x: clamp(Number(parsed.region?.x ?? 0.12), 0, 0.85),
+                            y: clamp(Number(parsed.region?.y ?? 0.75), 0, 0.88),
+                            width: clamp(Number(parsed.region?.width ?? 0.76), 0.12, 1),
+                            height: clamp(Number(parsed.region?.height ?? 0.18), 0.10, 1)
+                        }
+                    };
+                }
+            }
+        } catch (e) {}
+        if (!iosScreenConfig.customApiKey) {
+            try {
+                const localGem = localStorage.getItem('flashcard_gemini_key_v1') || '';
+                if (localGem.trim()) iosScreenConfig.customApiKey = localGem.trim();
+            } catch (e) {}
+        }
+        return iosScreenConfig;
+    }
+
+    function persistIosScreenConfig() {
+        try {
+            iosScreenConfig.region.width = clamp(iosScreenConfig.region.width, 0.12, Math.max(0.12, 1 - iosScreenConfig.region.x));
+            iosScreenConfig.region.height = clamp(iosScreenConfig.region.height, 0.10, Math.max(0.10, 1 - iosScreenConfig.region.y));
+            localStorage.setItem(STORAGE_IOS_SCREEN_CFG_KEY, JSON.stringify(iosScreenConfig));
+        } catch (e) {}
+    }
+
+    function bindIosPipPluginListeners() {
+        if (iosPipPluginBound) return;
+        const plugin = getIosNativeScreenPlugin();
+        if (!plugin || typeof plugin.addListener !== 'function') return;
+        iosPipPluginBound = true;
+        try {
+            plugin.addListener('pipStateChanged', (ev) => {
+                iosPipActive = Boolean(ev && ev.active);
+                renderIosScreenTranslateModalIfVisible();
+                if (typeof global.updateFloatingMasterSwitchUI === 'function') {
+                    global.updateFloatingMasterSwitchUI();
+                }
+            });
+            plugin.addListener('pipError', (ev) => {
+                toast('PiP 子母畫面啟動失敗：' + ((ev && ev.message) || '請確認裝置支援子母畫面'), 'error');
+            });
+        } catch (e) {}
+    }
+
+    async function getFirebaseIdTokenSafe() {
+        try {
+            if (typeof firebase !== 'undefined' && firebase.auth && firebase.auth().currentUser) {
+                return await firebase.auth().currentUser.getIdToken();
+            }
+        } catch (e) {}
+        return '';
+    }
+
+    async function syncIosConfigToNativePlugin() {
+        persistIosScreenConfig();
+        const plugin = getIosNativeScreenPlugin();
+        if (!plugin || typeof plugin.saveConfig !== 'function') return false;
+        const authToken = await getFirebaseIdTokenSafe();
+        const fallbackGeminiKey = (iosScreenConfig.customApiKey || localStorage.getItem('flashcard_gemini_key_v1') || '').trim();
+        await plugin.saveConfig({
+            engine: iosScreenConfig.engine,
+            sourceLang: iosScreenConfig.sourceLang || 'en',
+            targetLang: 'zh-Hant',
+            apiKey: fallbackGeminiKey,
+            workerBaseUrl: SHARED_WORKER_BASE,
+            authToken,
+            regionMode: iosScreenConfig.regionMode || 'auto',
+            region: iosScreenConfig.region
+        });
+        return true;
+    }
+
+    function ensureIosScreenModal() {
+        if (iosScreenModalEl && document.body.contains(iosScreenModalEl)) return iosScreenModalEl;
+        iosScreenModalEl = document.createElement('div');
+        iosScreenModalEl.id = 'ftIosScreenTranslateModal';
+        iosScreenModalEl.className = 'hidden fixed inset-0 z-[85] bg-slate-950/70 backdrop-blur-xs flex items-end sm:items-center justify-center lzh-safe-modal';
+        iosScreenModalEl.style.padding = 'calc(env(safe-area-inset-top, 0px) + 12px) calc(env(safe-area-inset-right, 0px) + 12px) calc(env(safe-area-inset-bottom, 0px) + 12px) calc(env(safe-area-inset-left, 0px) + 12px)';
+        iosScreenModalEl.onclick = (e) => {
+            if (e.target === iosScreenModalEl) closeIosScreenTranslateModal();
+        };
+        document.body.appendChild(iosScreenModalEl);
+        return iosScreenModalEl;
+    }
+
+    function closeIosScreenTranslateModal() {
+        if (iosScreenModalEl) {
+            iosScreenModalEl.classList.add('hidden');
+        }
+    }
+
+    function renderIosScreenTranslateModalIfVisible() {
+        if (iosScreenModalEl && !iosScreenModalEl.classList.contains('hidden')) {
+            renderIosScreenTranslateModal();
+        }
+    }
+
+    function renderIosScreenTranslateModal() {
+        const modal = ensureIosScreenModal();
+        modal.classList.remove('hidden');
+
+        const isAppleOffline = iosScreenConfig.engine !== 'cloud_api';
+        const supportsOffline = iosScreenCapabilities ? Boolean(iosScreenCapabilities.supportsOfflineTranslation) : true;
+        const stepLabels = ['1. 翻譯引擎與語言', '2. 掃描區域框選', '3. 啟動 PiP 螢幕翻譯'];
+        const reg = iosScreenConfig.region;
+        const rxPct = Math.round(reg.x * 100);
+        const ryPct = Math.round(reg.y * 100);
+        const rwPct = Math.round(reg.width * 100);
+        const rhPct = Math.round(reg.height * 100);
+        const langNameMap = { en: '英文 (English)', ja: '日文 (日本語)', ko: '韓文 (한국어)' };
+
+        let quotaSummaryHtml = '免費與付費會員皆享有雲端額度；填寫個人 Gemini Key 可免扣系統額度。';
+        try {
+            if (typeof global.MembershipEngine !== 'undefined' && typeof global.MembershipEngine.getSummary === 'function') {
+                const sm = global.MembershipEngine.getSummary();
+                if (sm && sm.tierLabel) {
+                    quotaSummaryHtml = `目前方案：${escapeHtml(sm.tierLabel)}（可共用帳號額度或填入下方個人 Key）`;
+                }
+            }
+        } catch (e) {}
+
+        modal.innerHTML = `
+            <div class="w-full max-w-md bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-700 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+                <div class="px-4 py-3.5 bg-gradient-to-r from-indigo-600 to-brand-600 text-white flex items-center justify-between gap-2 shrink-0">
+                    <div>
+                        <div class="text-sm font-black">iOS 子母畫面（PiP）螢幕翻譯</div>
+                        <div class="text-[11px] text-indigo-100">純淨無遮擋浮動中文字幕條 · 切換至其他 App 也能即時翻譯</div>
+                    </div>
+                    <button type="button" id="ftIosModalCloseBtn" class="w-11 h-11 min-w-[44px] min-h-[44px] rounded-full bg-white/20 hover:bg-white/30 flex items-center justify-center cursor-pointer" aria-label="關閉">${FT_SVG.close}</button>
+                </div>
+
+                <div class="px-4 pt-3 pb-2 bg-slate-50 dark:bg-slate-800/60 border-b border-slate-200 dark:border-slate-700 flex items-center gap-2 shrink-0">
+                    ${stepLabels.map((lbl, idx) => {
+                        const sNum = idx + 1;
+                        const active = iosScreenWizardStep === sNum;
+                        const done = iosScreenWizardStep > sNum;
+                        return `<button type="button" data-ios-jump-step="${sNum}" class="flex-1 min-h-[44px] py-2 px-2 rounded-xl text-[10.5px] font-extrabold transition cursor-pointer ${active ? 'bg-brand-600 text-white shadow-xs' : (done ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300' : 'bg-white dark:bg-slate-800 text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-slate-700')}">${lbl}</button>`;
+                    }).join('')}
+                </div>
+
+                <div class="p-4 overflow-y-auto space-y-3.5 text-slate-800 dark:text-slate-100">
+                    ${iosFallbackNotice ? `
+                        <div class="p-2.5 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-700 text-[11px] font-semibold text-amber-800 dark:text-amber-200">
+                            ${escapeHtml(iosFallbackNotice)}
+                        </div>
+                    ` : ''}
+
+                    ${iosScreenWizardStep === 1 ? `
+                        <div class="space-y-3">
+                            <div class="text-xs font-extrabold text-slate-600 dark:text-slate-300">選擇螢幕翻譯核心引擎</div>
+
+                            <label class="block p-3 rounded-2xl border-2 cursor-pointer transition ${isAppleOffline ? 'border-brand-600 bg-brand-50/50 dark:bg-brand-950/25' : 'border-slate-200 dark:border-slate-700'}">
+                                <div class="flex items-start gap-2.5">
+                                    <input type="radio" name="ftIosEngineRadio" value="apple_offline" ${isAppleOffline ? 'checked' : ''} ${!supportsOffline ? 'disabled' : ''} class="mt-1 accent-brand-600">
+                                    <div class="min-w-0 flex-1 space-y-1">
+                                        <div class="flex items-center gap-1.5 flex-wrap">
+                                            <span class="text-xs font-black">Apple 離線翻譯</span>
+                                            <span class="px-1.5 py-0.5 rounded-md bg-emerald-100 dark:bg-emerald-900/60 text-emerald-700 dark:text-emerald-300 text-[10px] font-extrabold">推薦 · 免額度</span>
+                                        </div>
+                                        <p class="text-[11px] text-slate-500 dark:text-slate-400">使用系統內建離線翻譯（iOS 17.4+ / iOS 18+），於本機極速翻譯且不耗行動網路與 AI 額度。</p>
+                                    </div>
+                                </div>
+                            </label>
+
+                            <label class="block p-3 rounded-2xl border-2 cursor-pointer transition ${!isAppleOffline ? 'border-brand-600 bg-brand-50/50 dark:bg-brand-950/25' : 'border-slate-200 dark:border-slate-700'}">
+                                <div class="flex items-start gap-2.5">
+                                    <input type="radio" name="ftIosEngineRadio" value="cloud_api" ${!isAppleOffline ? 'checked' : ''} class="mt-1 accent-brand-600">
+                                    <div class="min-w-0 flex-1 space-y-1">
+                                        <div class="flex items-center gap-1.5 flex-wrap">
+                                            <span class="text-xs font-black">雲端 AI / 自訂 API Key 翻譯</span>
+                                            <span class="px-1.5 py-0.5 rounded-md bg-indigo-100 dark:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 text-[10px] font-extrabold">全 iOS 版本適用</span>
+                                        </div>
+                                        <p class="text-[11px] text-slate-500 dark:text-slate-400">${quotaSummaryHtml}</p>
+                                    </div>
+                                </div>
+                            </label>
+
+                            <div class="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 space-y-2.5">
+                                <div class="grid grid-cols-2 gap-2">
+                                    <div>
+                                        <label class="block text-[10.5px] font-bold text-slate-500 dark:text-slate-400 mb-1">來源原文語言</label>
+                                        <select id="ftIosSourceLangSelect" class="w-full px-2.5 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-bold outline-none">
+                                            <option value="en" ${iosScreenConfig.sourceLang === 'en' ? 'selected' : ''}>🇺🇸 英文 (EN)</option>
+                                            <option value="ja" ${iosScreenConfig.sourceLang === 'ja' ? 'selected' : ''}>🇯🇵 日文 (JA)</option>
+                                            <option value="ko" ${iosScreenConfig.sourceLang === 'ko' ? 'selected' : ''}>🇰🇷 韓文 (KO)</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label class="block text-[10.5px] font-bold text-slate-500 dark:text-slate-400 mb-1">字幕目標語言</label>
+                                        <div class="w-full px-2.5 py-2 rounded-xl bg-slate-100 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-700 text-xs font-extrabold text-emerald-700 dark:text-emerald-300">🇹🇼 繁體中文</div>
+                                    </div>
+                                </div>
+
+                                ${isAppleOffline ? `
+                                    <button type="button" id="ftIosDownloadPackBtn" ${iosOfflineDownloading ? 'disabled' : ''} class="w-full py-2 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white text-xs font-extrabold cursor-pointer transition">
+                                        ${iosOfflineDownloading ? '正在檢查／喚起 Apple 離線語言包...' : (iosOfflinePackReady ? '✅ 已檢查 Apple 離線語言包（點擊可重新檢查）' : '檢查／下載 Apple 離線語言包')}
+                                    </button>
+                                ` : `
+                                    <div>
+                                        <label class="block text-[10.5px] font-bold text-slate-500 dark:text-slate-400 mb-1">自訂 Gemini API Key（選填，優先不扣帳號額度）</label>
+                                        <input type="password" id="ftIosCustomApiKeyInput" value="${escapeHtml(iosScreenConfig.customApiKey || '')}" placeholder="AIza...（留空則使用系統共用配額）" class="w-full px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-mono outline-none">
+                                    </div>
+                                `}
+                            </div>
+                        </div>
+                    ` : iosScreenWizardStep === 2 ? `
+                        <div class="space-y-3">
+                            <div class="text-xs font-extrabold text-slate-600 dark:text-slate-300">設定螢幕文字擷取區域</div>
+                            <div class="grid grid-cols-2 gap-2">
+                                <button type="button" id="ftIosRegionAutoBtn" class="py-2 px-3 rounded-xl text-xs font-extrabold border-2 cursor-pointer ${iosScreenConfig.regionMode !== 'custom' ? 'border-brand-600 bg-brand-50 dark:bg-brand-950/30 text-brand-700 dark:text-brand-300' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}">自動識別（推薦）</button>
+                                <button type="button" id="ftIosRegionCustomBtn" class="py-2 px-3 rounded-xl text-xs font-extrabold border-2 cursor-pointer ${iosScreenConfig.regionMode === 'custom' ? 'border-brand-600 bg-brand-50 dark:bg-brand-950/30 text-brand-700 dark:text-brand-300' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}">自訂偵測區域</button>
+                            </div>
+
+                            <div class="flex justify-center">
+                                <div id="ftIosPhonePreviewBox" class="relative w-44 rounded-2xl border-2 border-slate-300 dark:border-slate-600 bg-slate-900 overflow-hidden select-none shadow-inner" style="aspect-ratio: 9 / 19.5;">
+                                    <div class="absolute inset-x-4 top-2 h-1.5 rounded-full bg-slate-700/80"></div>
+                                    <div class="absolute inset-0 flex flex-col items-center justify-center px-3 text-center pointer-events-none">
+                                        <div class="text-[10px] font-bold text-slate-400">${iosScreenConfig.regionMode === 'custom' ? '拖曳綠框定位字幕／漫畫區' : '自動掃描畫面字幕與主要文字區'}</div>
+                                    </div>
+                                    <div id="ftIosRegionRectEl" class="absolute border-2 ${iosScreenConfig.regionMode === 'custom' ? 'border-emerald-400 bg-emerald-400/20 cursor-move' : 'border-indigo-400/70 bg-indigo-400/15 border-dashed pointer-events-none'}" style="left:${iosScreenConfig.regionMode === 'custom' ? rxPct : 8}%;top:${iosScreenConfig.regionMode === 'custom' ? ryPct : 64}%;width:${iosScreenConfig.regionMode === 'custom' ? rwPct : 84}%;height:${iosScreenConfig.regionMode === 'custom' ? rhPct : 24}%;touch-action:none;">
+                                        <span class="px-1 py-0.5 bg-slate-950/80 text-[9px] font-bold text-white rounded-br">${iosScreenConfig.regionMode === 'custom' ? `${rwPct}%×${rhPct}%` : 'AUTO'}</span>
+                                        ${iosScreenConfig.regionMode === 'custom' ? '<span id="ftIosRegionResizeHandle" class="absolute -bottom-1.5 -right-1.5 w-4 h-4 rounded-full bg-emerald-400 border-2 border-white shadow cursor-nwse-resize"></span>' : ''}
+                                    </div>
+                                </div>
+                            </div>
+
+                            ${iosScreenConfig.regionMode === 'custom' ? `
+                                <button type="button" id="ftIosOpenVisualCropBtn" class="w-full py-2 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-extrabold cursor-pointer transition">開啟大畫面視覺框選器</button>
+                                <div class="grid grid-cols-2 gap-2 p-2.5 rounded-2xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 text-[11px]">
+                                    <label class="space-y-1 font-bold">左起 X: <span id="ftIosRegXLbl">${rxPct}%</span><input id="ftIosRegXSlider" type="range" min="0" max="80" value="${rxPct}" class="w-full accent-emerald-600"></label>
+                                    <label class="space-y-1 font-bold">上起 Y: <span id="ftIosRegYLbl">${ryPct}%</span><input id="ftIosRegYSlider" type="range" min="0" max="85" value="${ryPct}" class="w-full accent-emerald-600"></label>
+                                    <label class="space-y-1 font-bold">寬度 W: <span id="ftIosRegWLbl">${rwPct}%</span><input id="ftIosRegWSlider" type="range" min="15" max="100" value="${rwPct}" class="w-full accent-emerald-600"></label>
+                                    <label class="space-y-1 font-bold">高度 H: <span id="ftIosRegHLbl">${rhPct}%</span><input id="ftIosRegHSlider" type="range" min="10" max="90" value="${rhPct}" class="w-full accent-emerald-600"></label>
+                                </div>
+                            ` : ''}
+                        </div>
+                    ` : `
+                        <div class="space-y-3">
+                            <div class="p-3 rounded-2xl bg-slate-900 text-white border border-slate-700 space-y-2">
+                                <div class="text-[10.5px] font-bold text-slate-400 flex items-center justify-between">
+                                    <span>子母畫面字幕浮窗預覽（340×96 pt · 純中文字幕）</span>
+                                    <span class="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300">${iosPipActive ? 'LIVE' : 'READY'}</span>
+                                </div>
+                                <div class="py-3 px-4 rounded-xl bg-slate-950/90 border border-white/15 text-center text-sm font-extrabold">
+                                    這裡會即時顯示極簡繁體中文翻譯結果
+                                </div>
+                            </div>
+
+                            <div class="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 text-xs space-y-1">
+                                <div class="flex justify-between"><span class="text-slate-500 dark:text-slate-400">翻譯模式</span><span class="font-extrabold">${isAppleOffline ? 'Apple 離線翻譯（本機）' : '雲端 AI / API Key'}</span></div>
+                                <div class="flex justify-between"><span class="text-slate-500 dark:text-slate-400">翻譯方向</span><span class="font-extrabold">${escapeHtml(langNameMap[iosScreenConfig.sourceLang] || '英文')} → 繁體中文</span></div>
+                                <div class="flex justify-between"><span class="text-slate-500 dark:text-slate-400">擷取區域</span><span class="font-extrabold">${iosScreenConfig.regionMode === 'custom' ? `自訂 (${rxPct}%, ${ryPct}%, ${rwPct}%×${rhPct}%)` : '自動識別文字區'}</span></div>
+                            </div>
+
+                            <div class="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
+                                點擊下方按鈕後，請在系統彈窗中點選「開始廣播」，即可切換回瀏覽器、YouTube 或漫畫 App 享受子母畫面中文字幕。
+                            </div>
+
+                            <button type="button" id="ftIosLaunchPipBroadcastBtn" class="w-full py-3 px-4 rounded-2xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white text-sm font-black shadow-md cursor-pointer transition">
+                                啟動精簡子母畫面 + 系統螢幕廣播
+                            </button>
+                            ${iosPipActive ? `
+                                <button type="button" id="ftIosStopPipBtn" class="w-full py-2 px-4 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-extrabold cursor-pointer">關閉子母畫面浮窗</button>
+                            ` : ''}
+                        </div>
+                    `}
+                </div>
+
+                <div class="px-4 py-3 bg-slate-50 dark:bg-slate-800/80 border-t border-slate-200 dark:border-slate-700 flex items-center justify-between gap-2 shrink-0">
+                    ${iosScreenWizardStep > 1
+                        ? `<button type="button" id="ftIosPrevStepBtn" class="px-3.5 py-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 text-xs font-bold cursor-pointer">${iosScreenWizardStep === 3 ? '重新調整設定' : '上一步'}</button>`
+                        : '<span class="text-[11px] text-slate-400">首次設定後下次一鍵直達啟動</span>'}
+                    ${iosScreenWizardStep < 3
+                        ? `<button type="button" id="ftIosNextStepBtn" class="ml-auto px-4 py-2 rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-xs font-extrabold cursor-pointer">${iosScreenWizardStep === 2 ? '完成設定，前往啟動' : '下一步：選擇區域'}</button>`
+                        : `<button type="button" id="ftIosSaveDoneBtn" class="ml-auto px-3.5 py-2 rounded-xl bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold cursor-pointer">關閉視窗</button>`}
+                </div>
+            </div>
+        `;
+
+        const closeBtn = modal.querySelector('#ftIosModalCloseBtn');
+        if (closeBtn) closeBtn.onclick = closeIosScreenTranslateModal;
+
+        modal.querySelectorAll('[data-ios-jump-step]').forEach(btn => {
+            btn.onclick = () => {
+                iosScreenWizardStep = Number(btn.getAttribute('data-ios-jump-step')) || 1;
+                renderIosScreenTranslateModal();
+            };
+        });
+
+        modal.querySelectorAll('input[name="ftIosEngineRadio"]').forEach(rad => {
+            rad.onchange = () => {
+                iosScreenConfig.engine = rad.value === 'cloud_api' ? 'cloud_api' : 'apple_offline';
+                persistIosScreenConfig();
+                renderIosScreenTranslateModal();
+            };
+        });
+
+        const srcSel = modal.querySelector('#ftIosSourceLangSelect');
+        if (srcSel) {
+            srcSel.onchange = () => {
+                iosScreenConfig.sourceLang = srcSel.value || 'en';
+                iosOfflinePackReady = false;
+                persistIosScreenConfig();
+            };
+        }
+
+        const keyInp = modal.querySelector('#ftIosCustomApiKeyInput');
+        if (keyInp) {
+            keyInp.oninput = () => {
+                iosScreenConfig.customApiKey = keyInp.value.trim();
+                persistIosScreenConfig();
+            };
+        }
+
+        const dlBtn = modal.querySelector('#ftIosDownloadPackBtn');
+        if (dlBtn) {
+            dlBtn.onclick = async () => {
+                const plugin = getIosNativeScreenPlugin();
+                if (!plugin || typeof plugin.prepareOfflineLanguages !== 'function') {
+                    toast('請於 iOS 實機 App 內下載 Apple 離線語言包（網頁預覽自動模擬就緒）', 'info');
+                    iosOfflinePackReady = true;
+                    renderIosScreenTranslateModal();
+                    return;
+                }
+                iosOfflineDownloading = true;
+                renderIosScreenTranslateModal();
+                try {
+                    const res = await plugin.prepareOfflineLanguages({
+                        sourceLang: iosScreenConfig.sourceLang || 'en',
+                        targetLang: 'zh-Hant'
+                    });
+                    if (res && res.fallbackSuggested) {
+                        iosScreenConfig.engine = 'cloud_api';
+                        iosFallbackNotice = '偵測到您的 iOS 版本低於 17.4，不支援系統離線語言包，已自動切換為雲端／API Key 翻譯模式。';
+                        persistIosScreenConfig();
+                        toast('已自動切換為雲端／API Key 翻譯模式', 'info');
+                    } else {
+                        iosOfflinePackReady = true;
+                        toast((res && res.message) || 'Apple 離線語言包已準備完成', 'success');
+                    }
+                } catch (err) {
+                    toast('檢查離線語言包失敗：' + ((err && err.message) || '請稍後再試'), 'error');
+                } finally {
+                    iosOfflineDownloading = false;
+                    renderIosScreenTranslateModal();
+                }
+            };
+        }
+
+        const openIosVisualCrop = () => {
+            openVisualRoiCropper({
+                title: 'iOS 螢幕翻譯偵測框選器',
+                initialRect: iosScreenConfig.region,
+                onConfirm: (nextRect) => {
+                    iosScreenConfig.regionMode = 'custom';
+                    iosScreenConfig.region = {
+                        x: nextRect.xPct,
+                        y: nextRect.yPct,
+                        width: nextRect.wPct,
+                        height: nextRect.hPct
+                    };
+                    persistIosScreenConfig();
+                    renderIosScreenTranslateModal();
+                }
+            });
+        };
+
+        const autoRegBtn = modal.querySelector('#ftIosRegionAutoBtn');
+        const customRegBtn = modal.querySelector('#ftIosRegionCustomBtn');
+        const iosVisualCropBtn = modal.querySelector('#ftIosOpenVisualCropBtn');
+        if (autoRegBtn) {
+            autoRegBtn.onclick = () => {
+                iosScreenConfig.regionMode = 'auto';
+                persistIosScreenConfig();
+                renderIosScreenTranslateModal();
+            };
+        }
+        if (customRegBtn) {
+            customRegBtn.onclick = () => {
+                iosScreenConfig.regionMode = 'custom';
+                persistIosScreenConfig();
+                renderIosScreenTranslateModal();
+                openIosVisualCrop();
+            };
+        }
+        if (iosVisualCropBtn) {
+            iosVisualCropBtn.onclick = openIosVisualCrop;
+        }
+
+        const syncSliderLabels = () => {
+            const r = iosScreenConfig.region;
+            const rectEl = modal.querySelector('#ftIosRegionRectEl');
+            if (rectEl && iosScreenConfig.regionMode === 'custom') {
+                rectEl.style.left = `${Math.round(r.x * 100)}%`;
+                rectEl.style.top = `${Math.round(r.y * 100)}%`;
+                rectEl.style.width = `${Math.round(r.width * 100)}%`;
+                rectEl.style.height = `${Math.round(r.height * 100)}%`;
+            }
+            const xl = modal.querySelector('#ftIosRegXLbl'); if (xl) xl.textContent = `${Math.round(r.x * 100)}%`;
+            const yl = modal.querySelector('#ftIosRegYLbl'); if (yl) yl.textContent = `${Math.round(r.y * 100)}%`;
+            const wl = modal.querySelector('#ftIosRegWLbl'); if (wl) wl.textContent = `${Math.round(r.width * 100)}%`;
+            const hl = modal.querySelector('#ftIosRegHLbl'); if (hl) hl.textContent = `${Math.round(r.height * 100)}%`;
+        };
+
+        ['ftIosRegXSlider', 'ftIosRegYSlider', 'ftIosRegWSlider', 'ftIosRegHSlider'].forEach(sid => {
+            const sEl = modal.querySelector('#' + sid);
+            if (!sEl) return;
+            sEl.oninput = () => {
+                const vx = Number(modal.querySelector('#ftIosRegXSlider')?.value || 12) / 100;
+                const vy = Number(modal.querySelector('#ftIosRegYSlider')?.value || 75) / 100;
+                const vw = Number(modal.querySelector('#ftIosRegWSlider')?.value || 76) / 100;
+                const vh = Number(modal.querySelector('#ftIosRegHSlider')?.value || 18) / 100;
+                iosScreenConfig.region.x = clamp(vx, 0, 0.85);
+                iosScreenConfig.region.y = clamp(vy, 0, 0.88);
+                iosScreenConfig.region.width = clamp(vw, 0.12, 1 - iosScreenConfig.region.x);
+                iosScreenConfig.region.height = clamp(vh, 0.10, 1 - iosScreenConfig.region.y);
+                syncSliderLabels();
+                persistIosScreenConfig();
+            };
+        });
+
+        const previewBox = modal.querySelector('#ftIosPhonePreviewBox');
+        const rectEl = modal.querySelector('#ftIosRegionRectEl');
+        const resizeHandle = modal.querySelector('#ftIosRegionResizeHandle');
+        if (previewBox && rectEl && iosScreenConfig.regionMode === 'custom') {
+            let dragMode = '';
+            let startClientX = 0, startClientY = 0;
+            let startReg = { ...iosScreenConfig.region };
+
+            rectEl.onpointerdown = (e) => {
+                e.preventDefault();
+                dragMode = (e.target === resizeHandle) ? 'resize' : 'move';
+                startClientX = e.clientX;
+                startClientY = e.clientY;
+                startReg = { ...iosScreenConfig.region };
+                try { rectEl.setPointerCapture(e.pointerId); } catch (err) {}
+            };
+            rectEl.onpointermove = (e) => {
+                if (!dragMode) return;
+                const boxRect = previewBox.getBoundingClientRect();
+                if (!boxRect.width || !boxRect.height) return;
+                const dx = (e.clientX - startClientX) / boxRect.width;
+                const dy = (e.clientY - startClientY) / boxRect.height;
+                if (dragMode === 'move') {
+                    iosScreenConfig.region.x = clamp(startReg.x + dx, 0, Math.max(0, 1 - startReg.width));
+                    iosScreenConfig.region.y = clamp(startReg.y + dy, 0, Math.max(0, 1 - startReg.height));
+                } else {
+                    iosScreenConfig.region.width = clamp(startReg.width + dx, 0.15, 1 - startReg.x);
+                    iosScreenConfig.region.height = clamp(startReg.height + dy, 0.10, 1 - startReg.y);
+                }
+                syncSliderLabels();
+            };
+            const finishDrag = () => {
+                if (!dragMode) return;
+                dragMode = '';
+                persistIosScreenConfig();
+                renderIosScreenTranslateModal();
+            };
+            rectEl.onpointerup = finishDrag;
+            rectEl.onpointercancel = finishDrag;
+        }
+
+        const prevBtn = modal.querySelector('#ftIosPrevStepBtn');
+        if (prevBtn) {
+            prevBtn.onclick = () => {
+                iosScreenWizardStep = iosScreenWizardStep === 3 ? 1 : Math.max(1, iosScreenWizardStep - 1);
+                renderIosScreenTranslateModal();
+            };
+        }
+        const nextBtn = modal.querySelector('#ftIosNextStepBtn');
+        if (nextBtn) {
+            nextBtn.onclick = async () => {
+                if (iosScreenWizardStep === 2) {
+                    iosScreenConfig.setupCompleted = true;
+                    await syncIosConfigToNativePlugin();
+                } else {
+                    persistIosScreenConfig();
+                }
+                iosScreenWizardStep = Math.min(3, iosScreenWizardStep + 1);
+                renderIosScreenTranslateModal();
+            };
+        }
+        const doneBtn = modal.querySelector('#ftIosSaveDoneBtn');
+        if (doneBtn) doneBtn.onclick = closeIosScreenTranslateModal;
+
+        const launchBtn = modal.querySelector('#ftIosLaunchPipBroadcastBtn');
+        if (launchBtn) {
+            launchBtn.onclick = async () => {
+                if (iosScreenConfig.engine === 'cloud_api' && typeof global.ensureAiPrivacyConsent === 'function') {
+                    const consentOk = await global.ensureAiPrivacyConsent({ feature: 'screen_translate' });
+                    if (!consentOk) {
+                        return;
+                    }
+                }
+                iosScreenConfig.setupCompleted = true;
+                persistIosScreenConfig();
+                await syncIosConfigToNativePlugin();
+                const plugin = getIosNativeScreenPlugin();
+                if (!plugin) {
+                    toast('已儲存 iOS 螢幕翻譯設定；實機執行時將喚起 ReplayKit 廣播與 PiP 子母畫面', 'info');
+                    return;
+                }
+                try {
+                    const initText = 'LZHCard 螢幕翻譯就緒 · 請點選開始廣播';
+                    if (typeof plugin.startScreenTranslate === 'function') {
+                        await plugin.startScreenTranslate({ initialText: initText });
+                    } else {
+                        await plugin.startPipSubtitle({ initialText: initText });
+                        await plugin.showBroadcastPicker();
+                    }
+                    iosPipActive = true;
+                    toast('已開啟子母畫面與系統廣播選擇器，請點選「開始廣播」', 'success');
+                    renderIosScreenTranslateModal();
+                    if (typeof global.updateFloatingMasterSwitchUI === 'function') {
+                        global.updateFloatingMasterSwitchUI();
+                    }
+                } catch (err) {
+                    toast('啟動 iOS 螢幕翻譯失敗：' + ((err && err.message) || '請稍後再試'), 'error');
+                }
+            };
+        }
+
+        const stopPipBtn = modal.querySelector('#ftIosStopPipBtn');
+        if (stopPipBtn) {
+            stopPipBtn.onclick = stopIosPip;
+        }
+    }
+
+    async function openIosScreenTranslate(options = {}) {
+        loadIosScreenConfig();
+        bindIosPipPluginListeners();
+        iosFallbackNotice = '';
+
+        const plugin = getIosNativeScreenPlugin();
+        if (plugin && typeof plugin.getCapabilities === 'function') {
+            try {
+                iosScreenCapabilities = await plugin.getCapabilities();
+                if (iosScreenCapabilities && iosScreenCapabilities.supportsOfflineTranslation === false) {
+                    iosScreenConfig.engine = 'cloud_api';
+                    iosFallbackNotice = '您的裝置系統低於 iOS 17.4，已自動切換為雲端 AI／自訂 API Key 翻譯模式。';
+                    persistIosScreenConfig();
+                }
+            } catch (e) {}
+        }
+
+        const forceWizard = Boolean(options && options.forceWizard);
+        iosScreenWizardStep = (forceWizard || !iosScreenConfig.setupCompleted) ? 1 : 3;
+        renderIosScreenTranslateModal();
+        return true;
     }
 
     /* ==========================================================================
@@ -5545,6 +7180,14 @@
             setFeatureEnabled(true);
             openPanel('camera');
         },
+        openIosScreenTranslate,
+        closeIosScreenTranslateModal,
+        stopIosPip,
+        openVisualRoiCropper,
+        isIosScreenTranslatePlatform,
+        isIosPipActive: () => iosPipActive,
+        translatePhotoArticleToChinese,
+        copyPhotoArticleTranslation,
         close: collapsePanel,
         collapse: collapsePanel,
         toggle: togglePanel,
@@ -5592,6 +7235,8 @@
             setFeatureEnabled(true);
             openPanel('camera');
             triggerPhotoFileInput(Boolean(useCam));
-        }
+        },
+        translateFullArticleToChinese: translatePhotoArticleToChinese,
+        copyArticleTranslation: copyPhotoArticleTranslation
     };
 })(typeof window !== 'undefined' ? window : globalThis);

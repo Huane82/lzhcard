@@ -41,10 +41,11 @@ dependencies {
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
     implementation project(':capacitor-cordova-android-plugins')
 
-    // Google ML Kit 文字辨識（英文/拉丁語系 + 日文 + 中文）與離線翻譯
+    // Google ML Kit 文字辨識（英文/拉丁語系 + 日文 + 中文 + 韓文）與離線翻譯
     implementation 'com.google.mlkit:text-recognition:16.0.1'
     implementation 'com.google.mlkit:text-recognition-japanese:16.0.1'
     implementation 'com.google.mlkit:text-recognition-chinese:16.0.1'
+    implementation 'com.google.mlkit:text-recognition-korean:16.0.1'
     implementation 'com.google.mlkit:translate:17.0.3'
     implementation 'com.google.android.gms:play-services-tasks:18.2.0'
 

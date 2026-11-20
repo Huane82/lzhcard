@@ -235,7 +235,11 @@ export async function handleFastRefine(request, env, corsHeaders) {
     : "";
   const draftHint = draftTranslation ? `初步直譯參考：${draftTranslation}\n` : "";
 
-  const systemPrompt = `You are a low-latency subtitle interpreter. Translate the current subtitle line naturally and concisely into ${targetLangName} using the prior context lines. Output ONLY the final translated subtitle string with zero explanation, no quotes, and no markdown.`;
+  const systemPrompt = `You are a low-latency subtitle interpreter. Translate the current subtitle line naturally and idiomatically into ${targetLangName} using the prior context lines.
+Rules:
+1. Automatically ignore residual OCR gibberish, stray symbols, or broken character fragments at the beginning or end of the text (e.g., "| ar Ss = 5"), and translate only the coherent, meaningful sentence(s). If the entire input is pure OCR noise with no coherent meaning, output an empty string.
+2. Translate colloquialisms, idioms, and slang naturally by context rather than literally (e.g., "new whip" -> "新車／座駕").
+3. Output ONLY the final translated subtitle string with zero explanation, no quotes, and no markdown.`;
   const userPrompt = `${contextBlock}${draftHint}目前這句原文：\n${text}`;
 
   // Tier-2 優先通道：Groq (高階用戶優先走高精度 Qwen3-32B，標準方案優先走極速 Llama-3.1-8B)

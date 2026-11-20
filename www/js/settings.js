@@ -165,11 +165,12 @@ function syncSettingsUI() {
         sentenceFrontToggle.checked = localStorage.getItem('lzhcard_show_sentence_front') === 'true';
     }
 
-    // 🌐 同步「啟用全域懸浮翻譯視窗」開關 (floatingTranslatorToggle) 與首頁總開關
+    // 🌐 同步「懸浮翻譯視窗」統一開關 (floatingTranslatorToggle) 與首頁開關
     const floatingToggle = document.getElementById('floatingTranslatorToggle');
     if (floatingToggle) {
-        const storedFt = localStorage.getItem('lzhcard_floating_translator_enabled');
-        floatingToggle.checked = storedFt === null ? true : storedFt === 'true';
+        floatingToggle.checked = typeof window.getMasterFloatingEnabledState === 'function'
+            ? Boolean(window.getMasterFloatingEnabledState())
+            : (localStorage.getItem('lzhcard_floating_translator_enabled') === 'true');
     }
     if (typeof window.updateFloatingMasterSwitchUI === 'function') {
         window.updateFloatingMasterSwitchUI();
@@ -262,8 +263,24 @@ function handleShowSentenceFrontChange(enableFrontSentence) {
 }
 
 function handleFloatingTranslatorChange(enableFloating) {
+    if (typeof window.toggleMasterFloatingOverlay === 'function') {
+        return window.toggleMasterFloatingOverlay(Boolean(enableFloating));
+    }
+
+    if (getDetectedUiPlatform() === 'ios') {
+        if (typeof FloatingTranslator !== 'undefined' && typeof FloatingTranslator.openIosScreenTranslate === 'function') {
+            if (typeof closeSettingsDrawer === 'function') closeSettingsDrawer();
+            FloatingTranslator.openIosScreenTranslate({ forceWizard: false });
+        }
+        return;
+    }
+
     const isEnabled = Boolean(enableFloating);
-    localStorage.setItem('lzhcard_floating_translator_enabled', isEnabled ? 'true' : 'false');
+    if (typeof window.persistLocalFloatingState === 'function') {
+        window.persistLocalFloatingState(isEnabled);
+    } else {
+        localStorage.setItem('lzhcard_floating_translator_enabled', isEnabled ? 'true' : 'false');
+    }
 
     if (typeof FloatingTranslator !== 'undefined' && typeof FloatingTranslator.setEnabled === 'function') {
         FloatingTranslator.setEnabled(isEnabled);
@@ -273,14 +290,12 @@ function handleFloatingTranslatorChange(enableFloating) {
         window.updateFloatingMasterSwitchUI();
     }
 
-    if (typeof saveStorage === 'function') saveStorage();
-
     ensureHighZIndexOverlays();
     if (typeof showToast === 'function') {
         showToast(
             isEnabled
-                ? '已啟用 App 內懸浮翻譯視窗（按 Alt+T 可隨時展開）'
-                : '已隱藏 App 內懸浮翻譯視窗',
+                ? '🌐 已開啟懸浮翻譯視窗'
+                : '🙈 已關閉懸浮翻譯視窗',
             'info'
         );
     }
@@ -456,7 +471,7 @@ function initStudyPreferenceDefaults() {
         localStorage.setItem('lzhcard_show_sentence_front', 'false');
     }
     if (localStorage.getItem('lzhcard_floating_translator_enabled') === null) {
-        localStorage.setItem('lzhcard_floating_translator_enabled', 'true');
+        localStorage.setItem('lzhcard_floating_translator_enabled', 'false');
     }
     Object.values(NOTIFICATION_SETTING_KEYS).forEach((key) => {
         if (localStorage.getItem(key) === null) {
@@ -672,14 +687,26 @@ function updatePlatformComplianceUI() {
         settingsAppleLoginBtn.classList.toggle('hidden', !isIos);
     }
 
+    const sessionKickedAppleBtn = document.getElementById('sessionKickedAppleBtn');
+    if (sessionKickedAppleBtn) {
+        sessionKickedAppleBtn.classList.toggle('hidden', !isIos);
+    }
+
     const iosRestoreSlot = document.getElementById('settingsIosRestorePurchaseSlot');
     if (iosRestoreSlot) {
         iosRestoreSlot.classList.toggle('hidden', !isIos);
     }
 
-    const systemOverlaySlot = document.getElementById('settingsSystemOverlaySlot');
-    if (systemOverlaySlot) {
-        systemOverlaySlot.classList.toggle('hidden', isIos);
+    const iosScreenSlot = document.getElementById('settingsIosScreenTranslateConfigSlot');
+    if (iosScreenSlot) {
+        iosScreenSlot.classList.toggle('hidden', !isIos);
+    }
+
+    const ftTitleEl = document.getElementById('settingsFloatingTranslatorTitle');
+    const ftDescEl = document.getElementById('settingsFloatingTranslatorDesc');
+    if (isIos) {
+        if (ftTitleEl) ftTitleEl.textContent = '懸浮翻譯視窗';
+        if (ftDescEl) ftDescEl.textContent = '切換開關可立即啟動／關閉 iOS 子母畫面螢幕翻譯（點擊下方可修改 3 步驟設定）';
     }
 
     const overlayGuideBtn = document.getElementById('btnOpenOverlayGuide');
@@ -707,9 +734,9 @@ function toggleAuthButtons() {
     if (googleBtn) {
         googleBtn.disabled = !isChecked;
         if (isChecked) {
-            googleBtn.className = "w-full py-3 bg-white hover:bg-slate-50 dark:bg-slate-900 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 font-bold rounded-xl text-xs flex items-center justify-center space-x-2 transition border border-slate-300 dark:border-slate-600 shadow-sm cursor-pointer";
+            googleBtn.className = "w-full min-h-[44px] py-3 bg-white hover:bg-slate-50 dark:bg-slate-900 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 font-bold rounded-xl text-xs flex items-center justify-center space-x-2 transition border border-slate-300 dark:border-slate-600 shadow-sm cursor-pointer";
         } else {
-            googleBtn.className = "w-full py-3 bg-slate-200 dark:bg-slate-700 text-slate-400 font-bold rounded-xl text-xs flex items-center justify-center space-x-2 transition cursor-not-allowed opacity-60";
+            googleBtn.className = "w-full min-h-[44px] py-3 bg-slate-200 dark:bg-slate-700 text-slate-400 font-bold rounded-xl text-xs flex items-center justify-center space-x-2 transition cursor-not-allowed opacity-60";
         }
     }
 
@@ -717,18 +744,18 @@ function toggleAuthButtons() {
         appleBtn.disabled = !isChecked;
         const hiddenClass = isIos ? '' : 'hidden ';
         if (isChecked) {
-            appleBtn.className = `${hiddenClass}w-full py-3 bg-slate-900 hover:bg-black text-white font-bold rounded-xl text-xs flex items-center justify-center space-x-2 transition border border-slate-800 shadow-sm cursor-pointer`;
+            appleBtn.className = `${hiddenClass}w-full min-h-[44px] py-3 bg-slate-900 hover:bg-black text-white font-bold rounded-xl text-xs flex items-center justify-center space-x-2 transition border border-slate-800 shadow-sm cursor-pointer`;
         } else {
-            appleBtn.className = `${hiddenClass}w-full py-3 bg-slate-200 dark:bg-slate-700 text-slate-400 font-bold rounded-xl text-xs flex items-center justify-center space-x-2 transition cursor-not-allowed opacity-60`;
+            appleBtn.className = `${hiddenClass}w-full min-h-[44px] py-3 bg-slate-200 dark:bg-slate-700 text-slate-400 font-bold rounded-xl text-xs flex items-center justify-center space-x-2 transition cursor-not-allowed opacity-60`;
         }
     }
 
     if (guestBtn) {
         guestBtn.disabled = !isChecked;
         if (isChecked) {
-            guestBtn.className = "w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-xs flex items-center justify-center space-x-2 transition shadow-sm cursor-pointer";
+            guestBtn.className = "w-full min-h-[44px] py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-xs flex items-center justify-center space-x-2 transition shadow-sm cursor-pointer";
         } else {
-            guestBtn.className = "w-full py-3 bg-slate-200 dark:bg-slate-700 text-slate-400 font-bold rounded-xl text-xs flex items-center justify-center space-x-2 transition cursor-not-allowed opacity-60";
+            guestBtn.className = "w-full min-h-[44px] py-3 bg-slate-200 dark:bg-slate-700 text-slate-400 font-bold rounded-xl text-xs flex items-center justify-center space-x-2 transition cursor-not-allowed opacity-60";
         }
     }
 }
@@ -794,6 +821,8 @@ function closeWelcomeModal() {
 }
 
 function openWelcomeModal() {
+    updatePlatformComplianceUI();
+    toggleAuthButtons();
     const modal = document.getElementById('welcomeModal');
     if (modal) {
         modal.classList.remove('hidden');
@@ -808,6 +837,7 @@ function checkAuthAndTosState() {
     if (typeof firebase !== 'undefined' && firebase.auth) {
         firebase.auth().onAuthStateChanged((user) => {
             if (typeof applyLanguageUI === 'function') applyLanguageUI();
+            updatePlatformComplianceUI();
 
             if (user) {
                 closeWelcomeModal();
@@ -820,6 +850,7 @@ function checkAuthAndTosState() {
             }
         });
     } else {
+        updatePlatformComplianceUI();
         if (isGuest && tosAccepted) {
             closeWelcomeModal();
         } else {
@@ -834,6 +865,7 @@ document.addEventListener('DOMContentLoaded', () => {
     ensureHighZIndexOverlays();
     bindHighZIndexToastWrapper();
     initLanguageSettings();
+    updatePlatformComplianceUI();
 
     const preference = localStorage.getItem('theme_preference') || 'system';
     const themeSelect = document.getElementById('themeSelect');

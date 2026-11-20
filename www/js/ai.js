@@ -116,6 +116,100 @@ function updateApiKeyStatusUI() {
 
 window.addEventListener('DOMContentLoaded', updateApiKeyStatusUI);
 
+const AI_PRIVACY_CONSENT_KEY = 'lzhcard_ai_privacy_consent_v1';
+let _aiConsentPendingResolve = null;
+
+function hasAiPrivacyConsent() {
+    try {
+        return localStorage.getItem(AI_PRIVACY_CONSENT_KEY) === 'granted';
+    } catch (e) {
+        return false;
+    }
+}
+
+function openPrivacyPolicyModal() {
+    if (typeof document === 'undefined') return false;
+    const modal = document.getElementById('privacyPolicyModal');
+    if (!modal) return false;
+    modal.classList.remove('hidden');
+    modal.classList.add('flex');
+    if (typeof applyLanguageUI === 'function') applyLanguageUI();
+    return true;
+}
+
+function closePrivacyPolicyModal() {
+    if (typeof document === 'undefined') return;
+    const modal = document.getElementById('privacyPolicyModal');
+    if (!modal) return;
+    modal.classList.add('hidden');
+    modal.classList.remove('flex');
+}
+
+function _finishAiPrivacyModal(granted) {
+    const modal = typeof document !== 'undefined' ? document.getElementById('aiPrivacyConsentModal') : null;
+    if (modal) {
+        modal.classList.add('hidden');
+        modal.classList.remove('flex');
+    }
+    const resolver = _aiConsentPendingResolve;
+    _aiConsentPendingResolve = null;
+    if (typeof resolver === 'function') {
+        resolver(Boolean(granted));
+    }
+}
+
+function grantAiPrivacyConsent() {
+    try {
+        localStorage.setItem(AI_PRIVACY_CONSENT_KEY, 'granted');
+    } catch (e) {}
+    _finishAiPrivacyModal(true);
+    if (typeof showToast === 'function') {
+        showToast(safeT('toastAiConsentGranted', null, '已同意 AI 資料隱私授權，可隨時於「設定 → 隱私設定」調整。'), 'success');
+    }
+}
+
+function declineAiPrivacyConsent() {
+    try {
+        localStorage.setItem(AI_PRIVACY_CONSENT_KEY, 'declined');
+    } catch (e) {}
+    _finishAiPrivacyModal(false);
+    if (typeof showToast === 'function') {
+        showToast(safeT('toastAiConsentDeclined', null, '已維持僅離線／本機模式，不會傳送影像或字詞至雲端 AI。'), 'info');
+    }
+}
+
+async function ensureAiPrivacyConsent(options = {}) {
+    const forceOpen = Boolean(options && options.forceOpen);
+    if (!forceOpen && hasAiPrivacyConsent()) return true;
+    if (typeof document === 'undefined') return false;
+
+    const modal = document.getElementById('aiPrivacyConsentModal');
+    if (!modal) return true;
+
+    if (typeof applyLanguageUI === 'function') applyLanguageUI();
+
+    if (_aiConsentPendingResolve) {
+        try { _aiConsentPendingResolve(false); } catch (e) {}
+        _aiConsentPendingResolve = null;
+    }
+
+    return new Promise((resolve) => {
+        _aiConsentPendingResolve = resolve;
+        modal.classList.remove('hidden');
+        modal.classList.add('flex');
+    });
+}
+
+if (typeof window !== 'undefined') {
+    window.AI_PRIVACY_CONSENT_KEY = AI_PRIVACY_CONSENT_KEY;
+    window.hasAiPrivacyConsent = hasAiPrivacyConsent;
+    window.ensureAiPrivacyConsent = ensureAiPrivacyConsent;
+    window.grantAiPrivacyConsent = grantAiPrivacyConsent;
+    window.declineAiPrivacyConsent = declineAiPrivacyConsent;
+    window.openPrivacyPolicyModal = openPrivacyPolicyModal;
+    window.closePrivacyPolicyModal = closePrivacyPolicyModal;
+}
+
 async function getOptionalFirebaseIdToken() {
     try {
         if (typeof firebase !== 'undefined' && firebase.auth) {
@@ -269,6 +363,16 @@ async function fetchGroqDirectly(groqKey, promptText, options = {}) {
  */
 async function callGeminiApi(promptText, options = {}) {
     const silent = Boolean(options && options.silent);
+    const skipPrivacyPrompt = Boolean(options && options.skipPrivacyPrompt);
+    if (!skipPrivacyPrompt && !hasAiPrivacyConsent()) {
+        if (silent) {
+            throw new Error('AI_PRIVACY_CONSENT_REQUIRED');
+        }
+        const consentOk = await ensureAiPrivacyConsent({ feature: resolveAiFeatureName(options) });
+        if (!consentOk) {
+            throw new Error('使用者選擇僅使用離線與本機功能');
+        }
+    }
     const hasMedia = hasInlineMediaPayload(options);
     const groqKey = getValidGroqKey();
     const geminiKey = getValidApiKey();
@@ -940,3 +1044,245 @@ Return ONLY a valid JSON array with no markdown or extra text:
 
     return successUpdatedCount;
 }
+
+/**
+ * 🔊 跨平台單字與語句語音引擎（Android 原生 TextToSpeech 優先 -> Web speechSynthesis 監看 -> 線上詞典/TTS 音訊串流備援）
+ */
+(function initLzhUnifiedAudioTts(global) {
+    if (!global || global.LZHAudioTts) return;
+
+    let ttsPlaySeq = 0;
+    let activeHtmlAudio = null;
+
+    function getCapacitorPlatformName() {
+        try {
+            if (global.Capacitor && typeof global.Capacitor.getPlatform === 'function') {
+                return String(global.Capacitor.getPlatform() || '').toLowerCase();
+            }
+        } catch (e) {}
+        const ua = (typeof navigator !== 'undefined' && navigator.userAgent) ? navigator.userAgent : '';
+        if (/android/i.test(ua)) return 'android';
+        if (/iphone|ipad|ipod/i.test(ua)) return 'ios';
+        return 'web';
+    }
+
+    function normalizeTtsLocale(langCode) {
+        const raw = String(langCode || '').trim().toLowerCase();
+        if (!raw) return 'en-US';
+        if (raw.startsWith('ja')) return 'ja-JP';
+        if (raw.startsWith('ko')) return 'ko-KR';
+        if (raw.startsWith('zh')) return 'zh-TW';
+        if (raw === 'en-gb') return 'en-GB';
+        if (raw.startsWith('en')) return 'en-US';
+        return String(langCode);
+    }
+
+    function buildOnlineAudioFallbackUrls(text, locale) {
+        const encoded = encodeURIComponent(text);
+        const lower = locale.toLowerCase();
+        if (lower.startsWith('ja')) {
+            return [
+                `https://dict.youdao.com/dictvoice?audio=${encoded}&le=jap`,
+                `https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=ja&q=${encoded}`
+            ];
+        }
+        if (lower.startsWith('ko')) {
+            return [
+                `https://dict.youdao.com/dictvoice?audio=${encoded}&le=ko`,
+                `https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=ko&q=${encoded}`
+            ];
+        }
+        if (lower.startsWith('zh')) {
+            return [
+                `https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=zh-TW&q=${encoded}`
+            ];
+        }
+        return [
+            `https://dict.youdao.com/dictvoice?audio=${encoded}&type=2`,
+            `https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=en&q=${encoded}`
+        ];
+    }
+
+    function stopAllAudio() {
+        ttsPlaySeq++;
+        if (activeHtmlAudio) {
+            try {
+                activeHtmlAudio.pause();
+                activeHtmlAudio.removeAttribute('src');
+                activeHtmlAudio.load();
+            } catch (e) {}
+            activeHtmlAudio = null;
+        }
+        try {
+            const nativeTts = global.Capacitor?.Plugins?.NativeTts;
+            if (nativeTts && typeof nativeTts.stop === 'function') {
+                nativeTts.stop().catch(() => {});
+            }
+        } catch (e) {}
+        try {
+            const capTts = global.Capacitor?.Plugins?.TextToSpeech;
+            if (capTts && typeof capTts.stop === 'function') {
+                capTts.stop().catch(() => {});
+            }
+        } catch (e) {}
+        try {
+            if (typeof window !== 'undefined' && 'speechSynthesis' in window && typeof window.speechSynthesis.cancel === 'function') {
+                window.speechSynthesis.cancel();
+            }
+        } catch (e) {}
+    }
+
+    async function tryWebSpeechWithWatchdog(text, locale, mySeq) {
+        if (typeof window === 'undefined' || !('speechSynthesis' in window) || typeof SpeechSynthesisUtterance === 'undefined') {
+            return false;
+        }
+        return await new Promise((resolve) => {
+            let settled = false;
+            const finish = (ok) => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(watchdog);
+                resolve(Boolean(ok));
+            };
+
+            const watchdog = setTimeout(() => {
+                // 小米 HyperOS / Android WebView 常發生 speechSynthesis.speak 靜默不觸發事件也不發音
+                try {
+                    if (window.speechSynthesis.speaking) {
+                        finish(true);
+                        return;
+                    }
+                    window.speechSynthesis.cancel();
+                } catch (e) {}
+                finish(false);
+            }, 900);
+
+            try {
+                window.speechSynthesis.cancel();
+                const u = new SpeechSynthesisUtterance(text);
+                u.lang = locale;
+                u.onstart = () => finish(true);
+                u.onend = () => finish(true);
+                u.onerror = () => finish(false);
+                if (mySeq !== ttsPlaySeq) {
+                    finish(true);
+                    return;
+                }
+                window.speechSynthesis.speak(u);
+            } catch (e) {
+                finish(false);
+            }
+        });
+    }
+
+    async function tryOnlineAudioStreamFallback(text, locale, mySeq) {
+        if (typeof Audio === 'undefined') return false;
+        const urls = buildOnlineAudioFallbackUrls(text, locale);
+        for (const url of urls) {
+            if (mySeq !== ttsPlaySeq) return true;
+            const played = await new Promise((resolve) => {
+                let done = false;
+                const finish = (ok) => {
+                    if (done) return;
+                    done = true;
+                    resolve(Boolean(ok));
+                };
+                try {
+                    const audio = new Audio();
+                    audio.preload = 'auto';
+                    audio.src = url;
+                    activeHtmlAudio = audio;
+                    const timeout = setTimeout(() => finish(false), 4500);
+                    audio.onended = () => {
+                        clearTimeout(timeout);
+                        if (activeHtmlAudio === audio) activeHtmlAudio = null;
+                        finish(true);
+                    };
+                    audio.onerror = () => {
+                        clearTimeout(timeout);
+                        if (activeHtmlAudio === audio) activeHtmlAudio = null;
+                        finish(false);
+                    };
+                    const playPromise = audio.play();
+                    if (playPromise && typeof playPromise.then === 'function') {
+                        playPromise.then(() => {
+                            clearTimeout(timeout);
+                            finish(true);
+                        }).catch(() => {
+                            clearTimeout(timeout);
+                            if (activeHtmlAudio === audio) activeHtmlAudio = null;
+                            finish(false);
+                        });
+                    }
+                } catch (e) {
+                    finish(false);
+                }
+            });
+            if (played) return true;
+        }
+        return false;
+    }
+
+    async function speakText(text, langCode = 'en-US', options = {}) {
+        const clean = String(text || '').trim();
+        if (!clean) return false;
+        const locale = normalizeTtsLocale(langCode);
+        const platform = getCapacitorPlatformName();
+        const isNative = typeof global.isNativeApp === 'function'
+            ? Boolean(global.isNativeApp())
+            : (platform === 'android' || platform === 'ios');
+
+        if (!options.keepPrevious) {
+            stopAllAudio();
+        }
+        const mySeq = ttsPlaySeq;
+        const rate = Number(options.rate) || 1.0;
+        const pitch = Number(options.pitch) || 1.0;
+
+        // 1. Android 原生優先：呼叫 NativeTtsPlugin（支援 AudioAttributes / AudioFocus / 缺語音包明確 reject）
+        const nativeTts = global.Capacitor?.Plugins?.NativeTts;
+        if (platform === 'android' && nativeTts && typeof nativeTts.speak === 'function') {
+            try {
+                await nativeTts.speak({ text: clean, lang: locale, rate, pitch });
+                return true;
+            } catch (nativeErr) {
+                console.warn('[LZHAudioTts] Android NativeTts failed, triggering fallback:', nativeErr);
+            }
+        }
+        if (mySeq !== ttsPlaySeq) return true;
+
+        // 2. Capacitor TextToSpeech 外掛（iOS 主力 / Android 備援）
+        const capTts = global.Capacitor?.Plugins?.TextToSpeech;
+        if (isNative && capTts && typeof capTts.speak === 'function') {
+            try {
+                await capTts.speak({
+                    text: clean,
+                    lang: locale,
+                    rate,
+                    pitch,
+                    volume: 1.0,
+                    category: 'ambient'
+                });
+                return true;
+            } catch (capErr) {
+                console.warn('[LZHAudioTts] Capacitor TextToSpeech failed, triggering fallback:', capErr);
+            }
+        }
+        if (mySeq !== ttsPlaySeq) return true;
+
+        // 3. 瀏覽器 Web Speech API（非 Android 原生優先，或 Android 原生無語音包時之備援）
+        const webSpoken = await tryWebSpeechWithWatchdog(clean, locale, mySeq);
+        if (webSpoken) return true;
+        if (mySeq !== ttsPlaySeq) return true;
+
+        // 4. 線上詞典 / TTS 音訊串流最終備援（解決 HyperOS 無系統 TTS 語音包之靜音問題）
+        return await tryOnlineAudioStreamFallback(clean, locale, mySeq);
+    }
+
+    global.LZHAudioTts = {
+        speak: speakText,
+        stop: stopAllAudio
+    };
+    global.speakText = (text, langCode, options) => speakText(text, langCode, options);
+})(typeof window !== 'undefined' ? window : globalThis);
+

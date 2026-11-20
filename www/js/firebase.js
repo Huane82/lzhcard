@@ -10,14 +10,37 @@ const firebaseConfig = {
   measurementId: "G-8KNV18H30V"
 };
 
-// 初始化 Firebase
-if (typeof firebase !== 'undefined' && !firebase.apps.length) {
-  firebase.initializeApp(firebaseConfig);
+const hasFirebaseSdk = typeof firebase !== 'undefined' && typeof firebase.auth === 'function' && typeof firebase.firestore === 'function';
+
+// 初始化 Firebase（離線冷啟動或 CDN 尚未載入時安全降級）
+if (hasFirebaseSdk && !firebase.apps.length) {
+  try {
+    firebase.initializeApp(firebaseConfig);
+  } catch (e) {
+    console.warn("Firebase initializeApp 失敗：", e);
+  }
 }
 
-const auth = firebase.auth();
-const db = firebase.firestore();
+let auth = null;
+let db = null;
 let rtdb = null;
+
+try {
+  if (typeof firebase !== 'undefined' && typeof firebase.auth === 'function') {
+    auth = firebase.auth();
+  }
+} catch (e) {
+  console.warn("Firebase Auth 初始化失敗：", e);
+}
+
+try {
+  if (typeof firebase !== 'undefined' && typeof firebase.firestore === 'function') {
+    db = firebase.firestore();
+  }
+} catch (e) {
+  console.warn("Firebase Firestore 初始化失敗：", e);
+}
+
 try {
   if (typeof firebase !== 'undefined' && typeof firebase.database === 'function') {
     rtdb = firebase.database();
@@ -32,13 +55,15 @@ if (typeof window !== 'undefined') {
   window.rtdb = rtdb;
 }
 
-try {
-  db.settings({
-    experimentalForceLongPolling: true,
-    useFetchStreams: false
-  });
-} catch (e) {
-  console.warn("Firestore settings 已初始化過：", e);
+if (db && typeof db.settings === 'function') {
+  try {
+    db.settings({
+      experimentalForceLongPolling: true,
+      useFetchStreams: false
+    });
+  } catch (e) {
+    console.warn("Firestore settings 已初始化過：", e);
+  }
 }
 
 /**
@@ -706,8 +731,8 @@ async function handleSaveNickname() {
     return;
   }
 
-  if (!auth.currentUser) {
-    if (typeof showToast === 'function') showToast('訪客模式無法設定固定暱稱，請先登入帳號！', 'warning');
+  if (!auth || !auth.currentUser || !db) {
+    if (typeof showToast === 'function') showToast('離線或訪客模式無法設定雲端固定暱稱！', 'warning');
     return;
   }
 
@@ -746,7 +771,7 @@ async function saveSelectedCategoriesToCloud(categories) {
   localStorage.setItem('lzhcard_selected_categories', JSON.stringify(categories));
   window.selectedCategories = categories;
 
-  if (auth.currentUser) {
+  if (auth && auth.currentUser && db) {
     try {
       await db.collection('users').doc(auth.currentUser.uid).set({
         selectedCategories: categories,
@@ -760,7 +785,7 @@ async function saveSelectedCategoriesToCloud(categories) {
 
 // 🌐 6. 儲存好友列表至雲端 Firestore
 async function saveFriendsToCloud(friends) {
-  if (!Array.isArray(friends) || !auth.currentUser) return;
+  if (!Array.isArray(friends) || !auth || !auth.currentUser || !db) return;
   try {
     await db.collection('users').doc(auth.currentUser.uid).set({
       friends: friends,
@@ -774,7 +799,7 @@ async function saveFriendsToCloud(friends) {
 // 💾 6.5 儲存使用者檔案、外觀設定、好友名單與隱私偏好至雲端 Firestore
 async function saveUserData() {
   if (!window.userData) window.userData = {};
-  if (!auth.currentUser) return false;
+  if (!auth || !auth.currentUser || !db) return false;
 
   try {
     // 僅允許前端寫入安全個人資料與學習進度欄位；金幣、會員、AI配額與已購買權益嚴格由後端 Worker 控制
@@ -810,6 +835,7 @@ if (typeof window !== 'undefined') {
 }
 
 // 7. 監聽帳號狀態切換，同步雲端資料與字庫記憶
+if (auth && typeof auth.onAuthStateChanged === 'function') {
 auth.onAuthStateChanged(async (user) => {
   if (typeof setAppLoaderProgress === 'function') {
     setAppLoaderProgress(35, '驗證帳號狀態中...');
@@ -1058,6 +1084,17 @@ auth.onAuthStateChanged(async (user) => {
     MultiplayerEngine.checkUrlDuelInvite();
   }
 });
+} else if (typeof window !== 'undefined') {
+  document.addEventListener('DOMContentLoaded', () => {
+    window.__appReadyToHideLoader = true;
+    if (typeof hideAppLoader === 'function') {
+      hideAppLoader();
+    }
+    if (typeof updateOfflineBannerUI === 'function') {
+      updateOfflineBannerUI();
+    }
+  });
+}
 
 // ==========================================
 // 🔒 條款同意與新手引導流程控制 (welcomeModal)
@@ -1074,9 +1111,9 @@ function toggleAuthButtons() {
   if (googleBtn) {
     googleBtn.disabled = !isChecked;
     if (isChecked) {
-      googleBtn.className = "w-full py-3 bg-white dark:bg-slate-900 hover:bg-slate-100 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-600 font-bold rounded-xl text-xs flex items-center justify-center space-x-2 transition cursor-pointer shadow-xs";
+      googleBtn.className = "w-full min-h-[44px] py-3 bg-white dark:bg-slate-900 hover:bg-slate-100 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-600 font-bold rounded-xl text-xs flex items-center justify-center space-x-2 transition cursor-pointer shadow-xs";
     } else {
-      googleBtn.className = "w-full py-3 bg-slate-200 dark:bg-slate-700 text-slate-400 font-bold rounded-xl text-xs flex items-center justify-center space-x-2 transition cursor-not-allowed";
+      googleBtn.className = "w-full min-h-[44px] py-3 bg-slate-200 dark:bg-slate-700 text-slate-400 font-bold rounded-xl text-xs flex items-center justify-center space-x-2 transition cursor-not-allowed";
     }
   }
 
@@ -1084,18 +1121,18 @@ function toggleAuthButtons() {
     appleBtn.disabled = !isChecked;
     const isHidden = appleBtn.classList.contains('hidden');
     if (isChecked) {
-      appleBtn.className = `${isHidden ? 'hidden ' : ''}w-full py-3 bg-slate-900 hover:bg-black text-white border border-slate-800 font-bold rounded-xl text-xs flex items-center justify-center space-x-2 transition cursor-pointer shadow-xs`;
+      appleBtn.className = `${isHidden ? 'hidden ' : ''}w-full min-h-[44px] py-3 bg-slate-900 hover:bg-black text-white border border-slate-800 font-bold rounded-xl text-xs flex items-center justify-center space-x-2 transition cursor-pointer shadow-xs`;
     } else {
-      appleBtn.className = `${isHidden ? 'hidden ' : ''}w-full py-3 bg-slate-200 dark:bg-slate-700 text-slate-400 font-bold rounded-xl text-xs flex items-center justify-center space-x-2 transition cursor-not-allowed`;
+      appleBtn.className = `${isHidden ? 'hidden ' : ''}w-full min-h-[44px] py-3 bg-slate-200 dark:bg-slate-700 text-slate-400 font-bold rounded-xl text-xs flex items-center justify-center space-x-2 transition cursor-not-allowed`;
     }
   }
 
   if (guestBtn) {
     guestBtn.disabled = !isChecked;
     if (isChecked) {
-      guestBtn.className = "w-full py-3 bg-brand-600 hover:bg-brand-700 text-white font-bold rounded-xl text-xs flex items-center justify-center space-x-2 transition cursor-pointer shadow-xs";
+      guestBtn.className = "w-full min-h-[44px] py-3 bg-brand-600 hover:bg-brand-700 text-white font-bold rounded-xl text-xs flex items-center justify-center space-x-2 transition cursor-pointer shadow-xs";
     } else {
-      guestBtn.className = "w-full py-3 bg-slate-200 dark:bg-slate-700 text-slate-400 font-bold rounded-xl text-xs flex items-center justify-center space-x-2 transition cursor-not-allowed";
+      guestBtn.className = "w-full min-h-[44px] py-3 bg-slate-200 dark:bg-slate-700 text-slate-400 font-bold rounded-xl text-xs flex items-center justify-center space-x-2 transition cursor-not-allowed";
     }
   }
 }

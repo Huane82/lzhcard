@@ -203,25 +203,62 @@ select option {
 }
 
 #main-header {
-    padding-top: var(--safe-area-top);
+    padding-top: calc(env(safe-area-inset-top, 0px) + 12px);
 }
 
 #bottom-nav {
-    padding-bottom: var(--safe-area-bottom);
+    padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 12px);
 }
 
 .safe-area-drawer {
-    padding-top: var(--safe-area-top);
-    padding-bottom: var(--safe-area-bottom);
+    padding-top: calc(env(safe-area-inset-top, 0px) + 12px);
+    padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 12px);
+}
+
+.lzh-safe-modal {
+    padding-top: calc(env(safe-area-inset-top, 0px) + 12px) !important;
+    padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 12px) !important;
+}
+
+/* Apple HIG: disable unintended webview callouts/selection on UI chrome while keeping form inputs & selectable text working */
+html, body, button, a, label, [role="button"], .select-none {
+    -webkit-tap-highlight-color: transparent;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+}
+
+input, textarea, select, [contenteditable="true"], .select-text {
+    -webkit-user-select: text !important;
+    user-select: text !important;
+    -webkit-touch-callout: default !important;
+}
+
+/* Apple HIG: ensure >= 44x44px hit area on close/icon controls & >= 8px gaps */
+button[onclick*="closeModal"],
+button[onclick*="closeChatDrawer"],
+button[onclick*="closeSettingsDrawer"],
+button[onclick*="closeStoreDrawer"],
+button[onclick*="closeDeleteAccountModal"],
+button[onclick*="closeMembershipModal"],
+button[onclick*="closeOverlayPermissionGuideModal"],
+button[onclick*="closeFriendOnlyInviteModal"],
+button[onclick*="HelpManualModal.close"],
+button[onclick*="MultiplayerEngine.closeModal"] {
+    min-width: 44px;
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
 }
 
 body {
-    padding-bottom: calc(4rem + var(--safe-area-bottom));
+    padding-bottom: calc(4.75rem + env(safe-area-inset-bottom, 0px));
 }
 
 @media (min-width: 640px) {
     body {
-        padding-bottom: calc(4rem + var(--safe-area-bottom));
+        padding-bottom: calc(4.75rem + env(safe-area-inset-bottom, 0px));
     }
 }
 
@@ -431,8 +468,8 @@ body {
         flex-direction: column;
         justify-content: space-between;
         min-height: calc(100dvh - 4rem - var(--safe-area-top) - var(--safe-area-bottom));
-        padding-top: 0.75rem;
-        padding-bottom: 1.5rem;
+        padding-top: calc(env(safe-area-inset-top, 0px) + 12px);
+        padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 18px);
         gap: 1.25rem;
     }
 
@@ -807,6 +844,8 @@ body {
     max-height: none !important;
     inset: 0 !important;
     border-radius: 0 !important;
+    padding-top: calc(env(safe-area-inset-top, 0px) + 12px) !important;
+    padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 12px) !important;
 }
 
 .ft-fullscreen #ftTabBody {

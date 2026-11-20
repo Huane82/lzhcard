@@ -50,7 +50,7 @@ function showIosGuideModal() {
         display: flex;
         flex-direction: column;
         align-items: flex-end;
-        padding: 16px 20px;
+        padding: calc(env(safe-area-inset-top, 0px) + 16px) 20px calc(env(safe-area-inset-bottom, 0px) + 16px);
         box-sizing: border-box;
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
         color: #ffffff;
@@ -92,10 +92,11 @@ function showIosGuideModal() {
         <button id="close-guide-btn" style="
             margin-top: 24px;
             align-self: center;
+            min-height: 44px;
             background: transparent;
             border: 1px solid rgba(255, 255, 255, 0.3);
-            color: #9CA3AF;
-            padding: 8px 20px;
+            color: #E5E7EB;
+            padding: 10px 20px;
             border-radius: 20px;
             font-size: 14px;
             cursor: pointer;

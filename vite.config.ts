@@ -1,8 +1,14 @@
 import fs from 'fs';
 import path from 'path';
+import {fileURLToPath} from 'url';
 import {defineConfig} from 'vite';
 
-const wwwRoot = path.resolve(__dirname, 'www');
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const projectRoot = fs.existsSync(path.resolve(__dirname, 'lzhcard', 'www'))
+  ? path.resolve(__dirname, 'lzhcard')
+  : __dirname;
+const wwwRoot = path.resolve(projectRoot, 'www');
 const distOut = path.resolve(__dirname, 'dist');
 
 function copyStaticWwwAssets() {
@@ -32,11 +38,11 @@ function copyStaticWwwAssets() {
 export default defineConfig(() => {
   return {
     root: wwwRoot,
-    publicDir: false,
+    publicDir: false as const,
     plugins: [copyStaticWwwAssets()],
     resolve: {
       alias: {
-        '@': path.resolve(__dirname, '.'),
+        '@': projectRoot,
       },
     },
     build: {
@@ -46,10 +52,7 @@ export default defineConfig(() => {
     server: {
       port: 3000,
       host: '0.0.0.0',
-      // HMR is disabled in AI Studio via DISABLE_HMR env var.
-      // Do not modify—file watching is disabled to prevent flickering during agent edits.
       hmr: process.env.DISABLE_HMR !== 'true',
-      // Disable file watching when DISABLE_HMR is true to save CPU during agent edits.
       watch: process.env.DISABLE_HMR === 'true' ? null : {},
     },
   };

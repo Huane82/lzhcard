@@ -16,6 +16,15 @@ contextBridge.exposeInMainWorld('LZHDesktopWidget', {
     hideWidget: () => ipcRenderer.send('widget:hide'),
     showWidget: () => ipcRenderer.send('widget:show'),
     openExternalUrl: (url) => ipcRenderer.invoke('widget:open-external', String(url || '')),
+    openSubtitleWindow: () => ipcRenderer.invoke('widget:open-subtitle'),
+    closeSubtitleWindow: () => ipcRenderer.invoke('widget:close-subtitle'),
+    updateSubtitleText: (payload) => ipcRenderer.send('widget:update-subtitle', payload || {}),
+    onSubtitleUpdate: (callback) => {
+        if (typeof callback !== 'function') return () => {};
+        const listener = (_event, payload) => callback(payload || {});
+        ipcRenderer.on('subtitle:update', listener);
+        return () => ipcRenderer.removeListener('subtitle:update', listener);
+    },
     onShortcutToggle: (callback) => {
         if (typeof callback !== 'function') return () => {};
         const listener = (_event, payload) => callback(payload || {});

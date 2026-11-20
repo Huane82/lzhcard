@@ -1,11 +1,12 @@
 name: 自動打包 iOS IPA (未簽章版)
 
 on:
-  # 建議使用手動按鈕觸發，避免每次改網頁小字都耗掉免費額度
   workflow_dispatch:
-  # 如果你希望每次 push 到 main 分支都自動打包，把下面這兩行的 # 刪掉即可：
-  # push:
-  #   branches: [ main ]
+
+env:
+  APP_BUNDLE_ID: com.lzhcard.app
+  BROADCAST_BUNDLE_ID: com.lzhcard.app.BroadcastUpload
+  APP_NAME: LZHCard
 
 jobs:
   build-ios:
@@ -21,16 +22,231 @@ jobs:
           node-version: '22'
 
       - name: 3. 安裝專案相依套件
-        run: npm install
-
-      - name: 4. 動態建立 iOS 專案並同步 www 網頁
         run: |
-          if [ ! -d "ios" ]; then
+          npm install
+          if [ ! -d "node_modules/@capacitor/ios" ]; then
             CAP_VER=$(node -p "require('./node_modules/@capacitor/core/package.json').version.split('.')[0]")
-            npm install @capacitor/ios@^${CAP_VER}.0.0
+            npm install --no-save "@capacitor/ios@^${CAP_VER}.0.0"
+          fi
+          if [ ! -d "ios" ]; then
             npx cap add ios
           fi
+
+      - name: 4. 注入 Firebase、URL Scheme、Broadcast Extension 與同步設定
+        env:
+          GOOGLE_SERVICE_INFO_PLIST_BASE64: ${{ secrets.GOOGLE_SERVICE_INFO_PLIST_BASE64 }}
+        run: |
+          python3 - <<'PY'
+          import os, plistlib
+
+          template_path = 'ios-template/Info.plist'
+          target_path = 'ios/App/App/Info.plist'
+
+          if os.path.exists(template_path) and os.path.exists(target_path):
+              with open(template_path, 'rb') as f:
+                  template_plist = plistlib.load(f)
+              with open(target_path, 'rb') as f:
+                  target_plist = plistlib.load(f)
+              for k, v in template_plist.items():
+                  target_plist[k] = v
+              bg = target_plist.get('UIBackgroundModes', [])
+              if not isinstance(bg, list):
+                  bg = []
+              if 'audio' not in bg:
+                  bg.append('audio')
+              target_plist['UIBackgroundModes'] = bg
+              with open(target_path, 'wb') as f:
+                  plistlib.dump(target_plist, f, sort_keys=False)
+          PY
+
+          if [ -n "$GOOGLE_SERVICE_INFO_PLIST_BASE64" ]; then
+            echo "$GOOGLE_SERVICE_INFO_PLIST_BASE64" | base64 --decode > ios/App/App/GoogleService-Info.plist
+            python3 - <<'PY'
+          import plistlib
+          gs_path = 'ios/App/App/GoogleService-Info.plist'
+          info_path = 'ios/App/App/Info.plist'
+          with open(gs_path, 'rb') as f:
+              gs = plistlib.load(f)
+          rev_id = str(gs.get('REVERSED_CLIENT_ID', '')).strip()
+          if rev_id:
+              with open(info_path, 'rb') as f:
+                  info = plistlib.load(f)
+              urls = info.get('CFBundleURLTypes', [])
+              if not isinstance(urls, list):
+                  urls = []
+              if not any(isinstance(e, dict) and rev_id in (e.get('CFBundleURLSchemes') or []) for e in urls):
+                  urls.append({
+                      'CFBundleTypeRole': 'Editor',
+                      'CFBundleURLName': 'GoogleSignIn',
+                      'CFBundleURLSchemes': [rev_id]
+                  })
+                  info['CFBundleURLTypes'] = urls
+                  with open(info_path, 'wb') as f:
+                      plistlib.dump(info, f, sort_keys=False)
+          PY
+          fi
+
+          if [ -f "ios-template/App/IosScreenTranslatePlugin.swift" ]; then
+            cp ios-template/App/IosScreenTranslatePlugin.swift ios/App/App/IosScreenTranslatePlugin.swift
+          fi
+          if [ -f "ios-template/App/PrivacyInfo.xcprivacy" ]; then
+            cp ios-template/App/PrivacyInfo.xcprivacy ios/App/App/PrivacyInfo.xcprivacy
+          fi
+          if [ -f "ios-template/App/App.entitlements" ]; then
+            cp ios-template/App/App.entitlements ios/App/App/App.entitlements
+          fi
+
+          if [ -d "ios-template/BroadcastExtension" ]; then
+            mkdir -p ios/App/BroadcastUpload
+            cp ios-template/BroadcastExtension/SampleHandler.swift ios/App/BroadcastUpload/SampleHandler.swift
+            cp ios-template/BroadcastExtension/Info.plist ios/App/BroadcastUpload/Info.plist
+            cp ios-template/BroadcastExtension/BroadcastUpload.entitlements ios/App/BroadcastUpload/BroadcastUpload.entitlements
+          fi
+
           npx cap sync ios
+
+          if [ -f "assets/icon.png" ] && [ -s "assets/icon.png" ]; then
+            echo "Found assets/icon.png, generating iOS AppIcon after cap sync..."
+            cp assets/icon.png assets/icon-only.png
+            sips -z 1024 1024 assets/icon-only.png --out assets/icon-only.png
+            npx --yes @capacitor/assets generate --ios \
+              --iconBackgroundColor '#ffffff' \
+              --iconBackgroundColorDark '#111111' \
+              --splashBackgroundColor '#ffffff' \
+              --splashBackgroundColorDark '#111111' || {
+                echo "Fallback: resizing assets/icon.png directly into AppIcon.appiconset with sips..."
+                ICONSET_DIR="ios/App/App/Assets.xcassets/AppIcon.appiconset"
+                if [ -d "$ICONSET_DIR" ]; then
+                  for img in "$ICONSET_DIR"/*.png; do
+                    [ -f "$img" ] || continue
+                    W=$(sips -g pixelWidth "$img" | awk '/pixelWidth:/{print $2}')
+                    H=$(sips -g pixelHeight "$img" | awk '/pixelHeight:/{print $2}')
+                    [ -n "$W" ] && [ -n "$H" ] && sips -z "$H" "$W" assets/icon.png --out "$img"
+                  done
+                fi
+              }
+            rm -f assets/icon-only.png
+          else
+            echo "::warning::assets/icon.png missing or empty; keeping default Capacitor icon."
+          fi
+
+          if [ -d "ios/App/BroadcastUpload" ] && [ -d "ios/App/App/Assets.xcassets" ]; then
+            rm -rf ios/App/BroadcastUpload/Assets.xcassets
+            cp -R ios/App/App/Assets.xcassets ios/App/BroadcastUpload/Assets.xcassets
+            echo "Copied Assets.xcassets to ios/App/BroadcastUpload/Assets.xcassets"
+          fi
+
+          ruby - <<'RB'
+          begin
+            require 'xcodeproj'
+          rescue LoadError
+            system('gem install xcodeproj --no-document')
+            Gem.clear_paths
+            require 'xcodeproj'
+          end
+          project = Xcodeproj::Project.open('ios/App/App.xcodeproj')
+          target = project.targets.find { |t| t.name == 'App' }
+          app_group = project.main_group.find_subpath('App', true)
+          if File.exist?('ios/App/App/GoogleService-Info.plist') && !app_group.files.find { |f| f.path == 'GoogleService-Info.plist' }
+            ref = app_group.new_reference('GoogleService-Info.plist')
+            target.resources_build_phase.add_file_reference(ref)
+          end
+          if File.exist?('ios/App/App/PrivacyInfo.xcprivacy') && !app_group.files.find { |f| f.path == 'PrivacyInfo.xcprivacy' }
+            priv_ref = app_group.new_reference('PrivacyInfo.xcprivacy')
+            target.resources_build_phase.add_file_reference(priv_ref)
+          end
+          if File.exist?('ios/App/App/IosScreenTranslatePlugin.swift') && !app_group.files.find { |f| f.path == 'IosScreenTranslatePlugin.swift' }
+            ref = app_group.new_reference('IosScreenTranslatePlugin.swift')
+            target.source_build_phase.add_file_reference(ref)
+          end
+          if File.exist?('ios/App/App/App.entitlements')
+            app_group.new_reference('App.entitlements') unless app_group.files.find { |f| f.path == 'App.entitlements' }
+            target.build_configurations.each do |cfg|
+              cfg.build_settings['CODE_SIGN_ENTITLEMENTS'] = 'App/App.entitlements'
+              cfg.build_settings['SWIFT_VERSION'] ||= '5.0'
+            end
+          end
+
+          if Dir.exist?('ios/App/BroadcastUpload')
+            ext_name = 'BroadcastUpload'
+            ext_target = project.targets.find { |t| t.name == ext_name } ||
+                         project.new_target(:app_extension, ext_name, :ios, '15.0')
+            ext_target.product_name = ext_name
+            if ext_target.product_reference
+              ext_target.product_reference.name = "#{ext_name}.appex"
+              ext_target.product_reference.path = "#{ext_name}.appex"
+              ext_target.product_reference.source_tree = 'BUILT_PRODUCTS_DIR'
+            end
+
+            ext_group = project.main_group.find_subpath(ext_name, true)
+            ext_group.set_source_tree('SOURCE_ROOT')
+
+            sample_ref = ext_group.files.find { |f| f.path == 'BroadcastUpload/SampleHandler.swift' } ||
+                         ext_group.new_reference('BroadcastUpload/SampleHandler.swift')
+            unless ext_target.source_build_phase.files_references.include?(sample_ref)
+              ext_target.source_build_phase.add_file_reference(sample_ref)
+            end
+
+            ext_group.new_reference('BroadcastUpload/Info.plist') unless ext_group.files.find { |f| f.path == 'BroadcastUpload/Info.plist' }
+            ext_group.new_reference('BroadcastUpload/BroadcastUpload.entitlements') unless ext_group.files.find { |f| f.path == 'BroadcastUpload/BroadcastUpload.entitlements' }
+
+            if Dir.exist?('ios/App/BroadcastUpload/Assets.xcassets')
+              assets_ref = ext_group.files.find { |f| f.path == 'BroadcastUpload/Assets.xcassets' } ||
+                           ext_group.new_reference('BroadcastUpload/Assets.xcassets')
+              unless ext_target.resources_build_phase.files_references.include?(assets_ref)
+                ext_target.resources_build_phase.add_file_reference(assets_ref)
+              end
+            end
+
+            ext_target.build_configurations.each do |cfg|
+              cfg.build_settings['PRODUCT_NAME'] = ext_name
+              cfg.build_settings['PRODUCT_MODULE_NAME'] = ext_name
+              cfg.build_settings['WRAPPER_EXTENSION'] = 'appex'
+              cfg.build_settings['PRODUCT_BUNDLE_IDENTIFIER'] = ENV['BROADCAST_BUNDLE_ID'] || 'com.lzhcard.app.BroadcastUpload'
+              cfg.build_settings['INFOPLIST_FILE'] = 'BroadcastUpload/Info.plist'
+              cfg.build_settings['CODE_SIGN_ENTITLEMENTS'] = 'BroadcastUpload/BroadcastUpload.entitlements'
+              cfg.build_settings['ASSETCATALOG_COMPILER_APPICON_NAME'] = 'AppIcon'
+              cfg.build_settings['INFOPLIST_KEY_CFBundleDisplayName'] = 'LZHCard'
+              cfg.build_settings['SWIFT_VERSION'] = '5.0'
+              cfg.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.0'
+              cfg.build_settings['SKIP_INSTALL'] = 'YES'
+              cfg.build_settings['TARGETED_DEVICE_FAMILY'] = '1,2'
+            end
+
+            target.add_dependency(ext_target) unless target.dependencies.any? { |d| d.target == ext_target }
+            embed_phase = target.copy_files_build_phases.find { |p| p.dst_subfolder_spec == '13' } ||
+                          target.new_copy_files_build_phase('Embed Foundation Extensions')
+            embed_phase.dst_subfolder_spec = '13'
+            unless embed_phase.files_references.include?(ext_target.product_reference)
+              build_file = embed_phase.add_file_reference(ext_target.product_reference)
+              build_file.settings = { 'ATTRIBUTES' => ['RemoveHeadersOnCopy'] }
+            end
+          end
+          project.save
+          RB
+
+          node -e '
+            const fs = require("fs");
+            const p = "ios/App/App/capacitor.config.json";
+            const cfg = JSON.parse(fs.readFileSync(p, "utf8"));
+            cfg.plugins = cfg.plugins || {};
+            cfg.plugins.FirebaseAuthentication = {
+              ...(cfg.plugins.FirebaseAuthentication || {}),
+              skipNativeAuth: false,
+              providers: ["google.com", "apple.com"]
+            };
+            cfg.packageClassList = Array.isArray(cfg.packageClassList) ? cfg.packageClassList : [];
+            if (!cfg.packageClassList.includes("IosScreenTranslatePlugin")) {
+              cfg.packageClassList.push("IosScreenTranslatePlugin");
+            }
+            fs.writeFileSync(p, JSON.stringify(cfg, null, 2));
+            console.log("=== Final iOS capacitor.config.json ===");
+            console.log(fs.readFileSync(p, "utf8"));
+          '
+          if [ -f "ios/App/Podfile" ]; then
+            cd ios/App
+            pod install --repo-update
+          fi
 
       - name: 5. 透過 Xcode 編譯未簽章 App
         run: |

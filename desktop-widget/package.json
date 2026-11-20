@@ -33,6 +33,7 @@
     "files": [
       "main.js",
       "preload.js",
+      "subtitle.html",
       "package.json",
       "README.md"
     ],

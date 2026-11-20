@@ -711,6 +711,10 @@ Return ONLY a single JSON object (no markdown, no explanation):
         if (!text || typeof window === 'undefined') return;
         const lang = 'en-US';
         try {
+            if (window.LZHAudioTts && typeof window.LZHAudioTts.speak === 'function') {
+                window.LZHAudioTts.speak(text, lang).catch(() => {});
+                return;
+            }
             const capTTS = window.Capacitor?.Plugins?.TextToSpeech;
             if (typeof global.isNativeApp === 'function' && global.isNativeApp() && capTTS && typeof capTTS.speak === 'function') {
                 capTTS.speak({ text, lang, rate: 1.0, pitch: 1.0, volume: 1.0, category: 'ambient' }).catch(() => {});

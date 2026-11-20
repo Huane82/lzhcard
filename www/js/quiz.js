@@ -408,6 +408,10 @@
         const normLang = normalizeTargetLangCode(langCode);
         const speechLang = normLang === 'ja' ? 'ja-JP' : (normLang === 'zh-TW' ? 'zh-TW' : 'en-US');
         try {
+            if (window.LZHAudioTts && typeof window.LZHAudioTts.speak === 'function') {
+                window.LZHAudioTts.speak(text, speechLang).catch(() => {});
+                return;
+            }
             const capTTS = window.Capacitor?.Plugins?.TextToSpeech;
             if (typeof global.isNativeApp === 'function' && global.isNativeApp() && capTTS && typeof capTTS.speak === 'function') {
                 capTTS.speak({ text, lang: speechLang, rate: 1.0, pitch: 1.0, volume: 1.0, category: 'ambient' }).catch(() => {});
