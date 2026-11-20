@@ -26,10 +26,14 @@
 
     function isAndroidNativeEnvironment() {
         if (!global || !global.Capacitor) return false;
-        if (typeof global.Capacitor.isNativePlatform === 'function') {
-            return global.Capacitor.isNativePlatform();
+        if (typeof global.Capacitor.getPlatform === 'function') {
+            return String(global.Capacitor.getPlatform() || '').toLowerCase() === 'android';
         }
-        return /android/i.test(navigator.userAgent || '');
+        if (typeof global.Capacitor.isNativePlatform === 'function' && global.Capacitor.isNativePlatform()) {
+            const ua = navigator.userAgent || '';
+            return /android/i.test(ua) && !/iphone|ipad|ipod/i.test(ua);
+        }
+        return false;
     }
 
     function notifyUser(message, type = 'info') {

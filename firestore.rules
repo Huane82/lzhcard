@@ -74,8 +74,12 @@ service cloud.firestore {
       allow list, write: if false;
     }
 
-    // Billing replay-protection ledger (100% server-only via Worker Service Account)
+    // Billing replay-protection ledgers (100% server-only via Worker Service Account)
     match /processedOrders/{orderId} {
+      allow read, write: if false;
+    }
+
+    match /processedTransactions/{txId} {
       allow read, write: if false;
     }
 

@@ -5,6 +5,7 @@ function decodeHtmlEntities(str) {
     .replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
+    .replace(/&apos;/g, "'")
     .replace(/&nbsp;/g, " ")
     .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code) || 32))
     .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCharCode(parseInt(hex, 16) || 32));
@@ -93,9 +94,11 @@ function parseJson3Captions(json3Data) {
 
 function parseXmlCaptions(xmlText) {
   const cues = [];
-  const regex = /<text\s+start="([^"]+)"(?:\s+dur="([^"]+)")?[^>]*>([\s\S]*?)<\/text>/g;
+  const rawXml = String(xmlText || "");
+
+  const textRegex = /<text\s+[^>]*start="([^"]+)"(?:\s+dur="([^"]+)")?[^>]*>([\s\S]*?)<\/text>/g;
   let match;
-  while ((match = regex.exec(String(xmlText || ""))) !== null) {
+  while ((match = textRegex.exec(rawXml)) !== null) {
     const startMs = Math.max(0, Math.round((parseFloat(match[1]) || 0) * 1000));
     const durMs = Math.max(800, Math.round((parseFloat(match[2]) || 2.5) * 1000));
     const cleaned = cleanCueText(match[3]);
@@ -106,6 +109,23 @@ function parseXmlCaptions(xmlText) {
       text: cleaned
     });
   }
+
+  if (cues.length === 0) {
+    // YouTube timedtext format 3 uses <p t="ms" d="ms"><s>...</s></p>
+    const pRegex = /<p\s+[^>]*\bt="(\d+)"(?:\s+d="(\d+)")?[^>]*>([\s\S]*?)<\/p>/g;
+    while ((match = pRegex.exec(rawXml)) !== null) {
+      const startMs = Math.max(0, Number(match[1]) || 0);
+      const durMs = Math.max(800, Number(match[2]) || 2600);
+      const cleaned = cleanCueText(match[3]);
+      if (!cleaned) continue;
+      cues.push({
+        startMs,
+        endMs: startMs + durMs,
+        text: cleaned
+      });
+    }
+  }
+
   return cues;
 }
 
@@ -157,14 +177,38 @@ function parseBilibiliBccCaptions(bccJson) {
 function normalizeTrackLanguageScore(track, preferLang) {
   const code = String((track && (track.languageCode || track.lang)) || "").toLowerCase();
   const pref = String(preferLang || "").toLowerCase();
+  const prefPrefix = pref.split(/[-_]/)[0];
   const isAsr = track && (track.kind === "asr" || track.ai_type === 1);
-  let score = isAsr ? 0 : 20;
-  if (pref && code === pref) score += 100;
-  else if (pref && code.startsWith(pref.split("-")[0])) score += 70;
+  // 人工作字幕優先於自動產生(asr)，但絕不丟棄 asr 自動字幕
+  let score = isAsr ? 0 : 10;
+  if (pref && code === pref) score += 200;
+  else if (prefPrefix && (code === prefPrefix || code.startsWith(`${prefPrefix}-`) || code.startsWith(`${prefPrefix}_`))) score += 140;
   else if (code === "en" || code.startsWith("en-")) score += 40;
   else if (code === "ja" || code.startsWith("ja-")) score += 35;
   else if (code === "zh-tw" || code === "zh-hant") score += 25;
   return score;
+}
+
+function selectPreferredCaptionTracks(tracks, preferLang) {
+  if (!Array.isArray(tracks) || tracks.length === 0) return [];
+  const pref = String(preferLang || "").trim().toLowerCase();
+  const prefPrefix = pref.split(/[-_]/)[0];
+  if (pref) {
+    const hasLangMatch = tracks.some((t) => {
+      const code = String((t && (t.languageCode || t.lang)) || "").toLowerCase();
+      return code === pref || (prefPrefix && (code === prefPrefix || code.startsWith(`${prefPrefix}-`)));
+    });
+    if (!hasLangMatch) {
+      // 若無指定語系前綴，直接保底使用 captionTracks[0] 在首位，其餘依權重排列
+      const rest = tracks.slice(1).sort(
+        (a, b) => normalizeTrackLanguageScore(b, preferLang) - normalizeTrackLanguageScore(a, preferLang)
+      );
+      return [tracks[0], ...rest];
+    }
+  }
+  return [...tracks].sort(
+    (a, b) => normalizeTrackLanguageScore(b, preferLang) - normalizeTrackLanguageScore(a, preferLang)
+  );
 }
 
 function smoothCueTimelines(cues) {
@@ -280,14 +324,31 @@ function buildFallbackResponse(platform, videoId, title, errorMsg, corsHeaders) 
       suggestedModes: ["video", "stt"],
       error: errorMsg || "此影片未提供公開文字字幕軌，建議切換「畫面字幕」或「語音字幕」即時翻譯。"
     }),
-    { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    {
+      status: 404,
+      headers: {
+        ...corsHeaders,
+        "Content-Type": "application/json",
+        "Cache-Control": "no-store, no-cache, must-revalidate"
+      }
+    }
+  );
+}
+
+function hasCaptionTracksInPlayer(playerResponse) {
+  return Boolean(
+    playerResponse &&
+    playerResponse.captions &&
+    playerResponse.captions.playerCaptionsTracklistRenderer &&
+    Array.isArray(playerResponse.captions.playerCaptionsTracklistRenderer.captionTracks) &&
+    playerResponse.captions.playerCaptionsTracklistRenderer.captionTracks.length > 0
   );
 }
 
 async function fetchYouTubeSubtitles(videoId, preferLang) {
   let playerResponse = null;
 
-  // 1. Primary: YouTube InnerTube Android Player API (fast, bypasses watch HTML obfuscation)
+  // 1. Primary: YouTube InnerTube ANDROID Player API
   try {
     const innertubeRes = await fetch("https://www.youtube.com/youtubei/v1/player?prettyPrint=false", {
       method: "POST",
@@ -313,16 +374,41 @@ async function fetchYouTubeSubtitles(videoId, preferLang) {
     }
   } catch (e) {}
 
-  // 2. Fallback: Watch page HTML scraping if InnerTube yielded no captionTracks
-  const hasTracks = Boolean(
-    playerResponse &&
-    playerResponse.captions &&
-    playerResponse.captions.playerCaptionsTracklistRenderer &&
-    Array.isArray(playerResponse.captions.playerCaptionsTracklistRenderer.captionTracks) &&
-    playerResponse.captions.playerCaptionsTracklistRenderer.captionTracks.length > 0
-  );
+  // 2. Second Fallback: TVHTML5_SIMPLY_EMBEDDED_PLAYER InnerTube client (bypasses ANDROID client restrictions)
+  if (!hasCaptionTracksInPlayer(playerResponse)) {
+    try {
+      const tvRes = await fetch("https://www.youtube.com/youtubei/v1/player?prettyPrint=false", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "User-Agent": "Mozilla/5.0 (SMART-TV; Linux; Tizen 6.5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/94.0.4606.31 TV Safari/537.36"
+        },
+        body: JSON.stringify({
+          videoId,
+          context: {
+            client: {
+              clientName: "TVHTML5_SIMPLY_EMBEDDED_PLAYER",
+              clientVersion: "2.0",
+              hl: "en",
+              gl: "US"
+            },
+            thirdParty: {
+              embedUrl: "https://www.youtube.com/"
+            }
+          }
+        })
+      });
+      if (tvRes.ok) {
+        const tvData = await tvRes.json();
+        if (hasCaptionTracksInPlayer(tvData) || !playerResponse) {
+          playerResponse = tvData;
+        }
+      }
+    } catch (e) {}
+  }
 
-  if (!hasTracks) {
+  // 3. Third Fallback: Watch page HTML scraping (ytInitialPlayerResponse)
+  if (!hasCaptionTracksInPlayer(playerResponse)) {
     try {
       const watchUrl = `https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}&hl=en`;
       const pageResp = await fetch(watchUrl, {
@@ -363,9 +449,7 @@ async function fetchYouTubeSubtitles(videoId, preferLang) {
     };
   }
 
-  const sortedTracks = [...tracks].sort(
-    (a, b) => normalizeTrackLanguageScore(b, preferLang) - normalizeTrackLanguageScore(a, preferLang)
-  );
+  const sortedTracks = selectPreferredCaptionTracks(tracks, preferLang);
   const chosen = sortedTracks[0];
   const baseUrl = String(chosen.baseUrl || "");
   if (!baseUrl) {
@@ -388,6 +472,9 @@ async function fetchYouTubeSubtitles(videoId, preferLang) {
       if (xmlResp.ok) {
         const xmlText = await xmlResp.text();
         cues = parseXmlCaptions(xmlText);
+        if (cues.length === 0) {
+          cues = parseVttOrSrtCaptions(xmlText);
+        }
       }
     } catch (e) {}
   }
@@ -721,14 +808,21 @@ export async function handleYoutubeSubtitles(request, env, corsHeaders) {
     const cachedHit = await cache.match(cacheReq);
     if (cachedHit) {
       const hitText = await cachedHit.text();
-      return new Response(hitText, {
-        status: 200,
-        headers: {
-          ...corsHeaders,
-          "Content-Type": "application/json",
-          "X-Cache": "HIT"
-        }
-      });
+      let isValidCached = false;
+      try {
+        const parsedHit = JSON.parse(hitText);
+        isValidCached = Boolean(parsedHit && parsedHit.ok && Array.isArray(parsedHit.cues) && parsedHit.cues.length > 0);
+      } catch (e) {}
+      if (isValidCached) {
+        return new Response(hitText, {
+          status: 200,
+          headers: {
+            ...corsHeaders,
+            "Content-Type": "application/json",
+            "X-Cache": "HIT"
+          }
+        });
+      }
     }
   } catch (e) {}
 
@@ -748,7 +842,7 @@ export async function handleYoutubeSubtitles(request, env, corsHeaders) {
       result = await fetchTwitchSubtitles(detected.videoId);
     }
 
-    if (!result || !result.ok) {
+    if (!result || !result.ok || !Array.isArray(result.cues) || result.cues.length === 0) {
       return buildFallbackResponse(
         detected.platform,
         detected.videoId,
@@ -760,7 +854,7 @@ export async function handleYoutubeSubtitles(request, env, corsHeaders) {
 
     const payloadString = JSON.stringify(result);
 
-    // Edge Cache 24 小時（86400 秒）快取命中節流
+    // 僅於成功且確定擁有非空字幕 cues 時才寫入 Edge Cache（24 小時）
     try {
       await cache.put(
         cacheReq,

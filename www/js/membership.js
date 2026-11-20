@@ -772,9 +772,60 @@
         renderMembershipModalBody();
     }
 
+    function getPaymentPlatform() {
+        try {
+            if (global.LZHDesktopWidget && global.LZHDesktopWidget.isElectron) {
+                return 'web';
+            }
+            if (typeof document !== 'undefined' && document.documentElement) {
+                if (
+                    document.documentElement.getAttribute('data-widget-mode') === 'desktop' ||
+                    document.documentElement.dataset?.widgetMode === 'desktop'
+                ) {
+                    return 'web';
+                }
+            }
+            if (typeof window !== 'undefined' && window.location && window.location.search) {
+                const params = new URLSearchParams(window.location.search);
+                if (params.get('widget') === 'desktop') return 'web';
+            }
+            const cap = global.Capacitor;
+            if (cap) {
+                const capPlatform = typeof cap.getPlatform === 'function'
+                    ? String(cap.getPlatform() || '').toLowerCase()
+                    : '';
+                if (capPlatform === 'android') return 'android';
+                if (capPlatform === 'ios') return 'ios';
+                const isNative = typeof cap.isNativePlatform === 'function'
+                    ? Boolean(cap.isNativePlatform())
+                    : Boolean(cap.isNative);
+                if (isNative) {
+                    const ua = (typeof navigator !== 'undefined' && navigator.userAgent) ? navigator.userAgent : '';
+                    return /iphone|ipad|ipod/i.test(ua) ? 'ios' : 'android';
+                }
+            }
+        } catch (e) {}
+        return 'web';
+    }
+
     function getPlayBillingPlugin() {
         const plugins = global.Capacitor && global.Capacitor.Plugins;
         return (plugins && plugins.PlayBilling) ? plugins.PlayBilling : null;
+    }
+
+    function getIosStoreKitPlugin() {
+        const plugins = global.Capacitor && global.Capacitor.Plugins;
+        if (plugins) {
+            if (plugins.StoreKit) return { type: 'capacitor', plugin: plugins.StoreKit };
+            if (plugins.AppleIAP) return { type: 'capacitor', plugin: plugins.AppleIAP };
+            if (plugins.AppleBilling) return { type: 'capacitor', plugin: plugins.AppleBilling };
+            if (plugins.InAppPurchase) return { type: 'capacitor', plugin: plugins.InAppPurchase };
+            if (plugins.InAppPurchase2) return { type: 'capacitor', plugin: plugins.InAppPurchase2 };
+        }
+        if (global.CdvPurchase && global.CdvPurchase.store) {
+            return { type: 'cdvpurchase', store: global.CdvPurchase.store };
+        }
+        return null;
     }
 
     function syncClientPostPurchaseState(data) {
@@ -823,7 +874,7 @@
         }
         const idToken = await authUser.getIdToken(false);
 
-        const res = await fetch(`${SHARED_WORKER_BASE}/billing/verify-purchase`, {
+        const res = await fetch(`${SHARED_WORKER_BASE}/api/verify-purchase/android`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -953,10 +1004,313 @@
         }
     }
 
+    async function verifyAndFulfillIosPurchase(payload) {
+        const productId = String((payload && payload.productId) || '').trim();
+        const transactionId = String((payload && (payload.transactionId || payload.transactionIdentifier || payload.originalTransactionId)) || '').trim();
+        const receipt = String((payload && (payload.receipt || payload.appStoreReceipt || payload.jwsRepresentation)) || '').trim();
+        if (!productId || (!transactionId && !receipt)) {
+            throw new Error('App Store 回傳的購買憑證無效');
+        }
+        const authUser = (typeof firebase !== 'undefined' && firebase.auth) ? firebase.auth().currentUser : null;
+        if (!authUser || authUser.isAnonymous) {
+            throw new Error('請先登入帳號後即可進行 App Store 付款驗證！');
+        }
+        const idToken = await authUser.getIdToken(false);
+
+        const res = await fetch(`${SHARED_WORKER_BASE}/api/verify-purchase/ios`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${idToken}`
+            },
+            body: JSON.stringify({
+                productId,
+                transactionId,
+                originalTransactionId: payload.originalTransactionId || '',
+                receipt,
+                restore: Boolean(payload.restore)
+            })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.ok) {
+            throw new Error(data.error || `App Store 購買驗證失敗 (HTTP ${res.status})`);
+        }
+        syncClientPostPurchaseState(data);
+        return data;
+    }
+
+    async function launchAppleIapPurchase(skuId) {
+        if (isPurchasing) return false;
+        if (isGuestSession()) {
+            if (typeof global.showToast === 'function') {
+                global.showToast('請先使用 Apple 或 Google 帳號登入後即可進行 App Store 內購！', 'warning');
+            }
+            return false;
+        }
+
+        const bridge = getIosStoreKitPlugin();
+        if (!bridge) {
+            if (typeof global.showToast === 'function') {
+                global.showToast('正在初始化 Apple App Store 內購服務，請確認已透過 TestFlight / App Store 安裝正式版本。', 'info');
+            }
+            return false;
+        }
+
+        isPurchasing = true;
+        renderMembershipModalBody();
+        try {
+            let purchaseRes = null;
+            if (bridge.type === 'capacitor' && bridge.plugin) {
+                if (typeof bridge.plugin.purchaseProduct === 'function') {
+                    purchaseRes = await bridge.plugin.purchaseProduct({ productId: skuId });
+                } else if (typeof bridge.plugin.purchase === 'function') {
+                    purchaseRes = await bridge.plugin.purchase({ productId: skuId });
+                }
+            } else if (bridge.type === 'cdvpurchase' && bridge.store) {
+                const product = bridge.store.get(skuId);
+                if (!product) {
+                    throw new Error(`找不到 App Store 商品項目 (${skuId})`);
+                }
+                const offer = product.getOffer ? product.getOffer() : null;
+                if (!offer) {
+                    throw new Error(`無法取得 App Store 商品報價 (${skuId})`);
+                }
+                const orderErr = await offer.order();
+                if (orderErr && orderErr.isError) {
+                    throw new Error(orderErr.message || 'App Store 付款失敗');
+                }
+                purchaseRes = {
+                    productId: skuId,
+                    transactionId: offer.transactionId || '',
+                    receipt: offer.receipt || ''
+                };
+            }
+
+            if (!purchaseRes) {
+                throw new Error('Apple App Store 內購未完成');
+            }
+            if (purchaseRes.cancelled) {
+                if (typeof global.showToast === 'function') {
+                    global.showToast('已取消 App Store 付款流程', 'info');
+                }
+                return false;
+            }
+
+            const verified = await verifyAndFulfillIosPurchase({
+                productId: purchaseRes.productId || skuId,
+                transactionId: purchaseRes.transactionId || purchaseRes.transactionIdentifier || '',
+                originalTransactionId: purchaseRes.originalTransactionId || '',
+                receipt: purchaseRes.receipt || purchaseRes.appStoreReceipt || purchaseRes.jwsRepresentation || ''
+            });
+
+            if (bridge.type === 'capacitor' && bridge.plugin && typeof bridge.plugin.finishTransaction === 'function') {
+                await bridge.plugin.finishTransaction({
+                    transactionId: purchaseRes.transactionId || ''
+                }).catch(() => {});
+            }
+
+            if (typeof global.showToast === 'function') {
+                global.showToast(verified.message || '🎉 App Store 購買驗證成功！', 'success');
+            }
+            refreshQuotaStatusFromServer();
+            return true;
+        } catch (err) {
+            const msg = String(err?.message || err || '');
+            if (!/cancel/i.test(msg)) {
+                if (typeof global.showToast === 'function') {
+                    global.showToast(msg || 'App Store 購買或驗證失敗，請稍後再試', 'error');
+                }
+            }
+            return false;
+        } finally {
+            isPurchasing = false;
+            renderMembershipModalBody();
+        }
+    }
+
+    async function restoreIosPurchases() {
+        if (isPurchasing) return false;
+        if (isGuestSession()) {
+            if (typeof global.showToast === 'function') {
+                global.showToast('請先登入原本購買的 Apple / Google 帳號後再點擊恢復購買！', 'warning');
+            }
+            return false;
+        }
+
+        const bridge = getIosStoreKitPlugin();
+        if (!bridge) {
+            if (typeof global.showToast === 'function') {
+                global.showToast('目前尚未連接 App Store StoreKit 環境，請於 iOS 實機或 TestFlight 環境中執行恢復購買。', 'info');
+            }
+            return false;
+        }
+
+        isPurchasing = true;
+        renderMembershipModalBody();
+        try {
+            let restored = null;
+            if (bridge.type === 'capacitor' && bridge.plugin && typeof bridge.plugin.restorePurchases === 'function') {
+                restored = await bridge.plugin.restorePurchases();
+            } else if (bridge.type === 'cdvpurchase' && bridge.store && typeof bridge.store.restorePurchases === 'function') {
+                await bridge.store.restorePurchases();
+                const txList = Array.isArray(bridge.store.verifiedPurchases) ? bridge.store.verifiedPurchases : [];
+                restored = { transactions: txList, receipt: '' };
+            }
+
+            const txList = Array.isArray(restored && restored.transactions)
+                ? restored.transactions
+                : (Array.isArray(restored && restored.purchases) ? restored.purchases : []);
+            const globalReceipt = String((restored && (restored.receipt || restored.appStoreReceipt)) || '').trim();
+
+            if (txList.length === 0 && !globalReceipt) {
+                if (typeof global.showToast === 'function') {
+                    global.showToast('目前查無可恢復的 App Store 有效購買紀錄', 'info');
+                }
+                return false;
+            }
+
+            let restoredCount = 0;
+            if (txList.length > 0) {
+                for (const tx of txList) {
+                    if (!tx || !tx.productId) continue;
+                    try {
+                        const verified = await verifyAndFulfillIosPurchase({
+                            productId: tx.productId,
+                            transactionId: tx.transactionId || tx.originalTransactionId || '',
+                            originalTransactionId: tx.originalTransactionId || '',
+                            receipt: tx.receipt || tx.jwsRepresentation || globalReceipt,
+                            restore: true
+                        });
+                        if (verified && verified.ok && !verified.alreadyProcessed) {
+                            restoredCount += 1;
+                        }
+                    } catch (err) {}
+                }
+            } else if (globalReceipt) {
+                const authUser = firebase.auth().currentUser;
+                const idToken = await authUser.getIdToken(false);
+                const res = await fetch(`${SHARED_WORKER_BASE}/api/verify-purchase/ios`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${idToken}`
+                    },
+                    body: JSON.stringify({
+                        restore: true,
+                        receipt: globalReceipt
+                    })
+                });
+                const data = await res.json().catch(() => ({}));
+                if (res.ok && data.ok) {
+                    syncClientPostPurchaseState(data);
+                    restoredCount = data.restoredCount || 1;
+                }
+            }
+
+            refreshQuotaStatusFromServer();
+            if (typeof global.showToast === 'function') {
+                global.showToast(
+                    restoredCount > 0
+                        ? `✅ 已成功恢復 ${restoredCount} 筆 App Store 購買紀錄！`
+                        : '✅ 已同步完成您的 App Store 購買紀錄！',
+                    'success'
+                );
+            }
+            return true;
+        } catch (err) {
+            if (typeof global.showToast === 'function') {
+                global.showToast(err?.message || '恢復購買失敗，請稍後再試', 'error');
+            }
+            return false;
+        } finally {
+            isPurchasing = false;
+            renderMembershipModalBody();
+        }
+    }
+
+    async function launchWebCheckoutPurchase(skuId) {
+        if (isPurchasing) return false;
+        if (isGuestSession()) {
+            if (typeof global.showToast === 'function') {
+                global.showToast('請先登入帳號後即可前往網頁版金流結帳！', 'warning');
+            }
+            return false;
+        }
+
+        isPurchasing = true;
+        renderMembershipModalBody();
+        try {
+            const authUser = (typeof firebase !== 'undefined' && firebase.auth) ? firebase.auth().currentUser : null;
+            if (!authUser || authUser.isAnonymous) {
+                throw new Error('請先登入帳號後再進行購買');
+            }
+            const idToken = await authUser.getIdToken(false);
+            const res = await fetch(`${SHARED_WORKER_BASE}/api/payment/web-checkout`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${idToken}`
+                },
+                body: JSON.stringify({
+                    productId: skuId,
+                    platform: 'web',
+                    returnUrl: (typeof window !== 'undefined' && window.location) ? window.location.href : ''
+                })
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok || !data.ok) {
+                throw new Error(
+                    data.error ||
+                    '網頁版線上金流維護中，請使用 Android 或 iOS App 內購儲值，或於設定頁填入個人 API Key（BYOK）'
+                );
+            }
+
+            if (data.checkoutUrl) {
+                if (typeof global.showToast === 'function') {
+                    global.showToast('正在前往線上金流結帳頁面...', 'info');
+                }
+                if (typeof window !== 'undefined' && window.location) {
+                    window.location.assign(data.checkoutUrl);
+                }
+                return true;
+            }
+
+            if (typeof global.showToast === 'function') {
+                global.showToast(
+                    data.message || '網頁版線上金流維護中，請使用 Android 或 iOS App 內購儲值，或於設定頁填入個人 API Key（BYOK）',
+                    'info'
+                );
+            }
+            return false;
+        } catch (err) {
+            if (typeof global.showToast === 'function') {
+                global.showToast(
+                    err?.message || '網頁版線上金流維護中，請使用 Android 或 iOS App 內購儲值，或於設定頁填入個人 API Key（BYOK）',
+                    'info'
+                );
+            }
+            return false;
+        } finally {
+            isPurchasing = false;
+            renderMembershipModalBody();
+        }
+    }
+
+    async function launchPurchaseByPlatform(skuId) {
+        const platform = getPaymentPlatform();
+        if (platform === 'android') {
+            return await launchGooglePlayPurchase(skuId);
+        }
+        if (platform === 'ios') {
+            return await launchAppleIapPurchase(skuId);
+        }
+        return await launchWebCheckoutPurchase(skuId);
+    }
+
     async function buyCoinTopupPackage(skuId) {
         const pack = COIN_TOPUP_PACKAGES.find(p => p.sku === skuId);
         if (!pack) return false;
-        return await launchGooglePlayPurchase(pack.sku);
+        return await launchPurchaseByPlatform(pack.sku);
     }
 
     async function subscribeMembershipTier(tierId, options = {}) {
@@ -1012,7 +1366,7 @@
         const skuMap = PLAY_MEMBERSHIP_SKUS[tierId];
         if (!skuMap) return false;
         const skuId = isAnnual ? skuMap.annual : skuMap.monthly;
-        return await launchGooglePlayPurchase(skuId);
+        return await launchPurchaseByPlatform(skuId);
     }
 
     async function redeemCoinsForPack(packId) {
@@ -1149,7 +1503,11 @@
         const isAnnual = billingCycle === 'annual';
         const userCoins = Math.max(0, Math.floor(Number(u.coins) || 0));
         const history = Array.isArray(u.membershipHistory) ? u.membershipHistory : [];
+        const platform = getPaymentPlatform();
+        const isIos = platform === 'ios';
+        const isAndroid = platform === 'android';
         const hasPlayBilling = Boolean(getPlayBillingPlugin());
+        const hasIosStoreKit = Boolean(getIosStoreKitPlugin());
         const keyStatus = getPersonalKeysStatus();
 
         const currentPaidIdx = (status.isSupporter && !status.isCoinTrial && !admin)
@@ -1167,20 +1525,35 @@
             const isUpgradeable = !admin && tier.id !== 'free' && currentPaidIdx > 0 && idx > currentPaidIdx;
             const isDisabled = isPurchasing || (tier.id === 'free' && isCurrent) || isLockedDuplicate || (admin && tier.id !== 'free');
 
-            let btnLabel = tier.priceNtd === 0
-                ? (isCurrent ? memTr('btnMemCurrentPlan', '✓ 目前方案') : memTr('memFreeAutoRevertHint', '期滿自動恢復免費'))
-                : (isAnnual
+            let btnLabel = '';
+            if (tier.priceNtd === 0) {
+                btnLabel = isCurrent
+                    ? memTr('btnMemCurrentPlan', '✓ 目前方案')
+                    : memTr('memFreeAutoRevertHint', '期滿自動恢復免費');
+            } else if (isIos) {
+                btnLabel = isAnnual
+                    ? `App Store 訂閱 NT$ ${displayPrice} / 年`
+                    : `App Store 購買 NT$ ${displayPrice} / 30天`;
+            } else if (isAndroid) {
+                btnLabel = isAnnual
                     ? memTr('btnMemSponsorAnnual', '年繳 NT$ {price} / 年', { price: displayPrice })
-                    : memTr('btnMemSponsorPlan', 'Google Play 購買 {price} / 30天', { price: `NT$ ${displayPrice}` }));
+                    : memTr('btnMemSponsorPlan', 'Google Play 購買 {price} / 30天', { price: `NT$ ${displayPrice}` });
+            } else {
+                btnLabel = isAnnual
+                    ? `線上購買 NT$ ${displayPrice} / 年`
+                    : `線上購買 NT$ ${displayPrice} / 30天`;
+            }
 
             if (admin && tier.id !== 'free') {
                 btnLabel = memTr('btnAdminUnlockedVip', '👑 管理員已解鎖全功能');
             } else if (isLockedDuplicate) {
                 btnLabel = memTr('memActiveExpiryLock', '目前已是有效會員（到期日：{date}）', { date: formatYmdDate(status.expiresAt) });
             } else if (isUpgradeable) {
-                btnLabel = isAnnual
-                    ? memTr('btnMemUpgradeAnnual', '升級年繳 NT$ {price}', { price: displayPrice })
-                    : memTr('btnMemUpgradePlan', '升級為此方案 NT$ {price}', { price: displayPrice });
+                btnLabel = isIos
+                    ? (isAnnual ? `透過 App Store 升級年繳 NT$ ${displayPrice}` : `透過 App Store 升級 NT$ ${displayPrice}`)
+                    : (isAnnual
+                        ? memTr('btnMemUpgradeAnnual', '升級年繳 NT$ {price}', { price: displayPrice })
+                        : memTr('btnMemUpgradePlan', '升級為此方案 NT$ {price}', { price: displayPrice }));
             }
 
             const btnColorClass = isDisabled
@@ -1348,9 +1721,17 @@
                             </div>
                         </div>
                         ${isGuest ? `
-                            <button type="button" onclick="if(typeof closeMembershipModal==='function') closeMembershipModal(); if(typeof loginWithGoogle==='function') loginWithGoogle();" class="px-3 py-1.5 rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-xs font-bold cursor-pointer">
-                                ${escapeMemHtml(memTr('btnLoginGoogle', '使用 Google 帳號登入'))}
-                            </button>
+                            <div class="flex items-center gap-2 flex-wrap">
+                                ${isIos ? `
+                                    <button type="button" onclick="if(typeof closeMembershipModal==='function') closeMembershipModal(); if(typeof loginWithApple==='function') loginWithApple();" class="px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-black text-white text-xs font-bold cursor-pointer flex items-center gap-1.5">
+                                        <i class="fa-brands fa-apple"></i>
+                                        <span>使用 Apple 登入</span>
+                                    </button>
+                                ` : ''}
+                                <button type="button" onclick="if(typeof closeMembershipModal==='function') closeMembershipModal(); if(typeof loginWithGoogle==='function') loginWithGoogle();" class="px-3 py-1.5 rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-xs font-bold cursor-pointer">
+                                    ${escapeMemHtml(memTr('btnLoginGoogle', '使用 Google 帳號登入'))}
+                                </button>
+                            </div>
                         ` : `
                             <span class="px-2.5 py-1 rounded-xl bg-amber-100/80 dark:bg-amber-950/50 text-amber-800 dark:text-amber-300 text-[11px] font-extrabold border border-amber-200 dark:border-amber-800/70">
                                 🪙 ${userCoins.toLocaleString()} 金幣
@@ -1366,7 +1747,7 @@
                     </div>
                 </div>
 
-                <!-- 🪙 2:8 金幣儲值商店（Google Play 實名內購） -->
+                <!-- 🪙 2:8 金幣儲值商店（依裝置平台切換 Android Play / Apple StoreKit / Web 金流） -->
                 <div class="p-3.5 rounded-2xl bg-gradient-to-br from-amber-50/80 to-orange-50/60 dark:from-amber-950/30 dark:to-slate-900 border border-amber-200 dark:border-amber-800/60 space-y-2.5">
                     <div class="flex items-center justify-between gap-2 flex-wrap">
                         <div>
@@ -1375,11 +1756,26 @@
                                 <span>${escapeMemHtml(memTr('topupSectionTitle', '商店金幣儲值（2:8 固定比例：NT$ 1 = 4 金幣）'))}</span>
                             </div>
                             <p class="text-[10px] text-amber-700/80 dark:text-amber-400/80 mt-0.5">
-                                ${escapeMemHtml(hasPlayBilling
-                                    ? memTr('topupPlayReadyDesc', '經由 Google Play 安全付款並於雲端驗證入帳；可用於購買商城字庫、限定外觀與會員天數')
-                                    : memTr('topupPlayAndroidNote', '實名金流儲值請於 Android App 內透過 Google Play 購買（網頁版不可未付款直接發幣）'))}
+                                ${escapeMemHtml(isIos
+                                    ? (hasIosStoreKit
+                                        ? '經由 Apple App Store 安全內購並於雲端驗證入帳；可用於購買商城字庫、限定外觀與會員天數'
+                                        : '透過 Apple App Store 內購安全付款並由雲端驗證發幣')
+                                    : (isAndroid
+                                        ? (hasPlayBilling
+                                            ? memTr('topupPlayReadyDesc', '經由 Google Play 安全付款並於雲端驗證入帳；可用於購買商城字庫、限定外觀與會員天數')
+                                            : memTr('topupPlayAndroidNote', '實名金流儲值請於 Android App 內透過 Google Play 購買（網頁版不可未付款直接發幣）'))
+                                        : '支援網頁端線上結帳（維護期間請改用 Android / iOS App 內購或於設定頁填入個人 API Key）'))}
                             </p>
                         </div>
+                        ${isIos ? `
+                            <button type="button" id="btnMembershipRestoreIos"
+                                onclick="MembershipEngine.restoreIosPurchases()"
+                                ${isPurchasing ? 'disabled' : ''}
+                                class="min-h-[34px] px-3 py-1 rounded-xl bg-slate-900 hover:bg-black dark:bg-slate-700 dark:hover:bg-slate-600 text-white text-[11px] font-extrabold transition flex items-center gap-1.5 cursor-pointer shrink-0 disabled:opacity-60">
+                                <i class="fa-solid fa-rotate-left"></i>
+                                <span>恢復購買 (Restore Purchases)</span>
+                            </button>
+                        ` : ''}
                     </div>
                     <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
                         ${topupCardsHtml}
@@ -1388,7 +1784,11 @@
 
                 <!-- 🗓️ 月繳 / 年繳 83折切換器 -->
                 <div class="flex items-center justify-between gap-2 flex-wrap px-1">
-                    <span class="text-xs font-extrabold text-slate-700 dark:text-slate-200">${escapeMemHtml(memTr('memSelectPlanTitle', 'Google Play 會員方案與週期'))}</span>
+                    <span class="text-xs font-extrabold text-slate-700 dark:text-slate-200">${escapeMemHtml(
+                        isIos
+                            ? 'App Store 會員方案與週期'
+                            : (isAndroid ? memTr('memSelectPlanTitle', 'Google Play 會員方案與週期') : '線上金流會員方案與週期')
+                    )}</span>
                     <div class="inline-flex p-1 rounded-xl bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 gap-1">
                         <button type="button" onclick="MembershipEngine.setBillingCycle('monthly')" class="px-3 py-1 rounded-lg text-[11px] font-extrabold transition cursor-pointer ${!isAnnual ? 'bg-white dark:bg-slate-800 text-brand-600 dark:text-brand-400 shadow-2xs' : 'text-slate-500 dark:text-slate-400'}">
                             ${escapeMemHtml(memTr('memCycleMonthly', '月繳方案 (30天)'))}
@@ -1511,9 +1911,13 @@
         refreshQuotaStatusFromServer,
         showQuotaUpgradePrompt,
         setBillingCycle,
+        getPaymentPlatform,
         buyCoinTopupPackage,
         redeemCoinsForPack,
         recoverPendingPlayPurchases,
+        launchAppleIapPurchase,
+        restoreIosPurchases,
+        launchWebCheckoutPurchase,
         renderBadgeHtml,
         subscribeMembershipTier,
         openMembershipModal,
@@ -1522,6 +1926,8 @@
     };
 
     global.MembershipEngine = MembershipEngine;
+    global.getPaymentPlatform = getPaymentPlatform;
+    global.restoreIosPurchases = restoreIosPurchases;
     global.openMembershipModal = openMembershipModal;
     global.closeMembershipModal = closeMembershipModal;
     global.checkMembershipExpiration = checkMembershipExpiration;

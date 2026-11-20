@@ -65,6 +65,18 @@
       overflow: hidden;
       transition: transform 260ms cubic-bezier(0.16, 1, 0.3, 1), opacity 220ms cubic-bezier(0.16, 1, 0.3, 1);
     }
+    .panel.ft-fullscreen {
+      width: 100vw !important;
+      height: 100vh !important;
+      max-width: none !important;
+      max-height: none !important;
+      inset: 0 !important;
+      border-radius: 0 !important;
+    }
+    .panel.ft-fullscreen .body {
+      max-height: calc(100vh - 96px);
+      flex: 1;
+    }
     .header {
       display: flex;
       align-items: center;
@@ -673,6 +685,9 @@
       </div>
       <div class="header-actions">
         <button type="button" class="pill-btn" id="nativeLangBtn" title="切換目標母語">繁中</button>
+        <button type="button" class="icon-btn" id="panelFullscreenBtn" title="切換全螢幕">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
+        </button>
         <button type="button" class="icon-btn" id="closePanelBtn" title="收合回懸浮球">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
         </button>
@@ -735,7 +750,7 @@
     selectedWords: new Map(),
     bubble: null,
 
-    // 拍照 & 全螢幕截圖點詞
+    // 拍照 & 全螢幕截圖點詞 / 狀態鎖
     photoMode: 'lookup', // 'lookup' | 'select'
     photoDataUrl: '',
     photoBase64: '',
@@ -744,6 +759,8 @@
     photoSelectedIds: new Set(),
     photoActiveId: '',
     isVisionBusy: false,
+    isImageModeActive: false,
+    panelFullscreen: false,
     fullscreenOpen: isFreezeWindowInit,
     fullscreenFromFreezeService: isFreezeWindowInit,
     fsBubble: null,
@@ -751,7 +768,8 @@
     inlineZoom: { scale: 1, tx: 0, ty: 0 },
     fsZoom: { scale: 1, tx: 0, ty: 0 },
 
-    // 即時字幕三引擎
+    // 即時字幕三引擎 & 嚴格互斥狀態
+    activeLiveMode: 'none', // 'none' | 'voice' | 'screen'
     subMode: 'video', // 'video' | 'stt' | 'youtube'
     subtitleOverlayVisible: true,
     nativeVideoOcrRunning: false,
@@ -795,6 +813,9 @@
   };
 
   let speechRec = null;
+  let sttMicStream = null;
+  let sttMicRecorder = null;
+  let sttMicChunkTimer = null;
   let ytTimer = null;
   let ytLastTickAt = 0;
   let chatStreamSource = null;
@@ -1739,71 +1760,279 @@
     sttStopwordTimer = setTimeout(() => flushSttCommit(clean, lang), 400);
   }
 
+  function setImageModeLock(active) {
+    state.isImageModeActive = Boolean(active);
+    try {
+      window.AndroidOverlay?.setImageModeActive?.(state.isImageModeActive);
+    } catch (e) {}
+  }
+
+  function togglePanelFullscreen(forceState) {
+    state.panelFullscreen = typeof forceState === 'boolean' ? forceState : !state.panelFullscreen;
+    const panel = document.getElementById('appPanel');
+    if (panel) panel.classList.toggle('ft-fullscreen', state.panelFullscreen);
+    try {
+      window.AndroidOverlay?.setOverlayFullscreen?.(state.panelFullscreen);
+    } catch (e) {}
+    render();
+  }
+
+  function stopMicFallbackRecorder() {
+    if (sttMicChunkTimer) {
+      clearInterval(sttMicChunkTimer);
+      sttMicChunkTimer = null;
+    }
+    if (sttMicRecorder) {
+      try {
+        if (sttMicRecorder.state !== 'inactive') sttMicRecorder.stop();
+      } catch (e) {}
+      sttMicRecorder = null;
+    }
+    if (sttMicStream) {
+      try {
+        sttMicStream.getTracks().forEach(t => {
+          try { t.stop(); } catch (e) {}
+        });
+      } catch (e) {}
+      sttMicStream = null;
+    }
+  }
+
+  function stopScreenSubtitleMode() {
+    if (state.nativeVideoOcrRunning) {
+      state.nativeVideoOcrRunning = false;
+      try { window.AndroidOverlay?.toggleScreenSubtitleOcr(false); } catch (e) {}
+    }
+    if (state.activeLiveMode === 'screen') {
+      state.activeLiveMode = 'none';
+    }
+  }
+
+  function stopVoiceRecognitionMode() {
+    state.nativeSttRunning = false;
+    if (state.activeLiveMode === 'voice') {
+      state.activeLiveMode = 'none';
+    }
+    clearSttStabilizerTimers();
+    sttActiveProvisionalId = '';
+    state.sttInterim = '';
+    state.sttInterimDraft = '';
+    try { window.AndroidOverlay?.stopNativeStt(); } catch (e) {}
+    if (speechRec) {
+      try { speechRec.onend = null; speechRec.onerror = null; speechRec.stop(); } catch (e) {}
+      speechRec = null;
+    }
+    stopMicFallbackRecorder();
+  }
+
+  async function uploadOverlayAudioChunkToStt(blob, langCode) {
+    if (!blob || blob.size < 1000) return;
+    const b64 = await new Promise(resolve => {
+      const fr = new FileReader();
+      fr.onload = () => resolve(String(fr.result || '').split(',')[1] || '');
+      fr.onerror = () => resolve('');
+      fr.readAsDataURL(blob);
+    });
+    if (!b64) return;
+    const headers = { 'Content-Type': 'application/json' };
+    if (state.chatSession && state.chatSession.idToken) {
+      headers['Authorization'] = `Bearer ${state.chatSession.idToken}`;
+    }
+    try {
+      const resp = await fetch(`${SHARED_WORKER_BASE}/api/ai/stt`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          audioBase64: b64,
+          mimeType: blob.type || 'audio/webm',
+          language: langCode || state.sttLang || 'en-US'
+        })
+      });
+      if (!resp.ok) return;
+      const data = await resp.json().catch(() => null);
+      const transcript = String(data?.text || '').trim();
+      if (transcript && state.nativeSttRunning) {
+        await translateFinalSubtitleLine(transcript, langCode || state.sttLang);
+      }
+    } catch (e) {}
+  }
+
+  async function startOverlayMicMediaRecorderFallback() {
+    if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== 'function' || typeof MediaRecorder === 'undefined') {
+      stopVoiceRecognitionMode();
+      window.AndroidOverlay?.showNativeToast?.('此裝置不支援即時麥克風錄音辨識');
+      render();
+      return false;
+    }
+    let stream = null;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      const audioTracks = stream.getAudioTracks();
+      if (!audioTracks || !audioTracks.length) {
+        throw new Error('NO_AUDIO_TRACK');
+      }
+      sttMicStream = stream;
+      state.nativeSttRunning = true;
+      state.activeLiveMode = 'voice';
+      state.subtitleOverlayVisible = true;
+      window.AndroidOverlay?.setSubtitleOverlayVisible(true);
+
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+        ? 'audio/webm;codecs=opus'
+        : (MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : '');
+
+      const recordNextSlice = () => {
+        if (!state.nativeSttRunning || !sttMicStream || !sttMicStream.active) return;
+        const chunks = [];
+        let rec;
+        try {
+          rec = mimeType ? new MediaRecorder(sttMicStream, { mimeType }) : new MediaRecorder(sttMicStream);
+        } catch (err) {
+          stopVoiceRecognitionMode();
+          render();
+          return;
+        }
+        sttMicRecorder = rec;
+        rec.ondataavailable = (ev) => {
+          if (ev.data && ev.data.size > 0) chunks.push(ev.data);
+        };
+        rec.onstop = () => {
+          if (state.nativeSttRunning && chunks.length > 0) {
+            const blob = new Blob(chunks, { type: rec.mimeType || 'audio/webm' });
+            uploadOverlayAudioChunkToStt(blob, state.sttLang);
+          }
+          if (state.nativeSttRunning) recordNextSlice();
+        };
+        rec.start();
+        setTimeout(() => {
+          try {
+            if (rec.state !== 'inactive') rec.stop();
+          } catch (e) {}
+        }, 3500);
+      };
+
+      recordNextSlice();
+      render();
+      return true;
+    } catch (err) {
+      if (stream) {
+        try { stream.getTracks().forEach(t => t.stop()); } catch (e) {}
+      }
+      stopVoiceRecognitionMode();
+      window.AndroidOverlay?.showNativeToast?.('請先允許麥克風權限以啟動語音字幕');
+      render();
+      return false;
+    }
+  }
+
+  function startOverlayWebSpeechFallback() {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) {
+      startOverlayMicMediaRecorderFallback();
+      return;
+    }
+    const rec = new SR();
+    rec.continuous = true;
+    rec.interimResults = true;
+    rec.lang = state.sttLang;
+    rec.onstart = () => {
+      state.nativeSttRunning = true;
+      state.activeLiveMode = 'voice';
+      state.subtitleOverlayVisible = true;
+      window.AndroidOverlay?.setSubtitleOverlayVisible(true);
+      render();
+    };
+    rec.onresult = (ev) => {
+      let interim = '';
+      for (let i = ev.resultIndex; i < ev.results.length; i++) {
+        const r = ev.results[i];
+        const t = (r[0]?.transcript || '').trim();
+        if (!t) continue;
+        if (r.isFinal) {
+          state.sttInterim = '';
+          state.sttInterimDraft = '';
+          translateFinalSubtitleLine(t, state.sttLang);
+        } else {
+          interim += t + ' ';
+        }
+      }
+      const trimmedInterim = interim.trim();
+      if (trimmedInterim) {
+        if (/[.!?。！？]$/.test(trimmedInterim)) {
+          state.sttInterim = '';
+          state.sttInterimDraft = '';
+          translateFinalSubtitleLine(trimmedInterim, state.sttLang);
+        } else {
+          handleInterimSubtitleUpdate(trimmedInterim, '', state.sttLang);
+        }
+      }
+    };
+    rec.onerror = (ev) => {
+      const code = ev && ev.error ? ev.error : '';
+      if (code === 'not-allowed' || code === 'service-not-allowed') {
+        stopVoiceRecognitionMode();
+        window.AndroidOverlay?.showNativeToast?.('麥克風權限被拒絕，已關閉語音字幕');
+        render();
+        return;
+      }
+      if (code === 'network' || code === 'audio-capture' || code === 'language-not-supported') {
+        if (speechRec === rec) {
+          try { rec.onend = null; rec.stop(); } catch (e) {}
+          speechRec = null;
+        }
+        startOverlayMicMediaRecorderFallback();
+      }
+    };
+    rec.onend = () => {
+      if (state.nativeSttRunning && speechRec === rec) {
+        try { rec.start(); } catch (e) {
+          stopVoiceRecognitionMode();
+          render();
+        }
+      }
+    };
+    speechRec = rec;
+    try {
+      rec.start();
+    } catch (e) {
+      speechRec = null;
+      startOverlayMicMediaRecorderFallback();
+    }
+  }
+
   function toggleNativeVideoSubtitle() {
     const next = !state.nativeVideoOcrRunning;
-    state.nativeVideoOcrRunning = next;
-    state.subtitleOverlayVisible = true;
-    applyVideoRoiConfig(state.videoRoiMode, state.videoRoiMode === 'custom' ? state.videoRoiRect : null, false);
-    window.AndroidOverlay?.setSubtitleOverlayVisible(true);
-    window.AndroidOverlay?.toggleScreenSubtitleOcr(next);
+    if (next) {
+      stopVoiceRecognitionMode();
+      state.activeLiveMode = 'screen';
+      state.nativeVideoOcrRunning = true;
+      state.subtitleOverlayVisible = true;
+      applyVideoRoiConfig(state.videoRoiMode, state.videoRoiMode === 'custom' ? state.videoRoiRect : null, false);
+      window.AndroidOverlay?.setSubtitleOverlayVisible(true);
+      window.AndroidOverlay?.toggleScreenSubtitleOcr(true);
+    } else {
+      stopScreenSubtitleMode();
+    }
     render();
   }
 
   function toggleNativeOrWebStt() {
     if (state.nativeSttRunning) {
-      state.nativeSttRunning = false;
-      clearSttStabilizerTimers();
-      sttActiveProvisionalId = '';
-      state.sttInterim = '';
-      state.sttInterimDraft = '';
-      window.AndroidOverlay?.stopNativeStt();
-      if (speechRec) { try { speechRec.onend = null; speechRec.stop(); } catch (e) {} speechRec = null; }
+      stopVoiceRecognitionMode();
       render();
       return;
     }
-    state.nativeSttRunning = true;
+    stopScreenSubtitleMode();
     state.subtitleOverlayVisible = true;
     window.AndroidOverlay?.setSubtitleOverlayVisible(true);
+
     if (window.AndroidOverlay && typeof window.AndroidOverlay.startNativeStt === 'function') {
+      // 嚴格等候原生 onNativeSttStateChanged(true) 回調才將按鈕亮起，避免權限不足假啟動
       window.AndroidOverlay.startNativeStt(state.sttLang);
       render();
       return;
     }
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (SR) {
-      const rec = new SR();
-      rec.continuous = true;
-      rec.interimResults = true;
-      rec.lang = state.sttLang;
-      rec.onresult = (ev) => {
-        let interim = '';
-        for (let i = ev.resultIndex; i < ev.results.length; i++) {
-          const r = ev.results[i];
-          const t = (r[0]?.transcript || '').trim();
-          if (!t) continue;
-          if (r.isFinal) {
-            state.sttInterim = '';
-            state.sttInterimDraft = '';
-            translateFinalSubtitleLine(t, state.sttLang);
-          } else {
-            interim += t + ' ';
-          }
-        }
-        const trimmedInterim = interim.trim();
-        if (trimmedInterim) {
-          if (/[.!?。！？]$/.test(trimmedInterim)) {
-            state.sttInterim = '';
-            state.sttInterimDraft = '';
-            translateFinalSubtitleLine(trimmedInterim, state.sttLang);
-          } else {
-            handleInterimSubtitleUpdate(trimmedInterim, '', state.sttLang);
-          }
-        }
-      };
-      rec.onend = () => { if (state.nativeSttRunning && speechRec === rec) { try { rec.start(); } catch (e) {} } };
-      speechRec = rec;
-      try { rec.start(); } catch (e) { state.nativeSttRunning = false; }
-    }
+    startOverlayWebSpeechFallback();
     render();
   }
 
@@ -2406,6 +2635,10 @@
 
     const vp = document.getElementById('inlineStageViewport');
     const sb = document.getElementById('inlineStageBox');
+    const inlineImg = document.getElementById('inlineStageImg');
+    if (inlineImg) {
+      inlineImg.onload = () => setImageModeLock(true);
+    }
     const inResetBtn = document.getElementById('inlineZoomResetBtn');
     const inZoomInBtn = document.getElementById('inlineZoomInBtn');
     const inZoomOutBtn = document.getElementById('inlineZoomOutBtn');
@@ -2418,6 +2651,15 @@
         applyOverlayZoomTransform(sb, state.inlineZoom, inResetBtn);
       };
       if (inResetBtn) inResetBtn.onclick = () => { state.inlineZoom = { scale: 1, tx: 0, ty: 0 }; applyOverlayZoomTransform(sb, state.inlineZoom, inResetBtn); };
+    }
+
+    if (appPanel) {
+      appPanel.classList.toggle('ft-fullscreen', state.panelFullscreen);
+    }
+    const fsHeaderBtn = document.getElementById('panelFullscreenBtn');
+    if (fsHeaderBtn) {
+      fsHeaderBtn.title = state.panelFullscreen ? '還原視窗尺寸' : '切換全螢幕';
+      fsHeaderBtn.setAttribute('aria-pressed', state.panelFullscreen ? 'true' : 'false');
     }
 
     notifyNativeHeight();
@@ -2475,15 +2717,15 @@
     if (freezeHeroBtn) freezeHeroBtn.onclick = freezeTrigger;
 
     const camTake = document.getElementById('camTakeBtn');
-    if (camTake) camTake.onclick = () => window.AndroidOverlay?.openImagePicker(true);
+    if (camTake) camTake.onclick = () => { setImageModeLock(true); window.AndroidOverlay?.openImagePicker(true); };
     const camGal = document.getElementById('camGalBtn');
-    if (camGal) camGal.onclick = () => window.AndroidOverlay?.openImagePicker(false);
+    if (camGal) camGal.onclick = () => { setImageModeLock(true); window.AndroidOverlay?.openImagePicker(false); };
     const pLook = document.getElementById('pModeLook');
     if (pLook) pLook.onclick = () => { state.photoMode = 'lookup'; render(); };
     const pSel = document.getElementById('pModeSel');
     if (pSel) pSel.onclick = () => { state.photoMode = 'select'; state.bubble = null; render(); };
     const pOpenFs = document.getElementById('pOpenFsBtn');
-    if (pOpenFs) pOpenFs.onclick = () => { state.fullscreenOpen = true; render(); };
+    if (pOpenFs) pOpenFs.onclick = () => { state.fullscreenOpen = true; setImageModeLock(true); render(); };
     const pAll = document.getElementById('pSelAll');
     if (pAll) pAll.onclick = () => { state.photoTokens.forEach(t => state.photoSelectedIds.add(t.id)); state.photoMode = 'select'; render(); };
     const pClr = document.getElementById('pClearSel');
@@ -2687,7 +2929,7 @@ lang 為 en|ja|zh-TW；reading 英文填 IPA、日文必須填純平假名讀音
   }
 
   function notifyNativeHeight() {
-    if (state.fullscreenFromFreezeService) return;
+    if (state.fullscreenFromFreezeService || state.panelFullscreen || state.isImageModeActive) return;
     const panel = document.getElementById('appPanel');
     if (!panel || !window.AndroidOverlay || typeof window.AndroidOverlay.updatePanelHeight !== 'function') return;
     const h = Math.ceil(panel.getBoundingClientRect().height);
@@ -2743,8 +2985,18 @@ lang 為 en|ja|zh-TW；reading 英文填 IPA、日文必須填純平假名讀音
     render();
   };
 
+  const panelFsBtn = document.getElementById('panelFullscreenBtn');
+  if (panelFsBtn) {
+    panelFsBtn.onclick = () => togglePanelFullscreen();
+  }
+
   document.getElementById('closePanelBtn').onclick = () => {
     closeChatStreams();
+    if (state.panelFullscreen) {
+      state.panelFullscreen = false;
+      const appPanel = document.getElementById('appPanel');
+      if (appPanel) appPanel.classList.remove('ft-fullscreen');
+    }
     window.AndroidOverlay?.collapsePanel();
   };
 
@@ -2753,12 +3005,25 @@ lang 為 en|ja|zh-TW；reading 英文填 IPA、日文必須填純平假名讀音
       state.viewMode = 'translator';
       state.activeTab = btn.getAttribute('data-tab');
       state.deckMenuOpen = false;
+      setImageModeLock(state.activeTab === 'camera' && Boolean(state.photoDataUrl));
       render();
     };
   });
 
   document.addEventListener('click', () => {
     if (state.deckMenuOpen) { state.deckMenuOpen = false; render(); }
+  });
+
+  window.addEventListener('blur', () => {
+    if (state.isImageModeActive || state.panelFullscreen) {
+      setImageModeLock(state.isImageModeActive);
+    }
+  });
+
+  document.addEventListener('visibilitychange', () => {
+    if (state.isImageModeActive && !document.hidden) {
+      setImageModeLock(true);
+    }
   });
 
   window.LZHOverlayApp = {
@@ -2791,7 +3056,31 @@ lang 為 en|ja|zh-TW；reading 英文填 IPA、日文必須填純平假名讀音
     onNativeImageCaptured(b64) {
       state.inlineZoom = { scale: 1, tx: 0, ty: 0 };
       state.fsZoom = { scale: 1, tx: 0, ty: 0 };
-      if (b64) analyzePhotoBase64(b64, true);
+      if (b64) {
+        setImageModeLock(true);
+        analyzePhotoBase64(b64, true);
+      }
+    },
+    onNativeFullscreenChanged(isFullscreen) {
+      state.panelFullscreen = Boolean(isFullscreen);
+      const appPanel = document.getElementById('appPanel');
+      if (appPanel) appPanel.classList.toggle('ft-fullscreen', state.panelFullscreen);
+      render();
+    },
+    onNativeSttStateChanged(active, reason) {
+      if (active) {
+        state.nativeSttRunning = true;
+        state.activeLiveMode = 'voice';
+        render();
+        return;
+      }
+      const errReason = String(reason || '');
+      if (errReason === 'STT_UNAVAILABLE' || errReason === 'STT_START_FAILED') {
+        startOverlayWebSpeechFallback();
+        return;
+      }
+      stopVoiceRecognitionMode();
+      render();
     },
     openFreezeMode(payload) {
       if (!payload) return;
@@ -2844,9 +3133,9 @@ lang 為 en|ja|zh-TW；reading 英文填 IPA、日文必須填純平假名讀音
 
   window.addEventListener('beforeunload', () => {
     stopYoutubePlayback();
-    clearSttStabilizerTimers();
+    stopVoiceRecognitionMode();
+    stopScreenSubtitleMode();
     closeChatStreams();
-    if (speechRec) { try { speechRec.onend = null; speechRec.stop(); } catch (e) {} speechRec = null; }
   });
 
   try {

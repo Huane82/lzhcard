@@ -1,0 +1,246 @@
+name: Build Signed iOS IPA & TestFlight
+
+on:
+  workflow_dispatch:
+    inputs:
+      upload_testflight:
+        description: '若已設定 App Store Connect API Key，自動上傳至 TestFlight'
+        required: false
+        default: true
+        type: boolean
+  push:
+    tags:
+      - 'ios-v*'
+
+env:
+  APP_BUNDLE_ID: com.lzhcard.app
+  APP_NAME: LZHCard
+
+jobs:
+  build-ios:
+    name: Build & Sign iOS IPA
+    runs-on: macos-latest
+
+    steps:
+      - name: 1. Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 2. Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: 3. Install Dependencies & Ensure @capacitor/ios
+        run: |
+          npm install
+          CAP_VER=$(node -p "require('./node_modules/@capacitor/core/package.json').version.split('.')[0]")
+          if [ ! -d "node_modules/@capacitor/ios" ]; then
+            npm install --no-save "@capacitor/ios@^${CAP_VER}.0.0"
+          fi
+          if [ ! -f "capacitor.config.json" ] && [ ! -f "capacitor.config.ts" ]; then
+            npx cap init "$APP_NAME" "$APP_BUNDLE_ID" --web-dir www
+          fi
+          if [ ! -d "ios" ]; then
+            npx cap add ios
+          fi
+
+      - name: 4. Inject Info.plist Privacy Keys & GoogleService-Info.plist
+        env:
+          GOOGLE_SERVICE_INFO_PLIST_BASE64: ${{ secrets.GOOGLE_SERVICE_INFO_PLIST_BASE64 }}
+        run: |
+          python3 - <<'PY'
+          import os, plistlib
+
+          template_path = 'ios-template/Info.plist'
+          target_path = 'ios/App/App/Info.plist'
+
+          with open(template_path, 'rb') as f:
+              template_plist = plistlib.load(f)
+
+          if os.path.exists(target_path):
+              with open(target_path, 'rb') as f:
+                  target_plist = plistlib.load(f)
+          else:
+              target_plist = {}
+
+          for key, value in template_plist.items():
+              target_plist[key] = value
+
+          with open(target_path, 'wb') as f:
+              plistlib.dump(target_plist, f, sort_keys=False)
+          print('Merged ios-template/Info.plist into ios/App/App/Info.plist successfully.')
+          PY
+
+          if [ -n "$GOOGLE_SERVICE_INFO_PLIST_BASE64" ]; then
+            echo "$GOOGLE_SERVICE_INFO_PLIST_BASE64" | base64 --decode > ios/App/App/GoogleService-Info.plist
+            ruby - <<'RB'
+            begin
+              require 'xcodeproj'
+            rescue LoadError
+              system('gem install xcodeproj --no-document')
+              Gem.clear_paths
+              require 'xcodeproj'
+            end
+            project_path = 'ios/App/App.xcodeproj'
+            project = Xcodeproj::Project.open(project_path)
+            target = project.targets.find { |t| t.name == 'App' }
+            app_group = project.main_group.find_subpath('App', true)
+            existing = app_group.files.find { |f| f.path == 'GoogleService-Info.plist' }
+            unless existing
+              file_ref = app_group.new_reference('GoogleService-Info.plist')
+              target.resources_build_phase.add_file_reference(file_ref)
+              project.save
+              puts 'Registered GoogleService-Info.plist in App.xcodeproj resources.'
+            end
+          RB
+          else
+            echo "::warning::GOOGLE_SERVICE_INFO_PLIST_BASE64 is not set; native Firebase iOS plist skipped."
+          fi
+
+      - name: 5. Sync Capacitor Web Assets & CocoaPods
+        run: |
+          npx cap sync ios
+          if [ -f "ios/App/Podfile" ]; then
+            cd ios/App
+            pod install --repo-update
+          fi
+
+      - name: 6. Validate Signing Secrets & Setup Keychain / Provisioning Profile
+        env:
+          IOS_P12_BASE64: ${{ secrets.IOS_P12_BASE64 }}
+          IOS_P12_PASSWORD: ${{ secrets.IOS_P12_PASSWORD }}
+          IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+        run: |
+          if [ -z "$IOS_P12_BASE64" ] || [ -z "$IOS_PROVISIONING_PROFILE_BASE64" ]; then
+            echo "::error::Missing IOS_P12_BASE64 or IOS_PROVISIONING_PROFILE_BASE64 in GitHub Secrets."
+            exit 1
+          fi
+
+          mkdir -p build/signing
+          KEYCHAIN_PATH="$RUNNER_TEMP/app-signing.keychain-db"
+          KEYCHAIN_PASSWORD=$(openssl rand -base64 24)
+          P12_PATH="$RUNNER_TEMP/dist-cert.p12"
+          PROFILE_PATH="$RUNNER_TEMP/dist.mobileprovision"
+          PROFILE_PLIST="$RUNNER_TEMP/profile.plist"
+
+          echo "$IOS_P12_BASE64" | base64 --decode > "$P12_PATH"
+          echo "$IOS_PROVISIONING_PROFILE_BASE64" | base64 --decode > "$PROFILE_PATH"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$P12_PATH" -P "$IOS_P12_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH" login.keychain-db
+
+          security cms -D -i "$PROFILE_PATH" > "$PROFILE_PLIST"
+          PROFILE_UUID=$(/usr/libexec/PlistBuddy -c "Print :UUID" "$PROFILE_PLIST")
+          PROFILE_NAME=$(/usr/libexec/PlistBuddy -c "Print :Name" "$PROFILE_PLIST")
+          TEAM_ID=$(/usr/libexec/PlistBuddy -c "Print :TeamIdentifier:0" "$PROFILE_PLIST")
+
+          mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
+          cp "$PROFILE_PATH" "$HOME/Library/MobileDevice/Provisioning Profiles/${PROFILE_UUID}.mobileprovision"
+
+          SIGN_IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" | grep -E "Apple Distribution|iPhone Distribution" | head -n 1 | sed -E 's/.*"([^"]+)".*/\1/')
+          if [ -z "$SIGN_IDENTITY" ]; then
+            SIGN_IDENTITY="Apple Distribution"
+          fi
+
+          echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
+          echo "PROFILE_UUID=$PROFILE_UUID" >> "$GITHUB_ENV"
+          echo "PROFILE_NAME=$PROFILE_NAME" >> "$GITHUB_ENV"
+          echo "TEAM_ID=$TEAM_ID" >> "$GITHUB_ENV"
+          echo "SIGN_IDENTITY=$SIGN_IDENTITY" >> "$GITHUB_ENV"
+
+          cat > build/signing/ExportOptions.plist <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key>
+            <string>app-store-connect</string>
+            <key>signingStyle</key>
+            <string>manual</string>
+            <key>teamID</key>
+            <string>${TEAM_ID}</string>
+            <key>uploadSymbols</key>
+            <true/>
+            <key>manageAppVersionAndBuildNumber</key>
+            <false/>
+            <key>provisioningProfiles</key>
+            <dict>
+              <key>${APP_BUNDLE_ID}</key>
+              <string>${PROFILE_UUID}</string>
+            </dict>
+          </dict>
+          </plist>
+          EOF
+
+      - name: 7. Archive & Export Signed IPA
+        run: |
+          if [ -d "ios/App/App.xcworkspace" ]; then
+            TARGET_FLAG="-workspace ios/App/App.xcworkspace"
+          else
+            TARGET_FLAG="-project ios/App/App.xcodeproj"
+          fi
+
+          xcodebuild $TARGET_FLAG \
+            -scheme App \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -archivePath build/LZHCard.xcarchive \
+            PRODUCT_BUNDLE_IDENTIFIER="$APP_BUNDLE_ID" \
+            DEVELOPMENT_TEAM="$TEAM_ID" \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="$SIGN_IDENTITY" \
+            PROVISIONING_PROFILE_SPECIFIER="$PROFILE_UUID" \
+            clean archive
+
+          xcodebuild -exportArchive \
+            -archivePath build/LZHCard.xcarchive \
+            -exportOptionsPlist build/signing/ExportOptions.plist \
+            -exportPath build/ipa
+
+          IPA_FOUND=$(ls build/ipa/*.ipa | head -n 1)
+          if [ -n "$IPA_FOUND" ] && [ "$IPA_FOUND" != "build/ipa/LZHCard.ipa" ]; then
+            cp "$IPA_FOUND" build/ipa/LZHCard.ipa
+          fi
+          ls -lh build/ipa/
+
+      - name: 8. Upload Signed IPA Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lzhcard-signed-ipa
+          path: build/ipa/LZHCard.ipa
+          retention-days: 30
+
+      - name: 9. Upload IPA to TestFlight (Optional)
+        if: ${{ (github.event_name == 'push' || inputs.upload_testflight == true) && secrets.APPLE_CONNECT_API_KEY_BASE64 != '' && secrets.APPLE_CONNECT_KEY_ID != '' && secrets.APPLE_CONNECT_ISSUER_ID != '' }}
+        env:
+          APPLE_CONNECT_API_KEY_BASE64: ${{ secrets.APPLE_CONNECT_API_KEY_BASE64 }}
+          APPLE_CONNECT_KEY_ID: ${{ secrets.APPLE_CONNECT_KEY_ID }}
+          APPLE_CONNECT_ISSUER_ID: ${{ secrets.APPLE_CONNECT_ISSUER_ID }}
+        run: |
+          mkdir -p "$HOME/.appstoreconnect/private_keys"
+          KEY_FILE="$HOME/.appstoreconnect/private_keys/AuthKey_${APPLE_CONNECT_KEY_ID}.p8"
+          echo "$APPLE_CONNECT_API_KEY_BASE64" | base64 --decode > "$KEY_FILE"
+
+          xcrun altool --upload-app \
+            --type ios \
+            -f build/ipa/LZHCard.ipa \
+            --apiKey "$APPLE_CONNECT_KEY_ID" \
+            --apiIssuer "$APPLE_CONNECT_ISSUER_ID"
+
+      - name: 10. Cleanup Keychain & Temporary Secrets
+        if: always()
+        run: |
+          if [ -n "${KEYCHAIN_PATH:-}" ] && [ -f "$KEYCHAIN_PATH" ]; then
+            security delete-keychain "$KEYCHAIN_PATH" || true
+          fi
+          rm -rf "$RUNNER_TEMP/dist-cert.p12" \
+                 "$RUNNER_TEMP/dist.mobileprovision" \
+                 "$RUNNER_TEMP/profile.plist" \
+                 "$HOME/.appstoreconnect/private_keys" \
+                 build/signing || true

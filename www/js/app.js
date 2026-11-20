@@ -2643,10 +2643,15 @@ function isDesktopWidgetClient() {
 function isAndroidNativeOverlayCapable() {
     try {
         if (typeof window === 'undefined' || !window.Capacitor) return false;
-        if (typeof window.Capacitor.isNativePlatform === 'function') {
-            return Boolean(window.Capacitor.isNativePlatform());
+        if (typeof window.Capacitor.getPlatform === 'function') {
+            return String(window.Capacitor.getPlatform() || '').toLowerCase() === 'android';
         }
-        return Boolean(window.Capacitor.isNative);
+        const isNative = typeof window.Capacitor.isNativePlatform === 'function'
+            ? Boolean(window.Capacitor.isNativePlatform())
+            : Boolean(window.Capacitor.isNative);
+        if (!isNative) return false;
+        const ua = (typeof navigator !== 'undefined' && navigator.userAgent) ? navigator.userAgent : '';
+        return /android/i.test(ua) && !/iphone|ipad|ipod/i.test(ua);
     } catch (e) {
         return false;
     }

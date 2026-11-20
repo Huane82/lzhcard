@@ -255,4 +255,22 @@ public class SystemOverlayPlugin extends Plugin {
             call.reject("Unable to launch screen capture permission: " + e.getMessage());
         }
     }
+
+    @PluginMethod
+    public void setOverlayFullscreen(PluginCall call) {
+        boolean isFullscreen = call.getBoolean("isFullscreen", false);
+        FloatingOverlayService.setPanelFullscreenState(isFullscreen);
+        JSObject ret = new JSObject();
+        ret.put("isFullscreen", isFullscreen);
+        call.resolve(ret);
+    }
+
+    @PluginMethod
+    public void setImageModeActive(PluginCall call) {
+        boolean active = call.getBoolean("active", false);
+        FloatingOverlayService.setImageModeState(active);
+        JSObject ret = new JSObject();
+        ret.put("active", active);
+        call.resolve(ret);
+    }
 }

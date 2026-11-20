@@ -113,6 +113,63 @@ async function loginWithGoogle() {
   }
 }
 
+// 1.5 Apple 登入 (App Store Guideline 4.8：原生 Capacitor FirebaseAuthentication 或 Web OAuthProvider)
+async function loginWithApple() {
+  try {
+    let result = null;
+
+    if (isNativeApp()) {
+      const capPlugins = window.Capacitor?.Plugins || {};
+      if (capPlugins.FirebaseAuthentication && typeof capPlugins.FirebaseAuthentication.signInWithApple === 'function') {
+        const nativeRes = await capPlugins.FirebaseAuthentication.signInWithApple();
+        const idToken = nativeRes?.credential?.idToken || nativeRes?.idToken;
+        const rawNonce = nativeRes?.credential?.rawNonce || nativeRes?.credential?.nonce || undefined;
+        if (!idToken) throw new Error('無法取得原生 Apple ID Token');
+        const provider = new firebase.auth.OAuthProvider('apple.com');
+        const credential = rawNonce
+          ? provider.credential({ idToken, rawNonce })
+          : provider.credential({ idToken });
+        result = await auth.signInWithCredential(credential);
+      } else {
+        throw new Error('偵測到原生 App 環境，請確認已安裝 Capacitor Firebase Authentication Apple 登入外掛');
+      }
+    } else {
+      const provider = new firebase.auth.OAuthProvider('apple.com');
+      provider.addScope('email');
+      provider.addScope('name');
+      result = await auth.signInWithPopup(provider);
+    }
+
+    localStorage.removeItem('lzhcard_guest_mode');
+    if (typeof loadStorage === 'function') {
+      await loadStorage();
+    }
+    if (typeof showToast === 'function') {
+      showToast(`歡迎回來，${result.user.displayName || '使用者'}！`, "success");
+    }
+    return result.user;
+  } catch (error) {
+    const code = String(error?.code || '');
+    const msg = String(error?.message || '');
+    if (
+      code === 'auth/cancelled-popup-request' ||
+      code === 'auth/popup-closed-by-user' ||
+      /cancel/i.test(msg) ||
+      /1001/.test(msg)
+    ) {
+      return null;
+    }
+    console.error("Apple 登入失敗:", error);
+    if (typeof showToast === 'function') showToast("Apple 登入失敗：" + (error.message || '請稍後再試'), "error");
+    return null;
+  }
+}
+
+if (typeof window !== 'undefined') {
+  window.loginWithGoogle = loginWithGoogle;
+  window.loginWithApple = loginWithApple;
+}
+
 // 2. Email 登入與註冊
 async function loginWithEmail(email, password) {
   try {
@@ -874,7 +931,11 @@ auth.onAuthStateChanged(async (user) => {
     }
     if (subtextEl) {
       subtextEl.removeAttribute('data-i18n');
-      subtextEl.innerText = user.email ? `已連結：${user.email}` : "已連結 Google 帳號";
+      const providerIds = Array.isArray(user.providerData) ? user.providerData.map(p => p.providerId) : [];
+      const linkedLabel = providerIds.includes('apple.com')
+        ? "已連結 Apple 帳號"
+        : (providerIds.includes('google.com') ? "已連結 Google 帳號" : "已連結雲端帳號");
+      subtextEl.innerText = user.email ? `已連結：${user.email}` : linkedLabel;
     }
 
     const defaultAvatar = `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(user.uid)}`;
@@ -1005,6 +1066,7 @@ auth.onAuthStateChanged(async (user) => {
 function toggleAuthButtons() {
   const checkbox = document.getElementById('tosCheckbox');
   const googleBtn = document.getElementById('welcomeGoogleBtn');
+  const appleBtn = document.getElementById('welcomeAppleBtn');
   const guestBtn = document.getElementById('welcomeGuestBtn');
 
   const isChecked = checkbox ? checkbox.checked : false;
@@ -1015,6 +1077,16 @@ function toggleAuthButtons() {
       googleBtn.className = "w-full py-3 bg-white dark:bg-slate-900 hover:bg-slate-100 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-600 font-bold rounded-xl text-xs flex items-center justify-center space-x-2 transition cursor-pointer shadow-xs";
     } else {
       googleBtn.className = "w-full py-3 bg-slate-200 dark:bg-slate-700 text-slate-400 font-bold rounded-xl text-xs flex items-center justify-center space-x-2 transition cursor-not-allowed";
+    }
+  }
+
+  if (appleBtn) {
+    appleBtn.disabled = !isChecked;
+    const isHidden = appleBtn.classList.contains('hidden');
+    if (isChecked) {
+      appleBtn.className = `${isHidden ? 'hidden ' : ''}w-full py-3 bg-slate-900 hover:bg-black text-white border border-slate-800 font-bold rounded-xl text-xs flex items-center justify-center space-x-2 transition cursor-pointer shadow-xs`;
+    } else {
+      appleBtn.className = `${isHidden ? 'hidden ' : ''}w-full py-3 bg-slate-200 dark:bg-slate-700 text-slate-400 font-bold rounded-xl text-xs flex items-center justify-center space-x-2 transition cursor-not-allowed`;
     }
   }
 
@@ -1040,6 +1112,24 @@ async function handleWelcomeGoogleLogin() {
       if (typeof closeModal === 'function') closeModal('welcomeModal');
     }
   }
+}
+
+async function handleWelcomeAppleLogin() {
+  localStorage.setItem('lzhcard_tos_accepted', 'true');
+  localStorage.removeItem('lzhcard_guest_mode');
+
+  const user = await loginWithApple();
+  if (user) {
+    if (typeof startOnboardingFlow === 'function') {
+      startOnboardingFlow();
+    } else {
+      if (typeof closeModal === 'function') closeModal('welcomeModal');
+    }
+  }
+}
+
+if (typeof window !== 'undefined') {
+  window.handleWelcomeAppleLogin = handleWelcomeAppleLogin;
 }
 
 function handleWelcomeGuestLogin() {
@@ -1164,6 +1254,28 @@ async function reauthenticateCurrentUser(user) {
     return await user.reauthenticateWithPopup(provider);
   }
 
+  if (providerIds.includes('apple.com')) {
+    if (isNativeApp()) {
+      const capPlugins = window.Capacitor?.Plugins || {};
+      if (capPlugins.FirebaseAuthentication && typeof capPlugins.FirebaseAuthentication.signInWithApple === 'function') {
+        const nativeRes = await capPlugins.FirebaseAuthentication.signInWithApple();
+        const idToken = nativeRes?.credential?.idToken || nativeRes?.idToken;
+        const rawNonce = nativeRes?.credential?.rawNonce || nativeRes?.credential?.nonce || undefined;
+        if (!idToken) throw new Error('無法取得原生 Apple 驗證憑證');
+        const provider = new firebase.auth.OAuthProvider('apple.com');
+        const credential = rawNonce
+          ? provider.credential({ idToken, rawNonce })
+          : provider.credential({ idToken });
+        return await user.reauthenticateWithCredential(credential);
+      }
+      throw new Error('原生環境需透過 Apple 登入外掛重新驗證');
+    }
+    const provider = new firebase.auth.OAuthProvider('apple.com');
+    provider.addScope('email');
+    provider.addScope('name');
+    return await user.reauthenticateWithPopup(provider);
+  }
+
   const err = new Error('為確保帳號安全，請先登出並重新登入後再執行永久註銷帳號。');
   err.code = 'auth/requires-recent-login';
   throw err;
@@ -1251,12 +1363,12 @@ async function handlePermanentAccountDeletion() {
   const uid = user.uid;
 
   try {
-    // 預檢：若上次登入時間超過 4.5 分鐘且為 Google 登入，先行完成重新驗證再動手刪資料，避免刪除到一半因 requires-recent-login 中斷
+    // 預檢：若上次登入時間超過 4.5 分鐘且為 Google 或 Apple 登入，先行完成重新驗證再動手刪資料，避免刪除到一半因 requires-recent-login 中斷
     const lastSignInMs = user.metadata?.lastSignInTime ? Date.parse(user.metadata.lastSignInTime) : 0;
     const providerIds = Array.isArray(user.providerData) ? user.providerData.map(p => p.providerId) : [];
-    if (lastSignInMs > 0 && (Date.now() - lastSignInMs) > 270000 && providerIds.includes('google.com')) {
+    if (lastSignInMs > 0 && (Date.now() - lastSignInMs) > 270000 && (providerIds.includes('google.com') || providerIds.includes('apple.com'))) {
       if (typeof showToast === 'function') {
-        showToast('為確保帳號安全，請先完成 Google 重新驗證...', 'info');
+        showToast('為確保帳號安全，請先完成帳號重新驗證...', 'info');
       }
       await reauthenticateCurrentUser(user);
     }

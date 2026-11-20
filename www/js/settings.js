@@ -208,6 +208,9 @@ function syncSettingsUI() {
 
     // 📅 同步每日臨時等級覆蓋狀態
     syncDailyFreeSyncUI();
+
+    // 🍎 同步 iOS App Store 合規顯示狀態（隱藏 Android 系統懸浮開關、顯示 Apple 登入與恢復購買）
+    updatePlatformComplianceUI();
 }
 
 function handlePrivacyToggleChange(enableHide) {
@@ -637,10 +640,69 @@ function handleSaveApiKey() {
    🔒 登入門檻與服務條款 (TOS) 控制邏輯
    ========================================================================== */
 
+function getDetectedUiPlatform() {
+    if (typeof window !== 'undefined' && typeof window.getPaymentPlatform === 'function') {
+        return window.getPaymentPlatform();
+    }
+    if (typeof window !== 'undefined' && window.MembershipEngine && typeof window.MembershipEngine.getPaymentPlatform === 'function') {
+        return window.MembershipEngine.getPaymentPlatform();
+    }
+    try {
+        const cap = typeof window !== 'undefined' ? window.Capacitor : null;
+        if (cap && typeof cap.getPlatform === 'function') {
+            const p = String(cap.getPlatform() || '').toLowerCase();
+            if (p === 'ios' || p === 'android') return p;
+        }
+    } catch (e) {}
+    return 'web';
+}
+
+function updatePlatformComplianceUI() {
+    if (typeof document === 'undefined') return;
+    const platform = getDetectedUiPlatform();
+    const isIos = platform === 'ios';
+
+    const welcomeAppleBtn = document.getElementById('welcomeAppleBtn');
+    if (welcomeAppleBtn) {
+        welcomeAppleBtn.classList.toggle('hidden', !isIos);
+    }
+
+    const settingsAppleLoginBtn = document.getElementById('settingsAppleLoginBtn');
+    if (settingsAppleLoginBtn) {
+        settingsAppleLoginBtn.classList.toggle('hidden', !isIos);
+    }
+
+    const iosRestoreSlot = document.getElementById('settingsIosRestorePurchaseSlot');
+    if (iosRestoreSlot) {
+        iosRestoreSlot.classList.toggle('hidden', !isIos);
+    }
+
+    const systemOverlaySlot = document.getElementById('settingsSystemOverlaySlot');
+    if (systemOverlaySlot) {
+        systemOverlaySlot.classList.toggle('hidden', isIos);
+    }
+
+    const overlayGuideBtn = document.getElementById('btnOpenOverlayGuide');
+    if (overlayGuideBtn) {
+        overlayGuideBtn.classList.toggle('hidden', isIos);
+    }
+
+    const desktopWidgetSlot = document.getElementById('settingsDesktopWidgetSlot');
+    if (desktopWidgetSlot) {
+        desktopWidgetSlot.classList.toggle('hidden', isIos);
+    }
+}
+
+if (typeof window !== 'undefined') {
+    window.updatePlatformComplianceUI = updatePlatformComplianceUI;
+}
+
 function toggleAuthButtons() {
     const isChecked = document.getElementById('tosCheckbox')?.checked || false;
     const googleBtn = document.getElementById('welcomeGoogleBtn');
+    const appleBtn = document.getElementById('welcomeAppleBtn');
     const guestBtn = document.getElementById('welcomeGuestBtn');
+    const isIos = getDetectedUiPlatform() === 'ios';
 
     if (googleBtn) {
         googleBtn.disabled = !isChecked;
@@ -648,6 +710,16 @@ function toggleAuthButtons() {
             googleBtn.className = "w-full py-3 bg-white hover:bg-slate-50 dark:bg-slate-900 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 font-bold rounded-xl text-xs flex items-center justify-center space-x-2 transition border border-slate-300 dark:border-slate-600 shadow-sm cursor-pointer";
         } else {
             googleBtn.className = "w-full py-3 bg-slate-200 dark:bg-slate-700 text-slate-400 font-bold rounded-xl text-xs flex items-center justify-center space-x-2 transition cursor-not-allowed opacity-60";
+        }
+    }
+
+    if (appleBtn) {
+        appleBtn.disabled = !isChecked;
+        const hiddenClass = isIos ? '' : 'hidden ';
+        if (isChecked) {
+            appleBtn.className = `${hiddenClass}w-full py-3 bg-slate-900 hover:bg-black text-white font-bold rounded-xl text-xs flex items-center justify-center space-x-2 transition border border-slate-800 shadow-sm cursor-pointer`;
+        } else {
+            appleBtn.className = `${hiddenClass}w-full py-3 bg-slate-200 dark:bg-slate-700 text-slate-400 font-bold rounded-xl text-xs flex items-center justify-center space-x-2 transition cursor-not-allowed opacity-60`;
         }
     }
 
@@ -671,6 +743,22 @@ function handleWelcomeGoogleLogin() {
     if (typeof loginWithGoogle === 'function') {
         loginWithGoogle();
     }
+}
+
+function handleWelcomeAppleLogin() {
+    const isChecked = document.getElementById('tosCheckbox')?.checked;
+    if (!isChecked) {
+        if (typeof showToast === 'function') showToast('請先勾選同意服務與隱私條款！', 'warning');
+        return;
+    }
+    localStorage.setItem('lzhcard_tos_accepted', 'true');
+    if (typeof loginWithApple === 'function') {
+        loginWithApple();
+    }
+}
+
+if (typeof window !== 'undefined') {
+    window.handleWelcomeAppleLogin = handleWelcomeAppleLogin;
 }
 
 function handleWelcomeGuestLogin() {

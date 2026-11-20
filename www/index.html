@@ -17,9 +17,9 @@
     
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>LZHCard - 升級版 Anki 智慧單字卡大師</title>
+    <title>LZHCard</title>
     <meta name="description" content="具備 FSRS 現代認知記憶演算法、考前臨時熟悉演算法、Gemini AI 萬能解析、雲端同步與社群字庫商店的升級版 Anki 單字學習系統。" />
-    <meta property="og:title" content="LZHCard - 升級版 Anki 智慧單字卡大師" />
+    <meta property="og:title" content="LZHCard" />
     <meta property="og:description" content="具備 FSRS 現代認知記憶演算法、考前臨時熟悉演算法、Gemini AI 萬能解析、雲端同步與社群字庫商店的升級版 Anki 單字學習系統。" />
     <meta property="og:type" content="website" />
     <meta name="twitter:card" content="summary_large_image" />
@@ -115,6 +115,12 @@
                 <button type="button" id="welcomeGoogleBtn" onclick="handleWelcomeGoogleLogin()" disabled class="w-full py-3 bg-slate-200 dark:bg-slate-700 text-slate-400 font-bold rounded-xl text-xs flex items-center justify-center space-x-2 transition cursor-not-allowed">
                     <i class="fa-brands fa-google text-sm"></i>
                     <span data-i18n="btnLoginGoogle">使用 Google 帳號登入</span>
+                </button>
+
+                <!-- 1.5 Apple 登入 (iOS 必備同級按鈕) -->
+                <button type="button" id="welcomeAppleBtn" onclick="handleWelcomeAppleLogin()" disabled class="hidden w-full py-3 bg-slate-200 dark:bg-slate-700 text-slate-400 font-bold rounded-xl text-xs flex items-center justify-center space-x-2 transition cursor-not-allowed">
+                    <i class="fa-brands fa-apple text-base"></i>
+                    <span data-i18n="btnLoginApple">使用 Apple 帳號登入</span>
                 </button>
 
                 <!-- 2. 訪客登入 -->
@@ -1961,7 +1967,11 @@
                             </div>
 
                             <div id="settings-auth-actions" class="space-y-2">
-                                <div id="settings-logged-out">
+                                <div id="settings-logged-out" class="space-y-2">
+                                    <button type="button" id="settingsAppleLoginBtn" onclick="if(typeof loginWithApple==='function') loginWithApple()" class="hidden w-full py-2.5 bg-slate-900 hover:bg-black text-white border border-slate-800 font-bold rounded-xl text-xs transition flex items-center justify-center space-x-2 shadow-xs cursor-pointer">
+                                        <i class="fa-brands fa-apple text-base"></i>
+                                        <span data-i18n="btnLoginApple">使用 Apple 帳號登入</span>
+                                    </button>
                                     <button type="button" onclick="loginWithGoogle()" class="w-full py-2.5 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-slate-600 font-bold rounded-xl text-xs transition flex items-center justify-center space-x-2 shadow-xs cursor-pointer">
                                         <i class="fa-brands fa-google text-red-500 text-sm"></i>
                                         <span data-i18n="btnLoginGoogle">使用 Google 帳號登入</span>
@@ -1973,6 +1983,14 @@
                                         <span data-i18n="btnLogout">登出帳號</span>
                                     </button>
                                 </div>
+                            </div>
+
+                            <!--  iOS App Store 恢復購買按鈕 (僅 iOS 顯示) -->
+                            <div id="settingsIosRestorePurchaseSlot" class="hidden">
+                                <button type="button" id="settingsIosRestorePurchaseBtn" onclick="if(typeof MembershipEngine!=='undefined' && typeof MembershipEngine.restoreIosPurchases==='function') MembershipEngine.restoreIosPurchases()" class="w-full py-2.5 px-3 bg-slate-900 hover:bg-black dark:bg-slate-700 dark:hover:bg-slate-600 text-white font-bold rounded-xl text-xs transition flex items-center justify-center gap-1.5 shadow-2xs cursor-pointer">
+                                    <i class="fa-solid fa-rotate-left"></i>
+                                    <span data-i18n="btnRestorePurchases">恢復購買 (Restore Purchases)</span>
+                                </button>
                             </div>
 
                             <div class="flex items-center justify-between gap-2">

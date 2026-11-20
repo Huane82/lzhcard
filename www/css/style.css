@@ -799,4 +799,18 @@ body {
         transition: none !important;
     }
 }
+
+.ft-fullscreen {
+    width: 100vw !important;
+    height: 100vh !important;
+    max-width: none !important;
+    max-height: none !important;
+    inset: 0 !important;
+    border-radius: 0 !important;
+}
+
+.ft-fullscreen #ftTabBody {
+    max-height: none !important;
+}
+
 

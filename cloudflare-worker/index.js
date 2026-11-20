@@ -1,5 +1,11 @@
-import { handleGeminiAi, handleFastRefine } from "./src/aiHandler.js";
-import { handleVerifyPlayPurchase } from "./src/billingHandler.js";
+import { handleAudioStt, handleFastRefine, handleGeminiAi } from "./src/aiHandler.js";
+import {
+  handleVerifyAndroidPurchase,
+  handleVerifyIosPurchase,
+  handleVerifyPlayPurchase,
+  handleVerifyWebPurchase,
+  handleWebCheckout
+} from "./src/billingHandler.js";
 import { handleGetQuotaStatus } from "./src/quotaManager.js";
 import {
   handleBuyCosmetic,
@@ -39,46 +45,64 @@ export default {
     }
 
     const url = new URL(request.url);
+    const pathname = url.pathname;
 
     try {
-      // 路由 1：Google Play Billing 伺服器收據核銷與防重放
-      if (url.pathname.endsWith("/billing/verify-purchase") && request.method === "POST") {
-        return await handleVerifyPlayPurchase(request, env, corsHeaders);
+      // 路由 1：三通道購買驗證與防重放（Android Play / Apple App Store / Web）
+      if ((pathname.endsWith("/api/verify-purchase/android") || pathname.endsWith("/billing/verify-purchase")) && request.method === "POST") {
+        return await handleVerifyAndroidPurchase(request, env, corsHeaders);
+      }
+
+      if (pathname.endsWith("/api/verify-purchase/ios") && request.method === "POST") {
+        return await handleVerifyIosPurchase(request, env, corsHeaders);
+      }
+
+      if (pathname.endsWith("/api/verify-purchase/web") && request.method === "POST") {
+        return await handleVerifyWebPurchase(request, env, corsHeaders);
+      }
+
+      if (pathname.endsWith("/api/payment/web-checkout") && request.method === "POST") {
+        return await handleWebCheckout(request, env, corsHeaders);
       }
 
       // 路由 2：商店金幣交易（字庫購買）
-      if (url.pathname.endsWith("/buy-deck") && request.method === "POST") {
+      if (pathname.endsWith("/buy-deck") && request.method === "POST") {
         return await handleBuyDeck(request, env, corsHeaders);
       }
 
       // 路由 3：商店金幣兌換 AI 配額補充包 / 體驗卡 / 30天正式會員
-      if (url.pathname.endsWith("/membership/redeem-coins") && request.method === "POST") {
+      if (pathname.endsWith("/membership/redeem-coins") && request.method === "POST") {
         return await handleRedeemCoinsForQuota(request, env, corsHeaders);
       }
 
       // 路由 4：付費專屬外觀購買
-      if (url.pathname.endsWith("/cosmetics/buy") && request.method === "POST") {
+      if (pathname.endsWith("/cosmetics/buy") && request.method === "POST") {
         return await handleBuyCosmetic(request, env, corsHeaders);
       }
 
       // 路由 5：連勝冷凍護盾購買
-      if (url.pathname.endsWith("/shop/buy-shield") && request.method === "POST") {
+      if (pathname.endsWith("/shop/buy-shield") && request.method === "POST") {
         return await handleBuyStreakShield(request, env, corsHeaders);
       }
 
       // 路由 6：查詢即時 AI 配額狀態
-      if (url.pathname.endsWith("/ai/quota-status") && (request.method === "GET" || request.method === "POST")) {
+      if (pathname.endsWith("/ai/quota-status") && (request.method === "GET" || request.method === "POST")) {
         return await handleGetQuotaStatus(request, env, corsHeaders);
       }
 
-      // 路由 7：YouTube 0ms 時間軸字幕解析（含 6 小時 Edge Cache）
-      if (url.pathname.endsWith("/youtube/subtitles") && (request.method === "GET" || request.method === "POST")) {
+      // 路由 7：YouTube / 跨平台時間軸字幕解析（含 24 小時 Edge Cache，不快取空值）
+      if (pathname.endsWith("/youtube/subtitles") && (request.method === "GET" || request.method === "POST")) {
         return await handleYoutubeSubtitles(request, env, corsHeaders);
       }
 
       // 路由 8：即時雙語字幕 Tier-2 語境快速精修 (Groq -> Gemini Flash-Lite)
-      if (url.pathname.endsWith("/ai/fast-refine") && request.method === "POST") {
+      if (pathname.endsWith("/ai/fast-refine") && request.method === "POST") {
         return await handleFastRefine(request, env, corsHeaders);
+      }
+
+      // 路由 9：語音字幕 MediaRecorder 音訊轉文字 (Groq Whisper -> Gemini 音訊)
+      if (pathname.endsWith("/api/ai/stt") && request.method === "POST") {
+        return await handleAudioStt(request, env, corsHeaders);
       }
 
       // 預設路由：Gemini / Groq 智能路由 AI 解析與配額管控 (/ 或 /ai/proxy)

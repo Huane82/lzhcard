@@ -154,6 +154,15 @@ public class FloatingOverlayService extends Service {
     private boolean isPanelAttached = false;
     private boolean isWebPageLoaded = false;
 
+    // 圖片模式鎖定 / 平板自適應尺寸 / 全螢幕狀態紀錄
+    private volatile boolean isImageModeActive = false;
+    private volatile boolean isSelectingImage = false;
+    private volatile boolean isOverlayFullscreen = false;
+    private int savedX = 0;
+    private int savedY = 0;
+    private int savedW = 0;
+    private int savedH = 0;
+
     // Window 3: 全螢幕截圖定格點詞覆蓋層
     private WindowManager.LayoutParams freezeParams;
     private FrameLayout freezeContainer;
@@ -226,6 +235,20 @@ public class FloatingOverlayService extends Service {
         } catch (Exception ignored) {}
     }
 
+    public static void setPanelFullscreenState(boolean isFullscreen) {
+        FloatingOverlayService inst = activeInstance;
+        if (inst != null) {
+            inst.mainHandler.post(() -> inst.setFullscreenInternal(isFullscreen));
+        }
+    }
+
+    public static void setImageModeState(boolean active) {
+        FloatingOverlayService inst = activeInstance;
+        if (inst != null) {
+            inst.mainHandler.post(() -> inst.setImageModeInternal(active));
+        }
+    }
+
     public static void deliverCapturedImageBase64(Context ctx, String base64) {
         if (!TextUtils.isEmpty(base64)) {
             pendingCapturedBase64 = base64;
@@ -233,6 +256,11 @@ public class FloatingOverlayService extends Service {
         FloatingOverlayService inst = activeInstance;
         if (inst == null) return;
         inst.mainHandler.post(() -> {
+            inst.isSelectingImage = false;
+            if (!TextUtils.isEmpty(base64)) {
+                inst.isImageModeActive = true;
+                inst.applyTabletImagePanelBounds();
+            }
             if (!appInForeground) {
                 inst.showOverlayPanel();
                 inst.flushPendingCapturedImage();
@@ -382,6 +410,97 @@ public class FloatingOverlayService extends Service {
         return Math.min(dp(500), Math.max(dp(340), (int) (dm.heightPixels * 0.72f)));
     }
 
+    private boolean isTabletDevice() {
+        DisplayMetrics dm = getResources().getDisplayMetrics();
+        float widthDp = dm.widthPixels / Math.max(1f, dm.density);
+        float heightDp = dm.heightPixels / Math.max(1f, dm.density);
+        int smallestWidthDp = getResources().getConfiguration().smallestScreenWidthDp;
+        return Math.min(widthDp, heightDp) >= 600f || widthDp >= 600f || smallestWidthDp >= 600;
+    }
+
+    private void applyTabletImagePanelBounds() {
+        if (panelParams == null || isOverlayFullscreen) return;
+        if (!isTabletDevice()) return;
+        DisplayMetrics dm = getResources().getDisplayMetrics();
+        int targetW = Math.round(dm.widthPixels * 0.82f);
+        int targetH = Math.round(dm.heightPixels * 0.80f);
+        panelParams.width = targetW;
+        panelParams.height = targetH;
+        panelParams.x = Math.max(0, (dm.widthPixels - targetW) / 2);
+        panelParams.y = Math.max(0, (dm.heightPixels - targetH) / 2);
+        if (windowManager != null && panelContainer != null && isPanelAttached) {
+            try {
+                windowManager.updateViewLayout(panelContainer, panelParams);
+            } catch (Exception ignored) {}
+        }
+    }
+
+    private void restoreDefaultPanelBounds() {
+        if (panelParams == null || isOverlayFullscreen) return;
+        DisplayMetrics dm = getResources().getDisplayMetrics();
+        int panelWidth = Math.min(dp(396), Math.max(dp(280), dm.widthPixels - dp(20)));
+        int panelHeight = getDefaultPanelHeightPx();
+        panelParams.width = panelWidth;
+        panelParams.height = panelHeight;
+        panelParams.x = Math.max(dp(10), (dm.widthPixels - panelWidth) / 2);
+        panelParams.y = Math.max(dp(36), (int) (dm.heightPixels * 0.10f));
+        if (windowManager != null && panelContainer != null && isPanelAttached) {
+            try {
+                windowManager.updateViewLayout(panelContainer, panelParams);
+            } catch (Exception ignored) {}
+        }
+    }
+
+    private void setImageModeInternal(boolean active) {
+        isImageModeActive = active;
+        if (active) {
+            applyTabletImagePanelBounds();
+        } else if (!isOverlayFullscreen) {
+            restoreDefaultPanelBounds();
+        }
+    }
+
+    private void setFullscreenInternal(boolean enable) {
+        ensurePanelWebViewCreated();
+        if (panelParams == null) return;
+        if (enable) {
+            if (!isOverlayFullscreen) {
+                savedX = panelParams.x;
+                savedY = panelParams.y;
+                savedW = panelParams.width;
+                savedH = panelParams.height;
+                isOverlayFullscreen = true;
+            }
+            panelParams.width = WindowManager.LayoutParams.MATCH_PARENT;
+            panelParams.height = WindowManager.LayoutParams.MATCH_PARENT;
+            panelParams.x = 0;
+            panelParams.y = 0;
+        } else {
+            isOverlayFullscreen = false;
+            if (isImageModeActive && isTabletDevice()) {
+                applyTabletImagePanelBounds();
+            } else if (savedW != 0 && savedH != 0) {
+                panelParams.width = savedW;
+                panelParams.height = savedH;
+                panelParams.x = savedX;
+                panelParams.y = savedY;
+            } else {
+                restoreDefaultPanelBounds();
+            }
+        }
+        if (windowManager != null && panelContainer != null && isPanelAttached) {
+            try {
+                windowManager.updateViewLayout(panelContainer, panelParams);
+            } catch (Exception ignored) {}
+        }
+        if (overlayWebView != null && isWebPageLoaded) {
+            overlayWebView.evaluateJavascript(
+                "if(window.LZHOverlayApp && window.LZHOverlayApp.onNativeFullscreenChanged){window.LZHOverlayApp.onNativeFullscreenChanged(" + isOverlayFullscreen + ");}",
+                null
+            );
+        }
+    }
+
     private int getOverlayWindowType() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             return WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY;
@@ -516,7 +635,16 @@ public class FloatingOverlayService extends Service {
         int panelWidth = Math.min(dp(396), Math.max(dp(280), dm.widthPixels - dp(20)));
         int panelHeight = getDefaultPanelHeightPx();
 
-        panelContainer = new FrameLayout(this);
+        panelContainer = new FrameLayout(this) {
+            @Override
+            public void onWindowFocusChanged(boolean hasWindowFocus) {
+                super.onWindowFocusChanged(hasWindowFocus);
+                if (!hasWindowFocus && (isImageModeActive || isSelectingImage || isOverlayFullscreen)) {
+                    // 圖片/選圖或全螢幕模式下暫時失去焦點時，禁止縮回或重置尺寸
+                    return;
+                }
+            }
+        };
         panelContainer.setBackgroundColor(Color.TRANSPARENT);
 
         overlayWebView = new WebView(getApplicationContext());
@@ -557,15 +685,26 @@ public class FloatingOverlayService extends Service {
         if (windowManager == null || appInForeground) return;
         ensurePanelWebViewCreated();
         detachBubble();
+        if (isOverlayFullscreen) {
+            panelParams.width = WindowManager.LayoutParams.MATCH_PARENT;
+            panelParams.height = WindowManager.LayoutParams.MATCH_PARENT;
+            panelParams.x = 0;
+            panelParams.y = 0;
+        } else if (isImageModeActive && isTabletDevice()) {
+            applyTabletImagePanelBounds();
+        } else if (panelParams.height < dp(260)) {
+            panelParams.height = getDefaultPanelHeightPx();
+        }
         if (!isPanelAttached && panelContainer != null) {
             try {
-                if (panelParams.height < dp(260)) {
-                    panelParams.height = getDefaultPanelHeightPx();
-                }
                 windowManager.addView(panelContainer, panelParams);
                 isPanelAttached = true;
                 pushConfigToWebView();
                 flushPendingCapturedImage();
+            } catch (Exception ignored) {}
+        } else if (isPanelAttached && panelContainer != null) {
+            try {
+                windowManager.updateViewLayout(panelContainer, panelParams);
             } catch (Exception ignored) {}
         }
     }
@@ -1450,16 +1589,37 @@ public class FloatingOverlayService extends Service {
        8. 原生 Android SpeechRecognizer 連續語音串流（Partial -> 2-Tier）
        ========================================================================== */
 
+    private void notifyWebNativeSttState(boolean active, String reason) {
+        mainHandler.post(() -> {
+            if (overlayWebView == null || !isWebPageLoaded) return;
+            String js = "if(window.LZHOverlayApp && window.LZHOverlayApp.onNativeSttStateChanged){"
+                + "window.LZHOverlayApp.onNativeSttStateChanged(" + active + "," + JSONObject.quote(reason != null ? reason : "") + ");}";
+            overlayWebView.evaluateJavascript(js, null);
+        });
+    }
+
+    private void redirectMainActivityForMicPermission() {
+        try {
+            Intent permIntent = new Intent(this, MainActivity.class);
+            permIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+            permIntent.putExtra(MainActivity.EXTRA_REQUEST_MIC_PERMISSION, true);
+            startActivity(permIntent);
+        } catch (Exception ignored) {}
+    }
+
     private void startSpeechRecognizerSession() {
         mainHandler.post(() -> {
             if (!nativeSttRunning) return;
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
                 nativeSttRunning = false;
+                notifyWebNativeSttState(false, "MIC_PERMISSION_REQUIRED");
                 Toast.makeText(this, "請先在 LZHCard 允許麥克風錄音權限", Toast.LENGTH_LONG).show();
+                redirectMainActivityForMicPermission();
                 return;
             }
             if (!SpeechRecognizer.isRecognitionAvailable(this)) {
                 nativeSttRunning = false;
+                notifyWebNativeSttState(false, "STT_UNAVAILABLE");
                 Toast.makeText(this, "此裝置不支援原生離線/串流語音辨識", Toast.LENGTH_SHORT).show();
                 return;
             }
@@ -1467,7 +1627,12 @@ public class FloatingOverlayService extends Service {
             destroySpeechRecognizerOnly();
             speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this);
             speechRecognizer.setRecognitionListener(new RecognitionListener() {
-                @Override public void onReadyForSpeech(Bundle params) {}
+                @Override
+                public void onReadyForSpeech(Bundle params) {
+                    if (nativeSttRunning) {
+                        notifyWebNativeSttState(true, "");
+                    }
+                }
                 @Override public void onBeginningOfSpeech() {}
                 @Override public void onRmsChanged(float rmsdB) {}
                 @Override public void onBufferReceived(byte[] buffer) {}
@@ -1519,7 +1684,14 @@ public class FloatingOverlayService extends Service {
                     if (!nativeSttRunning) return;
                     if (error == SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS) {
                         nativeSttRunning = false;
-                        Toast.makeText(FloatingOverlayService.this, "缺少麥克風權限，已停止語音字幕", Toast.LENGTH_SHORT).show();
+                        notifyWebNativeSttState(false, "MIC_PERMISSION_REQUIRED");
+                        Toast.makeText(FloatingOverlayService.this, "缺少麥克風權限，請於主程式開啟權限", Toast.LENGTH_SHORT).show();
+                        redirectMainActivityForMicPermission();
+                        return;
+                    }
+                    if (error == SpeechRecognizer.ERROR_AUDIO || error == SpeechRecognizer.ERROR_CLIENT) {
+                        nativeSttRunning = false;
+                        notifyWebNativeSttState(false, "STT_ERROR_" + error);
                         return;
                     }
                     int delay = (error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY) ? 450 : 250;
@@ -1536,6 +1708,7 @@ public class FloatingOverlayService extends Service {
                 speechRecognizer.startListening(recIntent);
             } catch (Exception e) {
                 nativeSttRunning = false;
+                notifyWebNativeSttState(false, "STT_START_FAILED");
             }
         });
     }
@@ -1868,6 +2041,8 @@ public class FloatingOverlayService extends Service {
         public void updatePanelHeight(int cssHeight) {
             mainHandler.post(() -> {
                 if (windowManager == null || panelContainer == null || !isPanelAttached || panelParams == null) return;
+                if (isOverlayFullscreen || isSelectingImage) return;
+                if (isImageModeActive && isTabletDevice()) return;
                 DisplayMetrics dm = getResources().getDisplayMetrics();
                 int targetPx = Math.round(cssHeight * dm.density);
                 int minH = dp(240);
@@ -1887,8 +2062,23 @@ public class FloatingOverlayService extends Service {
         }
 
         @JavascriptInterface
+        public void setImageModeActive(boolean active) {
+            mainHandler.post(() -> setImageModeInternal(active));
+        }
+
+        @JavascriptInterface
+        public void setOverlayFullscreen(boolean isFullscreen) {
+            mainHandler.post(() -> setFullscreenInternal(isFullscreen));
+        }
+
+        @JavascriptInterface
         public void collapsePanel() {
-            mainHandler.post(FloatingOverlayService.this::hideOverlayPanel);
+            mainHandler.post(() -> {
+                if (isOverlayFullscreen) {
+                    setFullscreenInternal(false);
+                }
+                hideOverlayPanel();
+            });
         }
 
         @JavascriptInterface
@@ -1902,7 +2092,7 @@ public class FloatingOverlayService extends Service {
         @JavascriptInterface
         public void movePanelBy(int dxPx, int dyPx) {
             mainHandler.post(() -> {
-                if (windowManager == null || panelContainer == null || !isPanelAttached) return;
+                if (windowManager == null || panelContainer == null || !isPanelAttached || isOverlayFullscreen) return;
                 DisplayMetrics dm = getResources().getDisplayMetrics();
                 int w = panelContainer.getWidth() > 0 ? panelContainer.getWidth() : panelParams.width;
                 int h = panelContainer.getHeight() > 0 ? panelContainer.getHeight() : panelParams.height;
@@ -1978,6 +2168,8 @@ public class FloatingOverlayService extends Service {
         @JavascriptInterface
         public void openImagePicker(boolean useCamera) {
             mainHandler.post(() -> {
+                isSelectingImage = true;
+                isImageModeActive = true;
                 hidePanelWithoutReattachingBubble();
                 detachBubble();
                 try {
@@ -1990,6 +2182,7 @@ public class FloatingOverlayService extends Service {
                     );
                     startActivity(picker);
                 } catch (Exception e) {
+                    isSelectingImage = false;
                     Toast.makeText(FloatingOverlayService.this, "無法開啟圖片選擇器", Toast.LENGTH_SHORT).show();
                 }
             });
@@ -2053,7 +2246,10 @@ public class FloatingOverlayService extends Service {
         @JavascriptInterface
         public void stopNativeStt() {
             nativeSttRunning = false;
-            mainHandler.post(FloatingOverlayService.this::destroySpeechRecognizerOnly);
+            mainHandler.post(() -> {
+                destroySpeechRecognizerOnly();
+                notifyWebNativeSttState(false, "");
+            });
         }
 
         @JavascriptInterface
