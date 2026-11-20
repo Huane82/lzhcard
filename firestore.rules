@@ -1,0 +1,176 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global default deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Core helper primitives
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-\\.]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
+        (
+          exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+          (
+            get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+            get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true
+          )
+        )
+      );
+    }
+
+    // Server-authoritative fields that clients are strictly forbidden from forging or mutating
+    function hasNoPrivilegedUserFields(data) {
+      return !('coins' in data && data.coins != 0) &&
+        !('role' in data && data.role != 'user') &&
+        !('isAdmin' in data && data.isAdmin != false) &&
+        !('membership' in data && data.membership.tier != 'free') &&
+        !('purchasedDeckIds' in data && data.purchasedDeckIds.size() > 0) &&
+        !('purchasedDecks' in data && data.purchasedDecks.size() > 0) &&
+        !('purchasedCosmetics' in data && data.purchasedCosmetics.size() > 0) &&
+        !('coinBoost' in data);
+    }
+
+    function doesNotMutatePrivilegedUserFields() {
+      return !incoming().diff(existing()).affectedKeys().hasAny([
+        'coins',
+        'membership',
+        'role',
+        'isAdmin',
+        'aiUsage',
+        'coinBoost',
+        'membershipHistory',
+        'purchasedDeckIds',
+        'purchasedDecks',
+        'purchasedCosmetics'
+      ]);
+    }
+
+    // Admins lookup collection (read own only, server-managed)
+    match /admins/{uid} {
+      allow get: if isOwner(uid);
+      allow list, write: if false;
+    }
+
+    // Billing replay-protection ledger (100% server-only via Worker Service Account)
+    match /processedOrders/{orderId} {
+      allow read, write: if false;
+    }
+
+    // Private User Account & Deck Chunks
+    match /users/{uid} {
+      allow get: if isValidId(uid) && (isOwner(uid) || isAdmin());
+      allow list: if false;
+      allow create: if isValidId(uid) && isOwner(uid) && hasNoPrivilegedUserFields(incoming());
+      allow update: if isValidId(uid) && (
+        isAdmin() ||
+        (isOwner(uid) && doesNotMutatePrivilegedUserFields())
+      );
+      allow delete: if isValidId(uid) && (isOwner(uid) || isAdmin());
+
+      match /deckChunks/{chunkId} {
+        allow get, list: if isValidId(uid) && (isOwner(uid) || isAdmin());
+        allow create, update, delete: if isValidId(uid) && isValidId(chunkId) && (isOwner(uid) || isAdmin());
+      }
+    }
+
+    // Public Player Showcase Profiles
+    match /publicProfiles/{uid} {
+      allow get: if isValidId(uid) && isSignedIn();
+      allow list: if isSignedIn();
+      allow create: if isValidId(uid) && isOwner(uid) &&
+        incoming().uid == request.auth.uid &&
+        (!('role' in incoming()) || incoming().role == 'user');
+      allow update: if isValidId(uid) && (
+        isAdmin() ||
+        (
+          isOwner(uid) &&
+          incoming().uid == existing().uid &&
+          (!('role' in incoming()) || incoming().role == existing().get('role', 'user'))
+        )
+      );
+      allow delete: if isValidId(uid) && (isOwner(uid) || isAdmin());
+    }
+
+    // Community Store Decks & Interaction Subcollections
+    match /storeDecks/{deckId} {
+      allow get: if isValidId(deckId);
+      allow list: if true;
+
+      allow create: if isValidId(deckId) && isSignedIn() &&
+        incoming().authorId == request.auth.uid &&
+        incoming().title is string && incoming().title.size() >= 1 && incoming().title.size() <= 120 &&
+        incoming().price is number && incoming().price >= 0 && incoming().price <= 100000;
+
+      allow update: if isValidId(deckId) && isSignedIn() && (
+        isAdmin() ||
+        (
+          existing().authorId == request.auth.uid &&
+          incoming().authorId == existing().authorId
+        ) ||
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'likes',
+          'favorites',
+          'downloads',
+          'downloadCount',
+          'views',
+          'monthlyViews',
+          'monthlyDownloads',
+          'statMonthKey',
+          'hotScore'
+        ])
+      );
+
+      allow delete: if isValidId(deckId) && isSignedIn() && (
+        existing().authorId == request.auth.uid || isAdmin()
+      );
+
+      match /likers/{uid} {
+        allow get: if isValidId(deckId) && isValidId(uid) && isSignedIn();
+        allow list: if isSignedIn();
+        allow create, update, delete: if isValidId(deckId) && isValidId(uid) && isOwner(uid);
+      }
+
+      match /favoriters/{uid} {
+        allow get: if isValidId(deckId) && isValidId(uid) && isSignedIn();
+        allow list: if isSignedIn();
+        allow create, update, delete: if isValidId(deckId) && isValidId(uid) && isOwner(uid);
+      }
+
+      match /downloaders/{uid} {
+        allow get: if isValidId(deckId) && isValidId(uid) && isSignedIn();
+        allow list: if isSignedIn();
+        allow create, update: if isValidId(deckId) && isValidId(uid) && isOwner(uid);
+        allow delete: if isAdmin();
+      }
+
+      match /purchasers/{uid} {
+        allow get: if isValidId(deckId) && isValidId(uid) && (isOwner(uid) || isAdmin());
+        allow list: if isAdmin();
+        allow write: if false; // Server-authoritative only via /buy-deck Worker
+      }
+    }
+  }
+}

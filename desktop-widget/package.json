@@ -1,0 +1,75 @@
+{
+  "name": "lzhcard-desktop-widget",
+  "version": "1.0.0",
+  "description": "LZHCard 電腦版獨立桌面懸浮翻譯與好友聊天小工具 (Electron Always-on-Top Transparent Widget)",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "start:dev": "electron . --url=http://localhost:3000/?widget=desktop",
+    "pack": "electron-builder --dir",
+    "build:win": "electron-builder --win nsis",
+    "build:mac": "electron-builder --mac dmg zip",
+    "build:linux": "electron-builder --linux AppImage"
+  },
+  "keywords": [
+    "LZHCard",
+    "electron",
+    "floating-widget",
+    "translator",
+    "flashcards"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.lzhcard.desktopwidget",
+    "productName": "LZHCard 桌面懸浮視窗",
+    "asar": true,
+    "directories": {
+      "output": "dist-widget"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "package.json",
+      "README.md"
+    ],
+    "extraResources": [
+      {
+        "from": "../www",
+        "to": "www",
+        "filter": [
+          "**/*",
+          "!public/**"
+        ]
+      }
+    ],
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "LZHCard 桌面翻譯小工具",
+      "deleteAppDataOnUninstall": true
+    },
+    "mac": {
+      "category": "public.app-category.education",
+      "target": [
+        "dmg",
+        "zip"
+      ]
+    },
+    "linux": {
+      "category": "Education",
+      "target": [
+        "AppImage"
+      ]
+    }
+  }
+}

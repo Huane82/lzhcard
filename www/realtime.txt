@@ -1,0 +1,104 @@
+{
+  "rules": {
+    // 1. 使用者基本資料（維護權限角色）
+    "users": {
+      "$uid": {
+        ".read": "auth != null",
+        ".write": "$uid === auth.uid || root.child('users').child(auth.uid).child('role').val() === 'admin' || root.child('users').child(auth.uid).child('isAdmin').val() === true"
+      }
+    },
+
+    // 2. 在線狀態與隱私設定 (Presence)
+    "status": {
+      ".read": "auth != null",
+      "$uid": {
+        // 只能更新自己的在線狀態與隱身設定，管理員可例外覆寫
+        ".write": "$uid === auth.uid || root.child('users').child(auth.uid).child('role').val() === 'admin' || root.child('users').child(auth.uid).child('isAdmin').val() === true"
+      }
+    },
+
+    // 3. 聊天室與訊息安全過濾
+    "chats": {
+      "$chatId": {
+        // 只有該聊天室成員、公開頻道，或是管理員才能讀取/訂閱訊息
+        ".read": "auth != null && ($chatId === 'chat_group_public' || data.child('members/' + auth.uid).exists() || root.child('users/' + auth.uid + '/role').val() === 'admin' || root.child('users/' + auth.uid + '/isAdmin').val() === true)",
+
+        // 只有成員、公開頻道、建立新頻道或管理員可以寫入與更新對話紀錄
+        ".write": "auth != null && ($chatId === 'chat_group_public' || !data.exists() || data.child('members/' + auth.uid).exists() || root.child('users/' + auth.uid + '/role').val() === 'admin' || root.child('users/' + auth.uid + '/isAdmin').val() === true)",
+
+        "messages": {
+          "$msgId": {
+            // 發送訊息時，強制作業者 senderUid 必須等於本人真實 auth.uid，防止冒充他人發言
+            ".validate": "newData.hasChildren(['sender', 'senderUid', 'text', 'time']) && (newData.child('senderUid').val() === auth.uid || newData.child('sender').val() === '系統提示')"
+          }
+        }
+      }
+    },
+
+    // 4. 系統公告（公開催覽，僅管理員可發布/刪除）
+    "announcements": {
+      ".read": true,
+      ".write": "auth != null && (root.child('users/' + auth.uid + '/role').val() === 'admin' || root.child('users/' + auth.uid + '/isAdmin').val() === true)"
+    },
+
+    // 5. 好友申請
+    "friendRequests": {
+      ".read": "auth != null",
+      ".write": "auth != null"
+    },
+
+    // 6. 群組邀請
+    "groupInvites": {
+      ".read": "auth != null",
+      ".write": "auth != null"
+    },
+
+    // 7. 1v1 即時拔河對戰房間 (Duels)
+    "duels": {
+      ".read": "auth != null",
+      ".indexOn": ["createdAt", "status", "updatedAt"],
+      "$roomCode": {
+        ".read": "auth != null",
+        ".write": "auth != null && (!data.exists() || data.child('hostUid').val() === auth.uid || data.child('guestUid').val() === auth.uid || !data.child('guestUid').exists() || data.child('guestUid').val() === '' || root.child('users/' + auth.uid + '/role').val() === 'admin' || root.child('users/' + auth.uid + '/isAdmin').val() === true)"
+      }
+    },
+
+    // 8. 通用競技對戰節點 (Battles)
+    "battles": {
+      ".read": "auth != null",
+      ".indexOn": ["createdAt", "status", "updatedAt"],
+      "$battleId": {
+        ".read": "auth != null",
+        ".write": "auth != null && (!data.exists() || data.child('hostUid').val() === auth.uid || data.child('guestUid').val() === auth.uid || !data.child('guestUid').exists() || data.child('guestUid').val() === '' || root.child('users/' + auth.uid + '/role').val() === 'admin' || root.child('users/' + auth.uid + '/isAdmin').val() === true)"
+      }
+    },
+
+    // 9. 即時配對佇列 (Matchmaking Queue)
+    "matchmakingQueue": {
+      ".read": "auth != null",
+      ".indexOn": ["createdAt", "status", "updatedAt"],
+      "$uid": {
+        ".write": "auth != null && ($uid === auth.uid || !newData.exists() || data.child('matchedRoom').val() == null || root.child('users/' + auth.uid + '/role').val() === 'admin' || root.child('users/' + auth.uid + '/isAdmin').val() === true)"
+      }
+    },
+
+    // 10. 影子競速紀錄 (Ghost Snapshots)
+    "ghostSnapshots": {
+      ".read": "auth != null",
+      ".indexOn": ["createdAt", "status", "updatedAt"],
+      "$snapId": {
+        ".write": "auth != null && (!data.exists() || data.child('uid').val() === auth.uid || root.child('users/' + auth.uid + '/role').val() === 'admin' || root.child('users/' + auth.uid + '/isAdmin').val() === true)"
+      }
+    },
+
+    // 11. 四人共鬥打王副本 (Raids)
+    "raids": {
+      ".read": "auth != null",
+      ".indexOn": ["createdAt", "status", "updatedAt"],
+      "$raidCode": {
+        ".read": "auth != null",
+        ".write": "auth != null && (!data.exists() || data.child('hostUid').val() === auth.uid || data.child('members/' + auth.uid).exists() || data.child('status').val() === 'active' || root.child('users/' + auth.uid + '/role').val() === 'admin' || root.child('users/' + auth.uid + '/isAdmin').val() === true)"
+      }
+    }
+  }
+}

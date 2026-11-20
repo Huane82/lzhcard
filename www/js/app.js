@@ -1,0 +1,2782 @@
+/**
+ * LZHCard - 主程式交互控制器 (FSRS 與自由練習雙軌 + 還原/重置 + i18n + 精準字數同步版)
+ */
+
+/**
+ * 🌐 i18n 安全轉接函式（支援 {key} 動態參數替換，未定義時自動退回預設文字）
+ */
+function tr(key, fallback, params = null) {
+    let text = fallback;
+    if (typeof t === 'function') {
+        const translated = t(key);
+        if (translated && translated !== key) {
+            text = translated;
+        }
+    }
+    if (params && typeof text === 'string') {
+        Object.keys(params).forEach(k => {
+            text = text.replace(new RegExp(`\\{${k}\\}`, 'g'), params[k]);
+        });
+    }
+    return text;
+}
+
+/**
+ * 🌐 取得本地化自由練習等級顯示文字
+ */
+function getLocalizedFreeLevelName(level) {
+    const lv = Math.min(5, Math.max(1, Number(level) || 1));
+    return tr('freeLevelShort', '臨時 Lv.{lv}', { lv });
+}
+
+function getSavedCategories() {
+    try {
+        const saved = localStorage.getItem('lzhcard_selected_categories');
+        if (saved !== null) {
+            const parsed = JSON.parse(saved);
+            if (Array.isArray(parsed)) return parsed;
+        }
+    } catch (e) {}
+    return ['ALL'];
+}
+
+window.selectedCategories = getSavedCategories();
+let currentCard = null;
+let selectedWordIds = new Set();
+let currentTab = 'home';
+let isCardActionLocked = false;
+let isAppLoaderHidden = false;
+let currentLoaderProgress = 15;
+
+// ↩️ 誤按還原堆疊（最多保留最近 10 步評分快照）
+let ratingUndoStack = [];
+const MAX_UNDO_STEPS = 10;
+
+/**
+ * 🆔 確保 wordList 中每一筆單字都擁有唯一且非空的 id（修正匯入/下載字庫全選計數錯誤）
+ */
+function ensureAllWordsHaveUniqueIds() {
+    if (!Array.isArray(wordList)) return false;
+    const seenIds = new Set();
+    const idRemap = new Map();
+    let changed = false;
+    const defaultCat = (typeof t === 'function' && t('defaultCategoryName') !== 'defaultCategoryName')
+        ? t('defaultCategoryName')
+        : '預設字庫';
+
+    for (let i = 0; i < wordList.length; i++) {
+        const item = wordList[i];
+        if (!item || typeof item !== 'object') continue;
+        const rawId = item.id !== undefined && item.id !== null ? String(item.id).trim() : '';
+        const cat = String(item.category || defaultCat).trim() || defaultCat;
+        const expectedDeckId = (typeof generateDeterministicDeckId === 'function')
+            ? generateDeterministicDeckId(cat)
+            : (item.deckId || '');
+        if (expectedDeckId && item.deckId !== expectedDeckId) {
+            item.deckId = expectedDeckId;
+            changed = true;
+        }
+
+        const canUseDet = typeof generateDeterministicCardId === 'function' && item.word && String(item.word).trim();
+        const preferredId = canUseDet
+            ? generateDeterministicCardId(cat, item.word)
+            : (rawId || ('w_' + Date.now() + '_' + i + '_' + Math.random().toString(36).substr(2, 5)));
+
+        let nextId = preferredId;
+        if (seenIds.has(nextId)) {
+            nextId = rawId && !seenIds.has(rawId)
+                ? rawId
+                : ('w_' + Date.now() + '_' + i + '_' + Math.random().toString(36).substr(2, 5));
+        }
+
+        if (rawId !== nextId) {
+            if (rawId) idRemap.set(rawId, nextId);
+            item.id = nextId;
+            changed = true;
+        }
+        seenIds.add(item.id);
+    }
+
+    // 同步轉換或清理 selectedWordIds（避免決定性 ID 升級時遺失當前勾選狀態）
+    if (selectedWordIds.size > 0) {
+        const nextSelected = new Set();
+        for (const oldId of Array.from(selectedWordIds)) {
+            const mapped = idRemap.get(oldId) || oldId;
+            if (seenIds.has(mapped)) {
+                nextSelected.add(mapped);
+            }
+        }
+        selectedWordIds.clear();
+        nextSelected.forEach(nid => selectedWordIds.add(nid));
+    }
+
+    return changed;
+}
+
+function updateUndoButtonUI() {
+    const btn = document.getElementById('undoCardBtn') || document.getElementById('undoRatingBtn');
+    if (!btn) return;
+    const hasHistory = ratingUndoStack.length > 0;
+    btn.disabled = !hasHistory;
+    if (hasHistory) {
+        btn.className = "px-3 py-1.5 rounded-lg bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/40 dark:hover:bg-amber-900/60 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800 font-bold flex items-center space-x-1 transition cursor-pointer";
+    } else {
+        btn.className = "px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-400 border border-slate-200 dark:border-slate-700 font-bold flex items-center space-x-1 transition opacity-50 cursor-not-allowed";
+    }
+}
+
+function setAppLoaderProgress(percent, statusText) {
+    if (isAppLoaderHidden) return;
+    currentLoaderProgress = Math.max(currentLoaderProgress, Math.min(100, percent));
+
+    const bar = document.getElementById('appLoaderProgressBar');
+    const pctText = document.getElementById('appLoaderProgressPercent');
+    const statusEl = document.getElementById('appLoaderStatusText');
+
+    if (bar) bar.style.width = `${currentLoaderProgress}%`;
+    if (pctText) pctText.innerText = `${currentLoaderProgress}%`;
+    if (statusEl && statusText) statusEl.innerText = statusText;
+}
+
+function hideAppLoader() {
+    if (isAppLoaderHidden) return;
+    setAppLoaderProgress(100, tr('appLoaderComplete', '初始化完成！'));
+    isAppLoaderHidden = true;
+
+    const overlay = document.getElementById('appLoadingOverlay');
+    if (!overlay) return;
+
+    setTimeout(() => {
+        overlay.classList.add('opacity-0', 'pointer-events-none');
+        setTimeout(() => {
+            overlay.classList.add('hidden');
+        }, 300);
+    }, 180);
+}
+
+if (window.__appReadyToHideLoader) {
+    hideAppLoader();
+}
+
+setTimeout(hideAppLoader, 5000);
+
+let currentWordListPage = 1;
+let wordListPageSize = Math.max(10, parseInt(localStorage.getItem('lzhcard_word_page_size') || '30', 10) || 30);
+window.currentWordListPage = currentWordListPage;
+window.wordListPageSize = wordListPageSize;
+window._cachedFilteredWords = [];
+
+const MAX_AI_BATCH_LIMIT = 1000;
+
+/**
+ * 🌟 取得單字 7000 單難度分級資訊
+ */
+function getCardDiffInfo(card) {
+    if (!card || typeof card !== 'object') {
+        return { level: 0, label: '冷門單字 (未收錄)', shortLabel: '冷門單字', tag: '冷門', color: 'bg-slate-100 text-slate-700 border-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700', isRare: true };
+    }
+    const explicit = card.diffLevelManual === true ? card.diffLevel : null;
+    if (typeof getWordDifficultyInfo === 'function') {
+        const info = getWordDifficultyInfo(card.word, explicit);
+        card.diffLevel = info.level;
+        return info;
+    }
+    const lv = typeof card.diffLevel === 'number' ? card.diffLevel : 0;
+    return {
+        level: lv,
+        label: lv >= 1 && lv <= 6 ? `7000單 ${lv}級` : '冷門單字 (未收錄)',
+        shortLabel: lv >= 1 && lv <= 6 ? `7000單 ${lv}級` : '冷門單字',
+        tag: lv >= 1 && lv <= 6 ? `${lv}級` : '冷門',
+        color: 'bg-slate-100 text-slate-700 border-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700',
+        isRare: lv === 0
+    };
+}
+
+function getDiffSortRank(card) {
+    const lv = getCardDiffInfo(card).level;
+    return (lv >= 1 && lv <= 6) ? lv : 7;
+}
+
+function showToast(message, type = 'success') {
+    const container = document.getElementById('toast-container');
+    if (!container) return;
+
+    const toast = document.createElement('div');
+    const bgColors = {
+        success: 'bg-emerald-600 text-white',
+        error: 'bg-rose-600 text-white',
+        info: 'bg-brand-600 text-white',
+        warning: 'bg-amber-500 text-white'
+    };
+    const icons = {
+        success: 'fa-circle-check',
+        error: 'fa-circle-xmark',
+        info: 'fa-circle-info',
+        warning: 'fa-triangle-exclamation'
+    };
+
+    toast.className = `pointer-events-auto flex items-center space-x-2.5 px-4 py-3 rounded-xl shadow-xl font-semibold text-xs transition-all duration-300 transform translate-y-2 opacity-0 ${bgColors[type] || bgColors.info}`;
+    const iconEl = document.createElement('i');
+    iconEl.className = `fa-solid ${icons[type] || icons.info} text-sm`;
+    const msgEl = document.createElement('span');
+    msgEl.textContent = message === null || message === undefined ? '' : String(message);
+    toast.appendChild(iconEl);
+    toast.appendChild(msgEl);
+
+    container.appendChild(toast);
+
+    setTimeout(() => {
+        toast.classList.remove('translate-y-2', 'opacity-0');
+    }, 10);
+
+    setTimeout(() => {
+        toast.classList.add('opacity-0', 'translate-y-2');
+        setTimeout(() => toast.remove(), 300);
+    }, 3000);
+}
+
+function updateUserCoinsUI() {
+    const el = document.getElementById('userCoinsDisplay');
+    if (el) {
+        const coins = (window.userData && typeof window.userData.coins === 'number') ? window.userData.coins : 0;
+        el.innerText = coins;
+    }
+}
+
+function getAllCategories() {
+    const defaultCatName = tr('defaultCategoryName', '預設字庫');
+    if (!wordList || !Array.isArray(wordList)) return [defaultCatName];
+    const categories = new Set();
+    wordList.forEach(w => {
+        const cat = (w && w.category && w.category.trim() !== '') ? w.category.trim() : defaultCatName;
+        categories.add(cat);
+    });
+    if (categories.size === 0) categories.add(defaultCatName);
+    return Array.from(categories);
+}
+
+const CATEGORY_SELECTOR_MAP = {
+    quickAdd: { selectId: 'quickAddCategorySelect', inputId: 'quickAddCategoryInput' },
+    form: { selectId: 'formCategorySelect', inputId: 'formCategory' },
+    batch: { selectId: 'batchTargetCategorySelect', inputId: 'batchTargetCategory' }
+};
+
+function refreshCategoryDropdownWithNew(selectId, inputId) {
+    const select = document.getElementById(selectId);
+    const input = document.getElementById(inputId);
+    if (!select) return;
+
+    const prevValue = select.value;
+    const cats = getAllCategories();
+    const defaultCatName = tr('defaultCategoryName', '預設字庫');
+    const unitText = tr('unitWord', '字');
+    const createNewLabel = tr('optCreateNewDeck', '➕ 創建新字庫...');
+
+    const escapeHtml = (str) => String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+
+    let optionsHtml = cats.map(c => {
+        const count = (typeof wordList !== 'undefined' && Array.isArray(wordList))
+            ? wordList.filter(w => ((w.category && w.category.trim() !== '') ? w.category.trim() : defaultCatName) === c).length
+            : 0;
+        return `<option value="${escapeHtml(c)}">${escapeHtml(c)} (${count} ${unitText})</option>`;
+    }).join('');
+
+    optionsHtml += `<option value="__NEW_CATEGORY__">${createNewLabel}</option>`;
+    select.innerHTML = optionsHtml;
+
+    if (prevValue === '__NEW_CATEGORY__') {
+        select.value = '__NEW_CATEGORY__';
+        if (input) input.classList.remove('hidden');
+    } else if (prevValue && cats.includes(prevValue)) {
+        select.value = prevValue;
+        if (input) {
+            input.value = prevValue;
+            input.classList.add('hidden');
+        }
+    } else if (cats.length > 0) {
+        select.value = cats[0];
+        if (input) {
+            input.value = cats[0];
+            input.classList.add('hidden');
+        }
+    }
+}
+
+function handleCategorySelectWithNew(type, autoFocus = true) {
+    const cfg = CATEGORY_SELECTOR_MAP[type];
+    if (!cfg) return;
+    const select = document.getElementById(cfg.selectId);
+    const input = document.getElementById(cfg.inputId);
+    if (!select || !input) return;
+
+    if (select.value === '__NEW_CATEGORY__') {
+        input.classList.remove('hidden');
+        input.value = '';
+        if (autoFocus) input.focus();
+    } else {
+        input.classList.add('hidden');
+        input.value = select.value;
+    }
+}
+
+function setCategorySelectorValue(type, categoryName) {
+    const cfg = CATEGORY_SELECTOR_MAP[type];
+    if (!cfg) return;
+    refreshCategoryDropdownWithNew(cfg.selectId, cfg.inputId);
+
+    const select = document.getElementById(cfg.selectId);
+    const input = document.getElementById(cfg.inputId);
+    if (!select || !input) return;
+
+    const target = (categoryName || '').trim();
+    const hasOption = Array.from(select.options).some(
+        opt => opt.value !== '__NEW_CATEGORY__' && opt.value === target
+    );
+
+    if (hasOption) {
+        select.value = target;
+        input.value = target;
+        input.classList.add('hidden');
+    } else {
+        select.value = '__NEW_CATEGORY__';
+        input.value = target;
+        input.classList.remove('hidden');
+    }
+}
+
+function getCategorySelectorValue(type) {
+    const cfg = CATEGORY_SELECTOR_MAP[type];
+    if (!cfg) return { isNew: false, value: '' };
+    const select = document.getElementById(cfg.selectId);
+    const input = document.getElementById(cfg.inputId);
+    if (!select || !input) return { isNew: false, value: '' };
+
+    if (select.value === '__NEW_CATEGORY__') {
+        return { isNew: true, value: input.value.trim() };
+    }
+    return { isNew: false, value: select.value.trim() };
+}
+
+document.addEventListener('click', (e) => {
+    const selector = document.getElementById('headerCategorySelector');
+    const menu = document.getElementById('categoryDropdownMenu');
+    if (selector && menu && !selector.contains(e.target)) {
+        menu.classList.add('hidden');
+    }
+});
+
+function toggleCategoryDropdown(e) {
+    if (e) e.stopPropagation();
+    const menu = document.getElementById('categoryDropdownMenu');
+    if (menu) menu.classList.toggle('hidden');
+}
+
+function updateCategorySelects() {
+    const cats = getAllCategories();
+    const catAllText = tr('catAll', '全部字庫');
+    const defaultCatName = tr('defaultCategoryName', '預設字庫');
+    const noCatText = tr('noCategorySelected', '未選取字庫');
+    const selectedPrefix = tr('selectedPrefix', '已選');
+    const unitDeck = tr('unitDeck', '個字庫');
+    const unitText = tr('unitWord', '字');
+
+    const totalWordsCount = Array.isArray(wordList) ? wordList.length : 0;
+    const catCountMap = {};
+    if (Array.isArray(wordList)) {
+        for (let i = 0; i < wordList.length; i++) {
+            const c = (wordList[i].category && wordList[i].category.trim() !== '')
+                ? wordList[i].category.trim()
+                : defaultCatName;
+            catCountMap[c] = (catCountMap[c] || 0) + 1;
+        }
+    }
+
+    let activeCats = Array.isArray(window.selectedCategories) ? [...window.selectedCategories] : ['ALL'];
+
+    const hadAll = activeCats.includes('ALL');
+    const prevSubCats = activeCats.filter(c => c !== 'ALL');
+    const validSubCats = prevSubCats.filter(c => cats.includes(c));
+
+    if (hadAll) {
+        if (validSubCats.length !== prevSubCats.length) {
+            activeCats = ['ALL', ...cats];
+            window.selectedCategories = activeCats;
+            if (typeof saveSelectedCategoriesToCloud === 'function') {
+                saveSelectedCategoriesToCloud(activeCats);
+            }
+        }
+    } else if (validSubCats.length !== prevSubCats.length) {
+        activeCats = validSubCats.length > 0 ? validSubCats : ['ALL'];
+        window.selectedCategories = activeCats;
+        if (typeof saveSelectedCategoriesToCloud === 'function') {
+            saveSelectedCategoriesToCloud(activeCats);
+        }
+    }
+
+    const menu = document.getElementById('categoryDropdownMenu');
+    const btnText = document.getElementById('categoryDropdownBtnText');
+
+    const isAllChecked = activeCats.includes('ALL') || (cats.length > 0 && cats.every(c => activeCats.includes(c)));
+    const selectedSubCatsCount = isAllChecked ? cats.length : validSubCats.length;
+
+    const escapeHtml = (str) => String(str ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+
+    if (menu) {
+        let html = `
+            <label class="flex items-center space-x-2 px-2.5 py-1.5 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700 cursor-pointer font-bold text-slate-800 dark:text-slate-100">
+                <input type="checkbox" value="ALL" ${isAllChecked ? 'checked' : ''} onchange="handleCategoryCheckboxChange(this)" class="w-4 h-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500">
+                <span>${escapeHtml(catAllText)} (${totalWordsCount} ${escapeHtml(unitText)})</span>
+            </label>
+            <div class="border-t border-slate-100 dark:border-slate-700 my-1"></div>
+        `;
+
+        cats.forEach(c => {
+            const count = catCountMap[c] || 0;
+            const isChecked = isAllChecked || activeCats.includes(c);
+            html += `
+                <label class="flex items-center space-x-2 px-2.5 py-1.5 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700 cursor-pointer text-slate-700 dark:text-slate-200">
+                    <input type="checkbox" value="${escapeHtml(c)}" ${isChecked ? 'checked' : ''} onchange="handleCategoryCheckboxChange(this)" class="w-4 h-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500">
+                    <span class="truncate">${escapeHtml(c)} (${count} ${escapeHtml(unitText)})</span>
+                </label>
+            `;
+        });
+        menu.innerHTML = html;
+    }
+
+    if (btnText) {
+        if (isAllChecked) {
+            btnText.innerText = `${catAllText} (${totalWordsCount})`;
+        } else if (selectedSubCatsCount === 0) {
+            btnText.innerText = `${noCatText} (0)`;
+        } else if (selectedSubCatsCount === 1) {
+            const singleCat = validSubCats[0];
+            btnText.innerText = `${singleCat} (${catCountMap[singleCat] || 0})`;
+        } else {
+            const selectedWordsTotal = validSubCats.reduce((sum, c) => sum + (catCountMap[c] || 0), 0);
+            btnText.innerText = `${selectedPrefix} ${selectedSubCatsCount} ${unitDeck} (${selectedWordsTotal})`;
+        }
+    }
+
+    const exportSelect = document.getElementById('exportCategorySelect');
+    if (exportSelect) {
+        const exportAllText = tr('optExportAll', '包含全部字庫');
+        exportSelect.innerHTML = `<option value="ALL">${escapeHtml(exportAllText)} (${totalWordsCount})</option>` + 
+            cats.map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)} (${catCountMap[c] || 0})</option>`).join('');
+    }
+
+    const splitSelect = document.getElementById('splitTargetCategorySelect');
+    if (splitSelect) {
+        const prevSplitVal = splitSelect.value;
+        const allDecksOption = `<option value="__ALL__">📚 ${escapeHtml(catAllText)} (${totalWordsCount} ${escapeHtml(unitText)})</option>`;
+        splitSelect.innerHTML = allDecksOption + cats.map(c => {
+            const count = catCountMap[c] || 0;
+            return `<option value="${escapeHtml(c)}">${escapeHtml(c)} (${count} ${escapeHtml(unitText)})</option>`;
+        }).join('');
+        if (prevSplitVal && (prevSplitVal === '__ALL__' || cats.includes(prevSplitVal))) {
+            splitSelect.value = prevSplitVal;
+        } else if (!isAllChecked && validSubCats.length === 1) {
+            splitSelect.value = validSubCats[0];
+        } else if (cats.length > 0) {
+            splitSelect.value = cats[0];
+        }
+    }
+}
+
+function handleCategoryCheckboxChange(checkbox) {
+    const val = checkbox.value;
+    const cats = getAllCategories();
+    let activeCats = Array.isArray(window.selectedCategories) ? [...window.selectedCategories] : [];
+
+    const wasAll = activeCats.includes('ALL');
+    let currentSubCats = wasAll ? [...cats] : activeCats.filter(c => c !== 'ALL' && cats.includes(c));
+
+    if (val === 'ALL') {
+        if (checkbox.checked) {
+            activeCats = ['ALL', ...cats];
+        } else {
+            activeCats = [];
+        }
+    } else {
+        if (checkbox.checked) {
+            if (!currentSubCats.includes(val)) currentSubCats.push(val);
+            if (cats.length > 0 && cats.every(c => currentSubCats.includes(c))) {
+                activeCats = ['ALL', ...currentSubCats];
+            } else {
+                activeCats = [...currentSubCats];
+            }
+        } else {
+            currentSubCats = currentSubCats.filter(c => c !== val);
+            activeCats = [...currentSubCats];
+        }
+    }
+
+    window.selectedCategories = activeCats;
+    if (typeof saveSelectedCategoriesToCloud === 'function') {
+        saveSelectedCategoriesToCloud(activeCats);
+    }
+
+    selectedWordIds.clear();
+    ratingUndoStack = [];
+    updateUndoButtonUI();
+    currentWordListPage = 1;
+    window.currentWordListPage = 1;
+    updateUI();
+    nextCard(true);
+}
+
+window.addEventListener('DOMContentLoaded', async () => {
+    if (typeof loadStorage === 'function') {
+        await loadStorage();
+    }
+    updateUserCoinsUI();
+    updateUndoButtonUI();
+
+    if (typeof firebase !== 'undefined' && firebase.auth) {
+        firebase.auth().onAuthStateChanged((user) => {
+            if (user && typeof initChatRealtimeListeners === 'function') {
+                initChatRealtimeListeners();
+            }
+        });
+    }
+});
+
+function updateStudyQueueUI() {
+    if (typeof refreshFSRSUIBadges === 'function') {
+        refreshFSRSUIBadges();
+    }
+
+    // 同步更新輪播頁籤的排程 / 自由加練切換按鈕多語系狀態
+    const sessionBadge = document.getElementById('fsrsSessionBadge');
+    if (sessionBadge) {
+        const isFree = isFreePracticeActive();
+        const spanEl = sessionBadge.querySelector('span');
+        if (isFree) {
+            sessionBadge.className = 'px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-50 hover:bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 transition cursor-pointer';
+            if (spanEl) {
+                spanEl.setAttribute('data-i18n', 'fsrsFreeBadge');
+                spanEl.innerText = tr('fsrsFreeBadge', '自由加練中');
+            }
+        } else {
+            sessionBadge.className = 'px-2.5 py-1 rounded-full text-[11px] font-bold bg-brand-50 hover:bg-brand-100 text-brand-600 dark:bg-brand-950/60 dark:text-brand-300 border border-brand-200 dark:border-brand-800 transition cursor-pointer';
+            if (spanEl) {
+                spanEl.setAttribute('data-i18n', 'fsrsScheduleBadge');
+                spanEl.innerText = tr('fsrsScheduleBadge', 'FSRS 排程');
+            }
+        }
+    }
+
+    if (typeof getStudyQueueSummary !== 'function') return;
+    const summary = getStudyQueueSummary();
+    const badge = document.getElementById('studyQueueBadge');
+    if (!badge) return;
+
+    if (summary.totalCount === 0) {
+        badge.classList.add('hidden');
+        return;
+    }
+
+    badge.classList.remove('hidden');
+    if (summary.isFreePractice) {
+        badge.className = 'inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800';
+        badge.innerHTML = `<i class="fa-solid fa-circle-check"></i><span>${tr('studyQueueDone', '今日進度已完成（自由加練模式）')}</span>`;
+    } else {
+        badge.className = 'inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-amber-50 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-200 dark:border-amber-800';
+        badge.innerHTML = `<i class="fa-solid fa-clock"></i><span>${tr('studyQueueSummary', '待複習 {due} · 新字 {newCount}', { due: summary.dueCount, newCount: summary.newCount })}</span>`;
+    }
+}
+
+function updateUI() {
+    ensureAllWordsHaveUniqueIds();
+
+    const defaultCatName = tr('defaultCategoryName', '預設字庫');
+    const activeCats = window.selectedCategories || [];
+    const isAll = activeCats.includes("ALL");
+    const activeSet = isAll ? null : new Set(activeCats);
+
+    let count = 0;
+    if (Array.isArray(wordList)) {
+        if (isAll) {
+            count = wordList.length;
+        } else {
+            for (let i = 0; i < wordList.length; i++) {
+                const itemCat = (wordList[i].category && wordList[i].category.trim() !== '')
+                    ? wordList[i].category.trim()
+                    : defaultCatName;
+                if (activeSet.has(itemCat)) {
+                    count++;
+                }
+            }
+        }
+    }
+
+    const totalWordCountElem = document.getElementById('totalWordCount');
+    if (totalWordCountElem) totalWordCountElem.innerText = Array.isArray(wordList) ? wordList.length : 0;
+
+    const cardCountDisplayElem = document.getElementById('cardCountDisplay');
+    if (cardCountDisplayElem) cardCountDisplayElem.innerText = count;
+
+    if (typeof applyLanguageUI === 'function') applyLanguageUI();
+    if (typeof updateCategorySelects === 'function') updateCategorySelects();
+
+    updateEmptyNoticeState(count);
+    updateStudyQueueUI();
+    updateUserCoinsUI();
+    updateUndoButtonUI();
+
+    if (currentTab === 'list') {
+        renderWordList(false);
+    } else {
+        updateBatchBadgeUI();
+    }
+    if (currentTab === 'stats' && typeof renderStats === 'function') renderStats();
+    if (typeof GameEngine !== 'undefined' && typeof GameEngine.renderHomePortal === 'function') {
+        GameEngine.renderHomePortal();
+    }
+}
+
+function updateEmptyNoticeState(precomputedCount) {
+    const emptyNotice = document.getElementById('emptyNotice');
+    if (!emptyNotice) return;
+
+    const showOnTabs = ['home', 'list', 'flashcard', 'quiz'];
+    if (!showOnTabs.includes(currentTab)) {
+        emptyNotice.classList.add('hidden');
+        return;
+    }
+
+    let isEmpty = true;
+    if (typeof precomputedCount === 'number') {
+        isEmpty = precomputedCount === 0;
+    } else if (typeof wordList !== 'undefined' && Array.isArray(wordList) && wordList.length > 0) {
+        const defaultCatName = tr('defaultCategoryName', '預設字庫');
+        const activeCats = window.selectedCategories || [];
+        if (activeCats.includes("ALL")) {
+            isEmpty = false;
+        } else {
+            const activeSet = new Set(activeCats);
+            isEmpty = !wordList.some(w => {
+                const itemCat = (w.category && w.category.trim() !== '') ? w.category.trim() : defaultCatName;
+                return activeSet.has(itemCat);
+            });
+        }
+    }
+
+    if (isEmpty) {
+        emptyNotice.classList.remove('hidden');
+    } else {
+        emptyNotice.classList.add('hidden');
+    }
+}
+
+/**
+ * ⚡ 判斷目前是否處於「自由練習 / 考前臨時熟悉模式」
+ */
+function isFreePracticeActive() {
+    if (window.isManualFreePractice) return true;
+    if (!Array.isArray(wordList) || wordList.length === 0) return false;
+
+    const activePool = (typeof getDeduplicatedActiveWords === 'function')
+        ? getDeduplicatedActiveWords()
+        : wordList.filter(w => {
+            const activeCats = window.selectedCategories || ['ALL'];
+            const defaultCatName = tr('defaultCategoryName', '預設字庫');
+            const itemCat = (w.category && w.category.trim() !== '') ? w.category.trim() : defaultCatName;
+            return activeCats.includes('ALL') || activeCats.includes(itemCat);
+        });
+
+    if (activePool.length === 0) return false;
+    const now = Date.now();
+    const dueCount = activePool.filter(w => w.state && w.state !== 'new' && (w.nextReview || 0) <= now).length;
+    const newCount = activePool.filter(w => !w.state || w.state === 'new').length;
+    return dueCount === 0 && newCount === 0;
+}
+
+/**
+ * 🃏 抽取或更新字卡 (force = true 代表使用者主動換卡)
+ */
+function nextCard(force = false) {
+    const flashcardElem = document.getElementById('flashcard');
+    const defaultCatName = tr('defaultCategoryName', '預設字庫');
+    const activeCats = window.selectedCategories || ['ALL'];
+    const isFreeMode = isFreePracticeActive();
+
+    let shouldDrawNew = force || !currentCard;
+
+    if (!shouldDrawNew && currentCard && Array.isArray(wordList)) {
+        const targetWord = (currentCard.word || '').trim().toLowerCase();
+        const matching = wordList.filter(w => {
+            const matchWord = (w.word || '').trim().toLowerCase() === targetWord;
+            const itemCat = (w.category && w.category.trim() !== '') ? w.category.trim() : defaultCatName;
+            const matchCat = activeCats.includes("ALL") || activeCats.includes(itemCat);
+            return matchWord && matchCat;
+        });
+
+        if (matching.length > 0) {
+            let best = matching[0];
+            matching.forEach(c => {
+                if (typeof compareCardProgress === 'function' && compareCardProgress(c, best) > 0) {
+                    best = c;
+                }
+            });
+            currentCard = best;
+        } else {
+            shouldDrawNew = true;
+        }
+    }
+
+    if (shouldDrawNew) {
+        if (flashcardElem) {
+            flashcardElem.classList.add('no-transition');
+            flashcardElem.classList.remove('rotate-y-180');
+            void flashcardElem.offsetHeight;
+            flashcardElem.classList.remove('no-transition');
+        }
+        currentCard = (isFreeMode && typeof getNextCardFreePractice === 'function')
+            ? getNextCardFreePractice()
+            : getNextCardSpacedRepetition();
+    }
+
+    updateStudyQueueUI();
+
+    if (!currentCard) {
+        if (typeof stopSpeakingWord === 'function') stopSpeakingWord();
+        if (document.getElementById('cardWord')) document.getElementById('cardWord').innerText = tr('noWordAvailable', '尚無單字');
+        if (document.getElementById('cardPhonetic')) document.getElementById('cardPhonetic').innerText = "/---/";
+        if (document.getElementById('cardPhoneticBack')) document.getElementById('cardPhoneticBack').innerText = "";
+        if (document.getElementById('cardPosFront')) document.getElementById('cardPosFront').innerText = "EMPTY";
+        if (document.getElementById('cardPosBack')) document.getElementById('cardPosBack').innerText = "EMPTY";
+        if (document.getElementById('cardMeaning')) document.getElementById('cardMeaning').innerText = tr('selectOtherDeck', '請新增單字或切換字庫');
+        if (document.getElementById('cardSentence')) document.getElementById('cardSentence').innerText = `"${tr('selectOtherDeck', '請新增單字或切換字庫')}"`;
+        if (document.getElementById('cardTranslation')) document.getElementById('cardTranslation').innerText = "";
+        renderFrontContextSentence(null);
+        return;
+    }
+
+    if (typeof migrateCardFSRS === 'function') {
+        migrateCardFSRS(currentCard);
+    }
+
+    const fsrsLvNum = currentCard.level || 1;
+    const freeLvNum = currentCard.freeLevel || 1;
+    const fsrsLvInfo = getLevelInfo(fsrsLvNum);
+    const rawFreeInfo = (typeof getFreeLevelInfo === 'function')
+        ? getFreeLevelInfo(freeLvNum)
+        : { color: 'bg-slate-100 text-slate-600 border-slate-200' };
+    const freeLvInfo = {
+        name: getLocalizedFreeLevelName(freeLvNum),
+        color: rawFreeInfo.color
+    };
+
+    const primaryLvInfo = isFreeMode ? freeLvInfo : fsrsLvInfo;
+    const secondaryLvInfo = isFreeMode
+        ? { name: tr('fsrsLevelShort', 'FSRS Lv.{lv}', { lv: fsrsLvNum }), color: fsrsLvInfo.color }
+        : freeLvInfo;
+
+    const streak = isFreeMode ? (currentCard.freeStreak || 0) : (currentCard.knowStreak || 0);
+    const intervals = (isFreeMode && typeof previewFreePracticeTransitions === 'function')
+        ? previewFreePracticeTransitions(currentCard)
+        : ((typeof previewNextIntervals === 'function')
+            ? previewNextIntervals(currentCard)
+            : {
+                1: tr('fsrsInterval10m', '10 分鐘後'),
+                2: tr('fsrsInterval10m', '10 分鐘後'),
+                3: tr('fsrsInterval10m', '10 分鐘後'),
+                4: tr('fsrsInterval4d', '4 天後')
+            });
+
+    const streakTextElem = document.getElementById('knowStreakText');
+    if (streakTextElem) {
+        if (isFreeMode) {
+            if ((Number(currentCard.freeLevel) || 1) === 1) {
+                streakTextElem.classList.remove('hidden');
+                streakTextElem.innerText = `(${Number(currentCard.freeStreak) || 0}/2)`;
+            } else {
+                streakTextElem.classList.add('hidden');
+            }
+        } else {
+            if (currentCard.state === 'learning' || currentCard.state === 'new') {
+                streakTextElem.classList.remove('hidden');
+                streakTextElem.innerText = `(${Number(currentCard.knowStreak) || 0}/2)`;
+            } else {
+                streakTextElem.classList.add('hidden');
+            }
+        }
+    }
+
+    [1, 2, 3, 4].forEach(rating => {
+        const hintEl = document.getElementById(`intervalHint${rating}`) || document.getElementById(`fsrsPreview${rating}`);
+        if (hintEl) hintEl.innerText = intervals[rating] || '';
+    });
+
+    const memoryMetaEl = document.getElementById('cardMemoryMeta');
+    if (memoryMetaEl) {
+        const lapses = currentCard.lapses || 0;
+        if (lapses >= 2) {
+            memoryMetaEl.innerText = tr('cardLapseBadge', '易忘 ×{count}', { count: lapses });
+            memoryMetaEl.classList.remove('hidden');
+        } else if (currentCard.state === 'review' && currentCard.stability >= 1) {
+            memoryMetaEl.innerText = tr('cardStabilityBadge', '記憶穩定 {days}天', { days: Math.round(currentCard.stability) });
+            memoryMetaEl.classList.remove('hidden');
+        } else {
+            memoryMetaEl.classList.add('hidden');
+        }
+    }
+
+    const displayMode = localStorage.getItem('lzhcard_display_mode') || 'target_front';
+    const wordText = currentCard.word || '';
+    const meaningText = currentCard.meaning || '';
+
+    const frontWordElem = document.getElementById('cardWord');
+    const backMeaningElem = document.getElementById('cardMeaning');
+
+    if (displayMode === 'native_front') {
+        if (frontWordElem) frontWordElem.innerText = meaningText || tr('noMeaning', '未設定釋義');
+        if (backMeaningElem) backMeaningElem.innerText = wordText;
+    } else if (displayMode === 'both_front') {
+        if (frontWordElem) {
+            frontWordElem.textContent = wordText;
+            const subMeaning = document.createElement('div');
+            subMeaning.className = 'text-xl sm:text-2xl font-medium text-amber-500 dark:text-amber-400 mt-2';
+            subMeaning.textContent = meaningText;
+            frontWordElem.appendChild(subMeaning);
+        }
+        if (backMeaningElem) backMeaningElem.innerText = `${wordText} - ${meaningText}`;
+    } else {
+        if (frontWordElem) frontWordElem.innerText = wordText;
+        if (backMeaningElem) backMeaningElem.innerText = meaningText;
+    }
+
+    const phoneticPos = localStorage.getItem('lzhcard_phonetic_pos') || 'front';
+    const frontPhonetic = document.getElementById('cardPhonetic');
+    const backPhonetic = document.getElementById('cardPhoneticBack');
+
+    if (phoneticPos === 'back') {
+        if (frontPhonetic) frontPhonetic.innerText = '';
+        if (backPhonetic) backPhonetic.innerText = currentCard.phonetic ? `[ ${currentCard.phonetic} ]` : '';
+    } else {
+        if (frontPhonetic) frontPhonetic.innerText = currentCard.phonetic || '/---/';
+        if (backPhonetic) backPhonetic.innerText = '';
+    }
+
+    const syncSecondaryBadge = (anchorEl, badgeId, info) => {
+        if (!anchorEl || !anchorEl.parentNode) return;
+        let altEl = document.getElementById(badgeId);
+        if (!altEl) {
+            altEl = document.createElement('span');
+            altEl.id = badgeId;
+            anchorEl.insertAdjacentElement('afterend', altEl);
+        }
+        altEl.innerText = info.name;
+        altEl.className = `ml-1.5 px-2 py-0.5 rounded-full text-[11px] font-bold border opacity-90 ${info.color}`;
+    };
+
+    // 📁 同步字卡正面與背面所屬字庫標籤
+    const currentCatText = (currentCard.category && currentCard.category.trim() !== '')
+        ? currentCard.category.trim()
+        : defaultCatName;
+
+    const catFrontText = document.getElementById('cardCategoryTextFront');
+    if (catFrontText) catFrontText.innerText = currentCatText;
+    const catFrontBadge = document.getElementById('cardCategoryFront');
+    if (catFrontBadge) catFrontBadge.title = tr('deckLabel', '字庫: {cat}', { cat: currentCatText });
+
+    const catBackText = document.getElementById('cardCategoryTextBack');
+    if (catBackText) catBackText.innerText = currentCatText;
+    const catBackBadge = document.getElementById('cardCategoryBack');
+    if (catBackBadge) catBackBadge.title = tr('deckLabel', '字庫: {cat}', { cat: currentCatText });
+
+    if (document.getElementById('cardPosFront')) document.getElementById('cardPosFront').innerText = currentCard.pos || 'N/A';
+    
+    const levelFront = document.getElementById('cardLevelFront');
+    if (levelFront) {
+        levelFront.innerText = primaryLvInfo.name;
+        levelFront.className = `px-2.5 py-1 rounded-full text-xs font-bold border ${primaryLvInfo.color}`;
+        syncSecondaryBadge(levelFront, 'cardAltLevelFront', secondaryLvInfo);
+    }
+
+    if (document.getElementById('cardPosBack')) document.getElementById('cardPosBack').innerText = currentCard.pos || 'N/A';
+    const levelBack = document.getElementById('cardLevelBack');
+    if (levelBack) {
+        levelBack.innerText = primaryLvInfo.name;
+        levelBack.className = `px-2.5 py-1 rounded-full text-xs font-bold border ${primaryLvInfo.color}`;
+        syncSecondaryBadge(levelBack, 'cardAltLevelBack', secondaryLvInfo);
+    }
+
+    // 🌟 同步字卡正面與背面 7000 單難度等級徽章
+    const diffInfo = getCardDiffInfo(currentCard);
+    const diffBadgeFront = document.getElementById('cardDiffBadgeFront');
+    if (diffBadgeFront) {
+        diffBadgeFront.innerText = diffInfo.shortLabel;
+        diffBadgeFront.title = diffInfo.label;
+        diffBadgeFront.className = `px-2 py-0.5 rounded-full text-[11px] font-bold border ${diffInfo.color}`;
+    }
+    const diffBadgeBack = document.getElementById('cardDiffBadgeBack');
+    if (diffBadgeBack) {
+        diffBadgeBack.innerText = diffInfo.shortLabel;
+        diffBadgeBack.title = diffInfo.label;
+        diffBadgeBack.className = `px-2 py-0.5 rounded-full text-[11px] font-bold border ${diffInfo.color}`;
+    }
+
+    if (document.getElementById('cardSentence')) document.getElementById('cardSentence').innerText = currentCard.sentence ? `"${currentCard.sentence}"` : `"${tr('noSentence', '暫無例句')}"`;
+    if (document.getElementById('cardTranslation')) document.getElementById('cardTranslation').innerText = currentCard.translation || '';
+
+    // 📖 語境推理模式：依設定安全於字卡正面顯示例句（絕不顯示翻譯）
+    renderFrontContextSentence(currentCard);
+
+    if (typeof refreshFSRSUIBadges === 'function') {
+        refreshFSRSUIBadges();
+    }
+
+    if (typeof GameEngine !== 'undefined' && typeof GameEngine.renderFlashcardHud === 'function') {
+        GameEngine.renderFlashcardHud(currentCard);
+    }
+
+    // 🔊 切換至新單字卡時，若開啟自動朗讀且正處於學習畫面，安全觸發語音播放
+    triggerAutoPlayCardAudio(currentCard, shouldDrawNew);
+}
+
+function escapeCardHtml(str) {
+    if (str === null || str === undefined) return '';
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function escapeFrontSentenceRegex(str) {
+    return String(str).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function isUsableFrontSentence(sentence) {
+    if (!sentence || typeof sentence !== 'string') return false;
+    const trimmed = sentence.trim();
+    if (!trimmed) return false;
+    const lower = trimmed.toLowerCase();
+    const placeholders = ['無例句', '暫無例句', '尚無例句', 'no sentence', 'none', 'n/a', '-', '--', '---', 'pending', '解析中', '自動解析中'];
+    if (placeholders.includes(lower)) return false;
+    if (lower.includes('暫無例句') || lower.includes('無例句') || lower.includes('no sentence')) return false;
+    return true;
+}
+
+function buildHighlightedFrontSentenceHtml(sentence, targetWord) {
+    const rawSentence = String(sentence || '').trim();
+    if (!rawSentence) return '';
+    const cleanWord = String(targetWord || '').trim();
+    if (!cleanWord) return escapeCardHtml(rawSentence);
+
+    const isLatin = /^[A-Za-z][A-Za-z0-9\-'\s]*$/.test(cleanWord);
+    let pattern = '';
+    if (isLatin && !cleanWord.includes(' ')) {
+        const base = cleanWord.toLowerCase();
+        const forms = [escapeFrontSentenceRegex(base)];
+        if (base.endsWith('e') && base.length > 2) {
+            const stem = escapeFrontSentenceRegex(base.slice(0, -1));
+            forms.push(`${stem}(?:es|ed|ing|er|est|d|s)`);
+        } else if (base.endsWith('y') && base.length > 2) {
+            const stem = escapeFrontSentenceRegex(base.slice(0, -1));
+            forms.push(`${stem}(?:ies|ied|ier|iest|ying)`);
+        }
+        forms.push(`${escapeFrontSentenceRegex(base)}(?:s|es|ed|d|ing|er|est|ly)`);
+        pattern = `\\b(?:${forms.join('|')})\\b`;
+    } else if (isLatin) {
+        pattern = `\\b${escapeFrontSentenceRegex(cleanWord)}\\b`;
+    } else {
+        pattern = escapeFrontSentenceRegex(cleanWord);
+    }
+
+    let regex = null;
+    try {
+        regex = new RegExp(pattern, 'gi');
+    } catch (e) {
+        return escapeCardHtml(rawSentence);
+    }
+
+    let html = '';
+    let lastIndex = 0;
+    let match;
+    while ((match = regex.exec(rawSentence)) !== null) {
+        if (match[0].length === 0) {
+            regex.lastIndex += 1;
+            continue;
+        }
+        if (match.index > lastIndex) {
+            html += escapeCardHtml(rawSentence.slice(lastIndex, match.index));
+        }
+        html += `<mark class="bg-amber-200/90 dark:bg-amber-500/35 text-amber-900 dark:text-amber-200 px-1 rounded font-bold not-italic">${escapeCardHtml(match[0])}</mark>`;
+        lastIndex = regex.lastIndex;
+    }
+    if (lastIndex < rawSentence.length) {
+        html += escapeCardHtml(rawSentence.slice(lastIndex));
+    }
+    return html || escapeCardHtml(rawSentence);
+}
+
+function renderFrontContextSentence(card) {
+    const box = document.getElementById('cardFrontSentenceBox');
+    const textEl = document.getElementById('cardFrontSentence');
+    if (!box || !textEl) return false;
+
+    let enabled = false;
+    try {
+        enabled = localStorage.getItem('lzhcard_show_sentence_front') === 'true';
+    } catch (e) {}
+
+    if (!enabled || !card || !isUsableFrontSentence(card.sentence)) {
+        box.classList.add('hidden');
+        textEl.textContent = '';
+        return false;
+    }
+
+    textEl.innerHTML = `"${buildHighlightedFrontSentenceHtml(card.sentence, card.word)}"`;
+    box.classList.remove('hidden');
+    return true;
+}
+
+if (typeof window !== 'undefined') {
+    window.isUsableFrontSentence = isUsableFrontSentence;
+    window.buildHighlightedFrontSentenceHtml = buildHighlightedFrontSentenceHtml;
+    window.renderFrontContextSentence = renderFrontContextSentence;
+}
+
+/**
+ * 📸 評分前建立單字記憶狀態快照（支援誤按還原）
+ */
+function pushRatingSnapshot(card) {
+    if (!card || !Array.isArray(wordList)) return;
+    const normWord = (card.word || '').trim().toLowerCase();
+    const affectedCards = normWord
+        ? wordList.filter(w => (w.word || '').trim().toLowerCase() === normWord)
+        : [card];
+
+    const records = affectedCards.map(w => ({
+        id: w.id,
+        level: w.level,
+        knowStreak: w.knowStreak,
+        state: w.state,
+        stability: w.stability,
+        difficulty: w.difficulty,
+        reps: w.reps,
+        lapses: w.lapses,
+        lastReview: w.lastReview,
+        nextReview: w.nextReview,
+        updatedAt: w.updatedAt,
+        freeLevel: w.freeLevel,
+        freeStreak: w.freeStreak
+    }));
+
+    ratingUndoStack.push({
+        cardId: card.id,
+        word: card.word,
+        records
+    });
+
+    if (ratingUndoStack.length > MAX_UNDO_STEPS) {
+        ratingUndoStack.shift();
+    }
+    updateUndoButtonUI();
+}
+
+/**
+ * ↩️ 誤按還原上一步評分（對應 index.html 的 handleUndoLastCard）
+ */
+function handleUndoLastCard() {
+    if (ratingUndoStack.length === 0) {
+        showToast(tr('toastNothingToUndo', '目前沒有可還原的評分紀錄！'), 'info');
+        return;
+    }
+
+    const snapshot = ratingUndoStack.pop();
+    updateUndoButtonUI();
+
+    if (Array.isArray(wordList) && Array.isArray(snapshot.records)) {
+        snapshot.records.forEach(rec => {
+            const target = wordList.find(w => w.id === rec.id);
+            if (target) {
+                target.level = rec.level;
+                target.knowStreak = rec.knowStreak;
+                target.state = rec.state;
+                target.stability = rec.stability;
+                target.difficulty = rec.difficulty;
+                target.reps = rec.reps;
+                target.lapses = rec.lapses;
+                target.lastReview = rec.lastReview;
+                target.nextReview = rec.nextReview;
+                target.updatedAt = rec.updatedAt;
+                target.freeLevel = rec.freeLevel;
+                target.freeStreak = rec.freeStreak;
+            }
+        });
+    }
+
+    const restoredCard = wordList.find(w => w.id === snapshot.cardId);
+    if (restoredCard) {
+        currentCard = restoredCard;
+        const flashcardElem = document.getElementById('flashcard');
+        if (flashcardElem) {
+            flashcardElem.classList.add('no-transition');
+            flashcardElem.classList.remove('rotate-y-180');
+            void flashcardElem.offsetHeight;
+            flashcardElem.classList.remove('no-transition');
+        }
+    }
+
+    if (typeof GameEngine !== 'undefined' && typeof GameEngine.rollbackLastReward === 'function') {
+        GameEngine.rollbackLastReward();
+    }
+
+    saveStorage();
+    updateUI();
+    nextCard(false);
+    showToast(tr('toastUndoSuccess', '↩️ 已還原【{word}】的評分進度！', { word: snapshot.word || '' }), 'info');
+}
+
+const undoLastCardRating = handleUndoLastCard;
+
+/**
+ * 🔄 批次還原已勾選單字的記憶進度（同時歸零 FSRS 與自由練習臨時等級）
+ */
+async function handleBatchResetProgress() {
+    if (selectedWordIds.size === 0) {
+        showToast(tr('toastSelectResetWords', '請先勾選要還原進度的單字！'), 'warning');
+        return;
+    }
+
+    const ok = await (typeof window.lzhConfirm === 'function'
+        ? window.lzhConfirm(tr('confirmBatchReset', '確定要將已勾選的 {count} 筆單字記憶進度還原為 Lv.1（新單字）嗎？', { count: selectedWordIds.size }))
+        : Promise.resolve(false));
+    if (!ok) {
+        return;
+    }
+
+    const now = Date.now();
+    const targetSpellings = new Set();
+
+    wordList.forEach(w => {
+        if (selectedWordIds.has(w.id) && w.word) {
+            targetSpellings.add(w.word.trim().toLowerCase());
+        }
+    });
+
+    let resetCount = 0;
+    wordList.forEach(w => {
+        if (!w || typeof w !== 'object') return;
+        const normWord = (w.word || '').trim().toLowerCase();
+        if (selectedWordIds.has(w.id) || (normWord && targetSpellings.has(normWord))) {
+            w.level = 1;
+            w.knowStreak = 0;
+            w.state = 'new';
+            w.stability = 0;
+            w.difficulty = 5.5;
+            w.reps = 0;
+            w.lapses = 0;
+            w.lastReview = 0;
+            w.nextReview = 0;
+            w.freeLevel = 1;
+            w.freeStreak = 0;
+            w.updatedAt = now;
+            if (selectedWordIds.has(w.id)) resetCount++;
+        }
+    });
+
+    ratingUndoStack = [];
+    selectedWordIds.clear();
+
+    saveStorage();
+    updateUI();
+    if (currentCard) nextCard(false);
+    showToast(tr('toastBatchResetSuccess', '🔄 已將 {count} 筆單字的記憶進度還原為 Lv.1 新單字！', { count: resetCount }), 'success');
+}
+
+/**
+ * ⚡ 批次重置已勾選單字的「自由練習臨時等級」（完全不影響 FSRS 排程）
+ */
+async function handleBatchResetFreeLevel() {
+    if (selectedWordIds.size === 0) {
+        showToast(tr('toastSelectResetFreeWords', '請先勾選要重置臨時等級的單字！'), 'warning');
+        return;
+    }
+
+    const ok = await (typeof window.lzhConfirm === 'function'
+        ? window.lzhConfirm(tr('confirmBatchResetFree', '確定要將已勾選的 {count} 筆單字「自由練習臨時等級」重置為 Lv.1 嗎？（不會影響 FSRS 排程）', { count: selectedWordIds.size }))
+        : Promise.resolve(false));
+    if (!ok) {
+        return;
+    }
+
+    const now = Date.now();
+    const targetSpellings = new Set();
+
+    wordList.forEach(w => {
+        if (selectedWordIds.has(w.id) && w.word) {
+            targetSpellings.add(w.word.trim().toLowerCase());
+        }
+    });
+
+    let resetCount = 0;
+    wordList.forEach(w => {
+        if (!w || typeof w !== 'object') return;
+        const normWord = (w.word || '').trim().toLowerCase();
+        if (selectedWordIds.has(w.id) || (normWord && targetSpellings.has(normWord))) {
+            w.freeLevel = 1;
+            w.freeStreak = 0;
+            w.updatedAt = now;
+            if (selectedWordIds.has(w.id)) resetCount++;
+        }
+    });
+
+    selectedWordIds.clear();
+
+    saveStorage();
+    updateUI();
+    if (currentCard) nextCard(false);
+    showToast(tr('toastBatchResetFreeSuccess', '⚡ 已將 {count} 筆單字的自由練習等級重置為 臨時 Lv.1！', { count: resetCount }), 'success');
+}
+
+/**
+ * 🔄 重置所有單字的「記憶進度、等級與權重」，完整保留單字、詞性、音標、釋義與例句
+ */
+async function handleResetLearningProgress() {
+    if (!Array.isArray(wordList) || wordList.length === 0) {
+        showToast(tr('noWordAvailable', '尚無單字'), 'warning');
+        return;
+    }
+
+    const confirmMsg = tr(
+        'confirmResetProgress',
+        '確定要將所有單字的「記憶進度、等級與權重」全部歸零嗎？\n（放心：單字、詞性、音標、釋義與例句都會完整保留）'
+    );
+
+    const ok = await (typeof window.lzhConfirm === 'function'
+        ? window.lzhConfirm(confirmMsg)
+        : Promise.resolve(false));
+    if (!ok) return;
+
+    const now = Date.now();
+    let resetCount = 0;
+
+    wordList.forEach(w => {
+        if (!w || typeof w !== 'object') return;
+        w.level = 1;
+        w.knowStreak = 0;
+        w.state = 'new';
+        w.stability = 0;
+        w.difficulty = 5.5;
+        w.reps = 0;
+        w.lapses = 0;
+        w.lastReview = 0;
+        w.nextReview = 0;
+        w.freeLevel = 1;
+        w.freeStreak = 0;
+        w.updatedAt = now;
+        resetCount++;
+    });
+
+    if (typeof resetFSRSMemoryPools === 'function') {
+        resetFSRSMemoryPools();
+    }
+    if (typeof resetFreePracticeLevels === 'function') {
+        resetFreePracticeLevels(['ALL']);
+    }
+
+    ratingUndoStack = [];
+    currentCard = null;
+
+    saveStorage();
+    updateUI();
+    nextCard(true);
+    showToast(tr('toastProgressReset', '已重置 {count} 個單字的記憶進度與權重！', { count: resetCount }), 'success');
+}
+
+/**
+ * 🧠 統一處理卡片記憶評分回饋（1: 不熟悉 | 2: 模糊 | 3: 已掌握 | 4: 秒答）
+ */
+function handleCardRating(rating, e) {
+    if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+    if (isCardActionLocked || !currentCard) return;
+    isCardActionLocked = true;
+    setTimeout(() => { isCardActionLocked = false; }, 60);
+
+    if (e && e.currentTarget) e.currentTarget.blur();
+    else if (document.activeElement) document.activeElement.blur();
+
+    // 評分前先備份狀態快照，供誤按還原使用
+    pushRatingSnapshot(currentCard);
+
+    if (isFreePracticeActive() && typeof recordFreePracticeReview === 'function') {
+        recordFreePracticeReview(currentCard, rating);
+        const targetWord = (currentCard.word || '').trim().toLowerCase();
+        if (Array.isArray(wordList)) {
+            wordList.forEach(w => {
+                if ((w.word || '').trim().toLowerCase() === targetWord) {
+                    w.freeLevel = currentCard.freeLevel;
+                    w.freeStreak = currentCard.freeStreak;
+                    w.updatedAt = currentCard.updatedAt || Date.now();
+                }
+            });
+        }
+    } else if (typeof recordCardReview === 'function') {
+        recordCardReview(currentCard, rating);
+    } else {
+        const targetWord = (currentCard.word || '').trim().toLowerCase();
+        wordList.forEach(w => {
+            if ((w.word || '').trim().toLowerCase() === targetWord) {
+                if (rating === 1) {
+                    w.level = Math.max(1, (w.level || 1) - 1);
+                    w.knowStreak = 0;
+                } else {
+                    w.knowStreak = (w.knowStreak || 0) + 1;
+                    if (w.knowStreak >= 2 && (w.level || 1) < 5) {
+                        w.level = (w.level || 1) + 1;
+                        w.knowStreak = 0;
+                    }
+                }
+                w.updatedAt = Date.now();
+            }
+        });
+    }
+
+    if (typeof GameEngine !== 'undefined' && typeof GameEngine.onCardRated === 'function') {
+        GameEngine.onCardRated(currentCard, rating);
+    }
+
+    saveStorage();
+    updateUI();
+    nextCard(true);
+}
+
+function handleDontKnow(e) {
+    handleCardRating(1, e);
+}
+
+function handleHard(e) {
+    handleCardRating(2, e);
+}
+
+function handleKnow(e) {
+    handleCardRating(3, e);
+}
+
+function handleEasy(e) {
+    handleCardRating(4, e);
+}
+
+function flipCard() {
+    const flashcardElem = document.getElementById('flashcard');
+    if (flashcardElem) flashcardElem.classList.toggle('rotate-y-180');
+}
+
+let autoSpeakTimer = null;
+let speakSeq = 0;
+
+function isFlashcardScreenActive() {
+    if (typeof currentTab !== 'undefined' && currentTab !== 'flashcard') return false;
+    const secFlashcard = document.getElementById('sec-flashcard');
+    if (!secFlashcard || secFlashcard.classList.contains('hidden')) return false;
+    return true;
+}
+
+function resolveSpeechLang() {
+    const targetLang = localStorage.getItem('user_target_lang') || localStorage.getItem('lzhcard_target_lang') || 'en';
+    if (targetLang === 'ja') return 'ja-JP';
+    if (targetLang === 'zh-TW') return 'zh-TW';
+    return 'en-US';
+}
+
+function stopSpeakingWord() {
+    speakSeq++;
+    if (autoSpeakTimer) {
+        clearTimeout(autoSpeakTimer);
+        autoSpeakTimer = null;
+    }
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window && typeof window.speechSynthesis.cancel === 'function') {
+        try {
+            window.speechSynthesis.cancel();
+        } catch (e) {}
+    }
+    try {
+        const capTTS = (typeof window !== 'undefined') ? window.Capacitor?.Plugins?.TextToSpeech : null;
+        if (capTTS && typeof capTTS.stop === 'function') {
+            capTTS.stop().catch(() => {});
+        }
+    } catch (e) {}
+}
+
+function speakWord(options = {}) {
+    const isAuto = Boolean(options && options.isAuto);
+    if (isAuto && !isFlashcardScreenActive()) return false;
+    if (!currentCard || !currentCard.word) return false;
+
+    const wordToSpeak = String(currentCard.word).trim();
+    if (!wordToSpeak) return false;
+
+    // 語音重疊防護：播放新單字前先中斷先前尚未唸完的語音與排程
+    stopSpeakingWord();
+    const mySeq = speakSeq;
+    const lang = resolveSpeechLang();
+
+    const capTTS = (typeof window !== 'undefined') ? window.Capacitor?.Plugins?.TextToSpeech : null;
+    if (typeof isNativeApp === 'function' && isNativeApp() && capTTS && typeof capTTS.speak === 'function') {
+        capTTS.speak({
+            text: wordToSpeak,
+            lang: lang,
+            rate: 1.0,
+            pitch: 1.0,
+            volume: 1.0,
+            category: 'ambient'
+        }).catch(() => {
+            if (mySeq === speakSeq && typeof window !== 'undefined' && 'speechSynthesis' in window) {
+                window.speechSynthesis.cancel();
+                const fallbackUtterance = new SpeechSynthesisUtterance(wordToSpeak);
+                fallbackUtterance.lang = lang;
+                window.speechSynthesis.speak(fallbackUtterance);
+            }
+        });
+        return true;
+    }
+
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+        const utterance = new SpeechSynthesisUtterance(wordToSpeak);
+        utterance.lang = lang;
+        window.speechSynthesis.speak(utterance);
+        return true;
+    }
+    return false;
+}
+
+function triggerAutoPlayCardAudio(card, shouldSpeak) {
+    if (!shouldSpeak) return;
+    if (localStorage.getItem('lzhcard_auto_audio') !== 'true') return;
+    if (!card || !card.word || !isFlashcardScreenActive()) return;
+
+    stopSpeakingWord();
+    const scheduledCard = card;
+    autoSpeakTimer = setTimeout(() => {
+        autoSpeakTimer = null;
+        if (localStorage.getItem('lzhcard_auto_audio') !== 'true') return;
+        if (!isFlashcardScreenActive()) return;
+        if (!currentCard || currentCard !== scheduledCard) return;
+        speakWord({ isAuto: true });
+    }, 120);
+}
+
+function resetStudySessionState() {
+    stopSpeakingWord();
+    currentCard = null;
+    if (selectedWordIds && typeof selectedWordIds.clear === 'function') {
+        selectedWordIds.clear();
+    }
+    ratingUndoStack = [];
+    if (typeof updateUndoButtonUI === 'function') {
+        updateUndoButtonUI();
+    }
+    if (typeof ratingHistoryStack !== 'undefined' && Array.isArray(ratingHistoryStack)) {
+        ratingHistoryStack.length = 0;
+    }
+    if (typeof MultiplayerEngine !== 'undefined' && typeof MultiplayerEngine.cleanupMultiplayerListeners === 'function') {
+        MultiplayerEngine.cleanupMultiplayerListeners();
+    }
+    if (typeof GameEngine !== 'undefined' && typeof GameEngine.renderHomePortal === 'function') {
+        GameEngine.renderHomePortal();
+    }
+}
+
+if (typeof window !== 'undefined') {
+    window.speakWord = speakWord;
+    window.stopSpeakingWord = stopSpeakingWord;
+    window.isFlashcardScreenActive = isFlashcardScreenActive;
+    window.resetStudySessionState = resetStudySessionState;
+}
+
+function updateHeaderLeftButtonState(activeTab) {
+    const logoEl = document.getElementById('headerAppLogo');
+    const hamburgerBtn = document.getElementById('headerHamburgerBtn');
+    const isProfileTab = activeTab === 'profile' || activeTab === 'settings';
+    const isStoreTab = activeTab === 'store';
+    const showMenuBtn = isProfileTab || isStoreTab;
+
+    if (logoEl && hamburgerBtn) {
+        if (showMenuBtn) {
+            logoEl.classList.add('hidden');
+            hamburgerBtn.classList.remove('hidden');
+            const label = isStoreTab
+                ? (typeof tr === 'function' ? tr('storeDrawerTitle', '商城導覽與紀錄') : '商城導覽與紀錄')
+                : (typeof tr === 'function' ? tr('settingsMenu', '設定選單') : '設定選單');
+            hamburgerBtn.setAttribute('aria-label', label);
+            hamburgerBtn.setAttribute('title', label);
+        } else {
+            hamburgerBtn.classList.add('hidden');
+            logoEl.classList.remove('hidden');
+        }
+    }
+
+    // 狀態連動 Bug 防護：離開個人檔案／商城頁面或進入專注模式時，自動收起對應抽屜
+    if (!isProfileTab) {
+        closeSettingsDrawer();
+    }
+    if (!isStoreTab) {
+        closeStoreDrawer();
+    }
+}
+
+function openSettingsDrawer() {
+    closeStoreDrawer();
+    const drawer = document.getElementById('settingsDrawer');
+    const panel = document.getElementById('settingsDrawerPanel');
+    const backdrop = document.getElementById('settingsDrawerBackdrop');
+    if (!drawer) return;
+
+    if (typeof resetSettingsAccordions === 'function') resetSettingsAccordions();
+    if (typeof syncSettingsUI === 'function') syncSettingsUI();
+    if (typeof applyNavAvatarFrame === 'function') applyNavAvatarFrame();
+
+    drawer.classList.remove('hidden');
+    requestAnimationFrame(() => {
+        if (panel) panel.classList.remove('-translate-x-full');
+        if (backdrop) {
+            backdrop.classList.remove('opacity-0');
+            backdrop.classList.add('opacity-100');
+        }
+    });
+}
+
+function closeSettingsDrawer() {
+    const drawer = document.getElementById('settingsDrawer');
+    const panel = document.getElementById('settingsDrawerPanel');
+    const backdrop = document.getElementById('settingsDrawerBackdrop');
+    if (!drawer || drawer.classList.contains('hidden')) return;
+
+    if (panel) panel.classList.add('-translate-x-full');
+    if (backdrop) {
+        backdrop.classList.remove('opacity-100');
+        backdrop.classList.add('opacity-0');
+    }
+
+    setTimeout(() => {
+        if (panel && panel.classList.contains('-translate-x-full')) {
+            drawer.classList.add('hidden');
+            if (typeof resetSettingsAccordions === 'function') resetSettingsAccordions();
+        }
+    }, 200);
+}
+
+function toggleSettingsDrawer() {
+    const drawer = document.getElementById('settingsDrawer');
+    if (!drawer) return;
+    if (drawer.classList.contains('hidden')) {
+        openSettingsDrawer();
+    } else {
+        closeSettingsDrawer();
+    }
+}
+
+function openStoreDrawer() {
+    closeSettingsDrawer();
+    const drawer = document.getElementById('storeDrawer');
+    const panel = document.getElementById('storeDrawerPanel');
+    const backdrop = document.getElementById('storeDrawerBackdrop');
+    if (!drawer) return;
+
+    if (typeof updateStoreDrawerUI === 'function') {
+        updateStoreDrawerUI();
+    }
+
+    drawer.classList.remove('hidden');
+    requestAnimationFrame(() => {
+        if (panel) panel.classList.remove('-translate-x-full');
+        if (backdrop) {
+            backdrop.classList.remove('opacity-0');
+            backdrop.classList.add('opacity-100');
+        }
+    });
+}
+
+function closeStoreDrawer() {
+    const drawer = document.getElementById('storeDrawer');
+    const panel = document.getElementById('storeDrawerPanel');
+    const backdrop = document.getElementById('storeDrawerBackdrop');
+    if (!drawer || drawer.classList.contains('hidden')) return;
+
+    if (panel) panel.classList.add('-translate-x-full');
+    if (backdrop) {
+        backdrop.classList.remove('opacity-100');
+        backdrop.classList.add('opacity-0');
+    }
+
+    setTimeout(() => {
+        if (panel && panel.classList.contains('-translate-x-full')) {
+            drawer.classList.add('hidden');
+        }
+    }, 200);
+}
+
+function toggleStoreDrawer() {
+    const drawer = document.getElementById('storeDrawer');
+    if (!drawer) return;
+    if (drawer.classList.contains('hidden')) {
+        openStoreDrawer();
+    } else {
+        closeStoreDrawer();
+    }
+}
+
+function handleHeaderHamburgerClick() {
+    if (currentTab === 'store') {
+        toggleStoreDrawer();
+    } else {
+        toggleSettingsDrawer();
+    }
+}
+
+if (typeof document !== 'undefined') {
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+            closeSettingsDrawer();
+            closeStoreDrawer();
+        }
+    });
+}
+
+if (typeof window !== 'undefined') {
+    window.openSettingsDrawer = openSettingsDrawer;
+    window.closeSettingsDrawer = closeSettingsDrawer;
+    window.toggleSettingsDrawer = toggleSettingsDrawer;
+    window.openStoreDrawer = openStoreDrawer;
+    window.closeStoreDrawer = closeStoreDrawer;
+    window.toggleStoreDrawer = toggleStoreDrawer;
+    window.handleHeaderHamburgerClick = handleHeaderHamburgerClick;
+    window.updateHeaderLeftButtonState = updateHeaderLeftButtonState;
+}
+
+function switchTab(tab) {
+    if (tab === 'settings') tab = 'profile';
+    if (tab !== 'flashcard' && typeof stopSpeakingWord === 'function') {
+        stopSpeakingWord();
+    }
+    currentTab = tab;
+
+    const secHome = document.getElementById('sec-home');
+    const secFlashcard = document.getElementById('sec-flashcard');
+    const secQuiz = document.getElementById('sec-quiz');
+    const secList = document.getElementById('sec-list');
+    const secStore = document.getElementById('sec-store');
+    const secProfile = document.getElementById('sec-profile');
+    const secStats = document.getElementById('sec-stats');
+
+    const bnavHome = document.getElementById('bnav-home');
+    const bnavList = document.getElementById('bnav-list');
+    const bnavStore = document.getElementById('bnav-store');
+    const bnavSettings = document.getElementById('bnav-settings');
+    const bnavStats = document.getElementById('bnav-stats');
+
+    const catSelector = document.getElementById('headerCategorySelector');
+    if (catSelector) {
+        if (tab === 'store' || tab === 'profile') {
+            catSelector.classList.add('hidden');
+        } else {
+            catSelector.classList.remove('hidden');
+        }
+    }
+
+    [secHome, secFlashcard, secQuiz, secList, secStore, secProfile, secStats].forEach(el => el && el.classList.add('hidden'));
+
+    [bnavHome, bnavList, bnavStore, bnavSettings, bnavStats].forEach(el => {
+        if (el) el.className = "flex flex-col items-center justify-center text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 space-y-1 transition";
+    });
+
+    const header = document.getElementById('main-header');
+    const bottomNav = document.getElementById('bottom-nav');
+    if (header) header.classList.remove('hidden');
+    if (bottomNav) bottomNav.classList.remove('hidden');
+
+    updateHeaderLeftButtonState(tab);
+
+    if (tab === 'home') {
+        if (secHome) secHome.classList.remove('hidden');
+        if (bnavHome) bnavHome.className = "flex flex-col items-center justify-center text-brand-600 dark:text-brand-400 space-y-1 font-bold";
+        updateStudyQueueUI();
+        if (typeof GameEngine !== 'undefined' && typeof GameEngine.renderHomePortal === 'function') {
+            GameEngine.renderHomePortal();
+        }
+    } else if (tab === 'list') {
+        if (secList) secList.classList.remove('hidden');
+        if (bnavList) bnavList.className = "flex flex-col items-center justify-center text-brand-600 dark:text-brand-400 space-y-1 font-bold";
+        renderWordList(false);
+    } else if (tab === 'store') {
+        if (secStore) secStore.classList.remove('hidden');
+        if (bnavStore) bnavStore.className = "flex flex-col items-center justify-center text-brand-600 dark:text-brand-400 space-y-1 font-bold";
+        if (typeof renderStore === 'function') renderStore();
+        updateUserCoinsUI();
+    } else if (tab === 'profile') {
+        if (secProfile) secProfile.classList.remove('hidden');
+        if (bnavSettings) bnavSettings.className = "flex flex-col items-center justify-center text-brand-600 dark:text-brand-400 space-y-1 font-bold";
+        if (typeof renderProfileSection === 'function') renderProfileSection();
+    } else if (tab === 'stats') {
+        if (secStats) secStats.classList.remove('hidden');
+        if (bnavStats) bnavStats.className = "flex flex-col items-center justify-center text-brand-600 dark:text-brand-400 space-y-1 font-bold";
+        if (typeof renderStats === 'function') renderStats();
+    }
+
+    updateEmptyNoticeState();
+}
+
+function startFocusMode(mode) {
+    currentTab = mode;
+    updateHeaderLeftButtonState(mode);
+    const header = document.getElementById('main-header');
+    const bottomNav = document.getElementById('bottom-nav');
+
+    if (header) header.classList.add('hidden');
+    if (bottomNav) bottomNav.classList.add('hidden');
+
+    ['sec-home', 'sec-flashcard', 'sec-quiz', 'sec-list', 'sec-store', 'sec-profile', 'sec-stats'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.classList.add('hidden');
+    });
+
+    window.scrollTo({ top: 0, behavior: 'instant' });
+
+    if (mode === 'flashcard') {
+        const secFlashcard = document.getElementById('sec-flashcard');
+        if (secFlashcard) secFlashcard.classList.remove('hidden');
+        nextCard(true);
+    } else if (mode === 'quiz') {
+        const secQuiz = document.getElementById('sec-quiz');
+        if (secQuiz) secQuiz.classList.remove('hidden');
+        if (typeof nextQuizQuestion === 'function') nextQuizQuestion();
+    }
+
+    updateEmptyNoticeState();
+}
+
+
+if (typeof window.startFreePracticeMode !== 'function') {
+    window.startFreePracticeMode = function () {
+        window.isManualFreePractice = true;
+        startFocusMode('flashcard');
+    };
+}
+
+if (typeof window.toggleFreePracticeMode !== 'function') {
+    window.toggleFreePracticeMode = function () {
+        window.isManualFreePractice = !window.isManualFreePractice;
+        updateStudyQueueUI();
+        nextCard(true);
+    };
+}
+
+function exitFocusMode() {
+    if (typeof stopSpeakingWord === 'function') stopSpeakingWord();
+    window.isManualFreePractice = false;
+    switchTab('home');
+}
+
+/**
+ * ⚡ 動態注入與更新字庫排序選單中的「自由練習臨時等級」選項（支援即時 i18n）
+ */
+function ensureFreeLevelSortOptions() {
+    const sortSelect = document.getElementById('sortSelect');
+    if (!sortSelect) return;
+
+    const prevSortVal = sortSelect.value;
+    let group = document.getElementById('sortGroupFreeLevel');
+    if (!group) {
+        group = document.createElement('optgroup');
+        group.id = 'sortGroupFreeLevel';
+        sortSelect.appendChild(group);
+    }
+
+    group.label = tr('optGroupFreeLevel', '⚡ 自由練習臨時等級');
+    group.innerHTML = `
+        <option value="free-level-asc">${tr('optSortFreeAsc', '自由練習：臨時 Lv.1 → Lv.5')}</option>
+        <option value="free-level-desc">${tr('optSortFreeDesc', '自由練習：臨時 Lv.5 → Lv.1')}</option>
+        <option value="only_free_level_1">${tr('optOnlyFreeLv1', '僅顯示：臨時 Lv.1')}</option>
+        <option value="only_free_level_2">${tr('optOnlyFreeLv2', '僅顯示：臨時 Lv.2')}</option>
+        <option value="only_free_level_3">${tr('optOnlyFreeLv3', '僅顯示：臨時 Lv.3')}</option>
+        <option value="only_free_level_4">${tr('optOnlyFreeLv4', '僅顯示：臨時 Lv.4')}</option>
+        <option value="only_free_level_5">${tr('optOnlyFreeLv5', '僅顯示：臨時 Lv.5')}</option>
+    `;
+    if (prevSortVal) sortSelect.value = prevSortVal;
+}
+
+/**
+ * ⚡ 動態注入與更新批次工具列的「重置臨時等級」按鈕（支援即時 i18n）
+ */
+function ensureBatchFreeResetButton() {
+    const resetBtn = document.querySelector('[onclick*="handleBatchResetProgress"]');
+    if (!resetBtn || !resetBtn.parentNode) return;
+
+    let btn = document.getElementById('batchResetFreeLevelBtn');
+    if (!btn) {
+        btn = document.createElement('button');
+        btn.id = 'batchResetFreeLevelBtn';
+        btn.type = 'button';
+        btn.onclick = handleBatchResetFreeLevel;
+        btn.className = resetBtn.className;
+        resetBtn.insertAdjacentElement('afterend', btn);
+    }
+    btn.innerText = tr('btnBatchResetFree', '重置臨時等級');
+}
+
+function getFilteredWords() {
+    const searchInput = document.getElementById('searchInput');
+    const sortSelect = document.getElementById('sortSelect');
+    const defaultCatName = tr('defaultCategoryName', '預設字庫');
+    const noMeaningText = tr('noMeaning', '未設定釋義');
+
+    const search = searchInput ? searchInput.value.toLowerCase().trim() : '';
+    const sortBy = sortSelect ? sortSelect.value : 'default';
+    const activeCats = window.selectedCategories || [];
+
+    const isMissing = (item, field) => {
+        if (field === 'meaning') return !item.meaning || !item.meaning.trim() || item.meaning === noMeaningText;
+        return !item[field] || !String(item[field]).trim();
+    };
+
+    let filtered = wordList.filter(item => {
+        const matchesSearch = !search ||
+            (item.word || '').toLowerCase().includes(search) ||
+            (item.meaning && item.meaning.toLowerCase().includes(search)) ||
+            (item.category && item.category.toLowerCase().includes(search)) ||
+            (item.pos && item.pos.toLowerCase().includes(search));
+            
+        const itemCat = (item.category && item.category.trim() !== '') ? item.category.trim() : defaultCatName;
+        let matchesCategory = activeCats.includes("ALL") || activeCats.includes(itemCat);
+
+        if (sortBy === 'only_missing_meaning' && !isMissing(item, 'meaning')) return false;
+        if (sortBy === 'only_missing_sentence' && !isMissing(item, 'sentence')) return false;
+        if (sortBy === 'only_missing_pos' && !isMissing(item, 'pos')) return false;
+        if (sortBy === 'only_missing_phonetic' && !isMissing(item, 'phonetic')) return false;
+
+        // 僅顯示指定 FSRS 記憶等級 (Lv.1 ~ Lv.5)
+        if (sortBy.startsWith('only_level_')) {
+            const targetLv = parseInt(sortBy.replace('only_level_', ''), 10);
+            if ((item.level || 1) !== targetLv) return false;
+        }
+
+        // 僅顯示指定自由練習臨時等級 (臨時 Lv.1 ~ Lv.5)
+        if (sortBy.startsWith('only_free_level_')) {
+            const targetFreeLv = parseInt(sortBy.replace('only_free_level_', ''), 10);
+            if ((item.freeLevel || 1) !== targetFreeLv) return false;
+        }
+
+        // 僅顯示指定 7000 單難度等級 (1~6 級 / 冷門單字)
+        if (sortBy === 'only_diff_rare') {
+            if (getCardDiffInfo(item).level !== 0) return false;
+        } else if (sortBy.startsWith('only_diff_')) {
+            const targetDiffLv = parseInt(sortBy.replace('only_diff_', ''), 10);
+            if (getCardDiffInfo(item).level !== targetDiffLv) return false;
+        }
+
+        return matchesSearch && matchesCategory;
+    });
+
+    filtered.sort((a, b) => {
+        if (sortBy === 'missing_meaning_first') return (isMissing(b, 'meaning') ? 1 : 0) - (isMissing(a, 'meaning') ? 1 : 0);
+        if (sortBy === 'missing_sentence_first') return (isMissing(b, 'sentence') ? 1 : 0) - (isMissing(a, 'sentence') ? 1 : 0);
+        if (sortBy === 'missing_pos_first') return (isMissing(b, 'pos') ? 1 : 0) - (isMissing(a, 'pos') ? 1 : 0);
+        if (sortBy === 'missing_phonetic_first') return (isMissing(b, 'phonetic') ? 1 : 0) - (isMissing(a, 'phonetic') ? 1 : 0);
+
+        if (search && sortBy === 'default') {
+            const wA = (a.word || '').toLowerCase();
+            const wB = (b.word || '').toLowerCase();
+
+            const aStarts = wA.startsWith(search);
+            const bStarts = wB.startsWith(search);
+
+            if (wA === search && wB !== search) return -1;
+            if (wB === search && wA !== search) return 1;
+
+            if (aStarts && !bStarts) return -1;
+            if (!aStarts && bStarts) return 1;
+
+            if (aStarts && bStarts && wA.length !== wB.length) {
+                return wA.length - wB.length;
+            }
+        }
+
+        if (sortBy === 'alpha-asc') return (a.word || '').localeCompare(b.word || '');
+        if (sortBy === 'alpha-desc') return (b.word || '').localeCompare(a.word || '');
+        if (sortBy === 'pos') return (a.pos || '').localeCompare(b.pos || '');
+        if (sortBy === 'level-asc') return (a.level || 1) - (b.level || 1);
+        if (sortBy === 'level-desc') return (b.level || 1) - (a.level || 1);
+        if (sortBy === 'free-level-asc') return (a.freeLevel || 1) - (b.freeLevel || 1);
+        if (sortBy === 'free-level-desc') return (b.freeLevel || 1) - (a.freeLevel || 1);
+        if (sortBy === 'diff-asc') return getDiffSortRank(a) - getDiffSortRank(b);
+        if (sortBy === 'diff-desc') return getDiffSortRank(b) - getDiffSortRank(a);
+
+        return 0;
+    });
+
+    return filtered;
+}
+
+/**
+ * ⚡ 在字庫列表直接點擊徽章循環切換自由練習等級 (1 -> 2 -> 3 -> 4 -> 5 -> 1)
+ */
+function cycleWordFreeLevel(id) {
+    const item = wordList.find(w => w.id === id);
+    if (!item) return;
+
+    const currentFreeLv = Math.min(5, Math.max(1, item.freeLevel || 1));
+    const nextFreeLv = currentFreeLv >= 5 ? 1 : currentFreeLv + 1;
+    const now = Date.now();
+
+    item.freeLevel = nextFreeLv;
+    item.freeStreak = 0;
+    item.updatedAt = now;
+
+    if (typeof syncDuplicateWordsProgress === 'function') {
+        syncDuplicateWordsProgress(item);
+    }
+
+    saveStorage();
+    renderWordList(false);
+    updateStudyQueueUI();
+    showToast(
+        tr('toastFreeLevelCycled', '【{word}】已調整為 {level}', {
+            word: item.word,
+            level: getLocalizedFreeLevelName(nextFreeLv)
+        }),
+        'info'
+    );
+}
+
+/**
+ * 📄 字庫翻頁控制函式 (不影響全選與跨頁勾選狀態)
+ */
+function goToWordListPage(page) {
+    const filtered = getFilteredWords();
+    const totalPages = Math.max(1, Math.ceil(filtered.length / wordListPageSize));
+    if (page === 'last') {
+        currentWordListPage = totalPages;
+    } else {
+        const parsed = parseInt(page, 10) || 1;
+        currentWordListPage = Math.min(totalPages, Math.max(1, parsed));
+    }
+    window.currentWordListPage = currentWordListPage;
+    renderWordList(false);
+    const tableWrap = document.getElementById('sec-list');
+    if (tableWrap && typeof tableWrap.scrollIntoView === 'function') {
+        tableWrap.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+}
+
+function changeWordListPageSize(newSize) {
+    const size = Math.max(10, parseInt(newSize, 10) || 30);
+    wordListPageSize = size;
+    window.wordListPageSize = size;
+    localStorage.setItem('lzhcard_word_page_size', String(size));
+    currentWordListPage = 1;
+    window.currentWordListPage = 1;
+    renderWordList(false);
+}
+
+function updatePaginationUI(totalItems, totalPages, startIdx, endIdx) {
+    const pagContainer = document.getElementById('wordListPagination');
+    const infoEl = document.getElementById('paginationInfoText');
+    const totalPageEl = document.getElementById('totalPageNumText');
+    const pageSelect = document.getElementById('pageSelectJumper');
+    const sizeSelect = document.getElementById('pageSizeSelect');
+    const btnFirst = document.getElementById('btnPageFirst');
+    const btnPrev = document.getElementById('btnPagePrev');
+    const btnNext = document.getElementById('btnPageNext');
+    const btnLast = document.getElementById('btnPageLast');
+
+    if (!pagContainer) return;
+
+    if (sizeSelect && sizeSelect.value !== String(wordListPageSize)) {
+        sizeSelect.value = String(wordListPageSize);
+    }
+
+    if (infoEl) {
+        if (totalItems === 0) {
+            infoEl.innerText = tr('paginationEmpty', '共 0 筆單字');
+        } else {
+            infoEl.innerText = tr('paginationInfo', '顯示 {start} - {end} 筆 (共 {total} 筆)', {
+                start: startIdx + 1,
+                end: endIdx,
+                total: totalItems
+            });
+        }
+    }
+
+    if (totalPageEl) {
+        totalPageEl.innerText = String(totalPages);
+    }
+
+    if (pageSelect) {
+        let optionsHtml = '';
+        for (let p = 1; p <= totalPages; p++) {
+            optionsHtml += `<option value="${p}" ${p === currentWordListPage ? 'selected' : ''}>${tr('pageOptionLabel', '第 {p} 頁', { p })}</option>`;
+        }
+        pageSelect.innerHTML = optionsHtml;
+        pageSelect.value = String(currentWordListPage);
+    }
+
+    const isFirst = currentWordListPage <= 1 || totalItems === 0;
+    const isLast = currentWordListPage >= totalPages || totalItems === 0;
+
+    if (btnFirst) btnFirst.disabled = isFirst;
+    if (btnPrev) btnPrev.disabled = isFirst;
+    if (btnNext) btnNext.disabled = isLast;
+    if (btnLast) btnLast.disabled = isLast;
+}
+
+let wordListSearchDebounceTimer = null;
+function debouncedRenderWordList(resetPage = true, delayMs = 180) {
+    if (wordListSearchDebounceTimer) clearTimeout(wordListSearchDebounceTimer);
+    wordListSearchDebounceTimer = setTimeout(() => {
+        wordListSearchDebounceTimer = null;
+        renderWordList(resetPage);
+    }, Math.max(0, Number(delayMs) || 180));
+}
+
+if (typeof window !== 'undefined') {
+    window.goToWordListPage = goToWordListPage;
+    window.changeWordListPageSize = changeWordListPageSize;
+    window.debouncedRenderWordList = debouncedRenderWordList;
+}
+
+function renderWordList(resetPage = false) {
+    ensureAllWordsHaveUniqueIds();
+    ensureFreeLevelSortOptions();
+    ensureBatchFreeResetButton();
+
+    const tbody = document.getElementById('wordTableBody');
+    if (!tbody) return;
+
+    if (resetPage === true) {
+        currentWordListPage = 1;
+    }
+
+    const defaultCatName = tr('defaultCategoryName', '預設字庫');
+    const emptySearchResultText = tr('emptySearchResult', '查無符合條件的單字');
+    const editTooltipText = tr('modalTitleEdit', '編輯單字');
+    const deleteTooltipText = tr('btnBatchDelete', '刪除');
+    const cycleFreeTooltipText = tr('titleCycleFreeLevel', '點擊直接切換自由練習等級');
+
+    const escapeHtml = (str) => String(str ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+
+    const filtered = getFilteredWords();
+    window._cachedFilteredWords = filtered;
+
+    const totalPages = Math.max(1, Math.ceil(filtered.length / wordListPageSize));
+    if (currentWordListPage > totalPages) currentWordListPage = totalPages;
+    if (currentWordListPage < 1) currentWordListPage = 1;
+    window.currentWordListPage = currentWordListPage;
+
+    if (filtered.length === 0) {
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="6" class="py-8 text-center text-slate-400 text-xs">
+                    <i class="fa-solid fa-folder-open text-2xl mb-2 block"></i>
+                    ${emptySearchResultText}
+                </td>
+            </tr>
+        `;
+        updatePaginationUI(0, 1, 0, 0);
+    } else {
+        const startIdx = (currentWordListPage - 1) * wordListPageSize;
+        const endIdx = Math.min(filtered.length, startIdx + wordListPageSize);
+        const visibleItems = filtered.slice(startIdx, endIdx);
+
+        const rowsHtml = visibleItems.map(item => {
+            const lvInfo = getLevelInfo(item.level || 1);
+            const freeLvNum = item.freeLevel || 1;
+            const rawFreeInfo = (typeof getFreeLevelInfo === 'function')
+                ? getFreeLevelInfo(freeLvNum)
+                : { color: 'bg-slate-100 text-slate-600 border-slate-200' };
+            const freeLvText = getLocalizedFreeLevelName(freeLvNum);
+            const diffInfo = getCardDiffInfo(item);
+
+            const isChecked = selectedWordIds.has(item.id) ? 'checked' : '';
+            const safeId = escapeHtml(item.id);
+            const catText = escapeHtml((item.category && item.category.trim() !== '') ? item.category.trim() : defaultCatName);
+            const stabilityDays = typeof item.stability === 'number' ? Math.round(item.stability * 10) / 10 : 0;
+            const lapsesCount = item.lapses || 0;
+            const lvTitle = tr('wordDualStabilityTooltip', 'FSRS 穩定度: {days} 天 | 遺忘: {lapses} 次 | 自由練習: {freeLv} | 難度: {diffLv}', {
+                days: stabilityDays,
+                lapses: lapsesCount,
+                freeLv: freeLvText,
+                diffLv: diffInfo.label
+            });
+            const leechMark = lapsesCount >= 2 ? `<span class="ml-1 text-[10px] font-bold text-rose-500">×${lapsesCount}</span>` : '';
+            const posBadgeHtml = item.pos
+                ? `<span class="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-brand-50 dark:bg-brand-900/40 text-brand-600 dark:text-brand-300 border border-brand-100 dark:border-brand-800 whitespace-nowrap">${escapeHtml(item.pos)}</span>`
+                : '';
+            const sentenceHtml = item.sentence
+                ? `<div class="text-[11px] text-slate-400 dark:text-slate-500 mt-1 italic leading-snug break-words">${escapeHtml(item.sentence)}</div>`
+                : '';
+
+            return `
+                <tr class="group hover:bg-slate-50 dark:hover:bg-slate-700/50 transition">
+                    <td class="py-3 px-2.5 whitespace-nowrap align-top">
+                        <input type="checkbox" value="${safeId}" ${isChecked} onchange="toggleSelectWord('${safeId}', this.checked)" class="w-4 h-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500 cursor-pointer mt-0.5">
+                    </td>
+                    <td class="py-3 px-2.5 align-top">
+                        <div class="flex items-center gap-1.5 whitespace-nowrap">
+                            <span class="font-bold text-sm text-slate-900 dark:text-white whitespace-nowrap">${escapeHtml(item.word)}</span>
+                            ${posBadgeHtml}
+                        </div>
+                        <div class="text-[11px] font-mono font-normal text-slate-400 whitespace-nowrap mt-0.5">${escapeHtml(item.phonetic)}</div>
+                    </td>
+                    <td class="py-3 px-2.5 whitespace-nowrap align-top">
+                        <span title="${catText}" class="inline-block max-w-[90px] sm:max-w-[140px] truncate align-bottom px-2 py-0.5 rounded text-xs font-semibold bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-600">${catText}</span>
+                    </td>
+                    <td class="py-3 px-2.5 whitespace-nowrap align-top" title="${escapeHtml(lvTitle)}">
+                        <div class="flex flex-col items-start gap-1">
+                            <div class="flex items-center gap-1 flex-wrap">
+                                <span class="px-2 py-0.5 rounded text-[11px] font-semibold ${lvInfo.color} border">${lvInfo.name}</span>${leechMark}
+                                <span class="px-1.5 py-0.5 rounded text-[10px] font-bold ${diffInfo.color} border" title="${escapeHtml(diffInfo.label)}">${escapeHtml(diffInfo.shortLabel)}</span>
+                            </div>
+                            <button type="button" onclick="cycleWordFreeLevel('${safeId}')" title="${escapeHtml(cycleFreeTooltipText)}" class="px-1.5 py-0.5 rounded text-[10px] font-semibold ${rawFreeInfo.color} border hover:opacity-80 active:scale-95 transition cursor-pointer">
+                                ${escapeHtml(freeLvText)} <i class="fa-solid fa-rotate text-[9px] ml-0.5 opacity-70"></i>
+                            </button>
+                        </div>
+                    </td>
+                    <td class="py-3 px-2.5 align-top min-w-[160px] max-w-[200px] sm:max-w-[280px] md:max-w-sm whitespace-normal break-words [overflow-wrap:anywhere]">
+                        <div class="font-medium text-slate-800 dark:text-slate-200 leading-snug">${escapeHtml(item.meaning)}</div>
+                        ${sentenceHtml}
+                    </td>
+                    <td class="py-3 px-2.5 text-right whitespace-nowrap align-top sticky right-0 bg-white dark:bg-slate-800 group-hover:bg-slate-50 dark:group-hover:bg-slate-700 shadow-[-6px_0_8px_-4px_rgba(0,0,0,0.08)]">
+                        <div class="inline-flex items-center justify-end gap-1">
+                            <button type="button" onclick="editCard('${safeId}')" class="p-1.5 text-brand-600 hover:bg-brand-50 dark:hover:bg-slate-600 rounded transition" title="${escapeHtml(editTooltipText)}">
+                                <i class="fa-solid fa-pen-to-square"></i>
+                            </button>
+                            <button type="button" onclick="deleteCard('${safeId}')" class="p-1.5 text-rose-600 hover:bg-rose-50 dark:hover:bg-slate-600 rounded transition" title="${escapeHtml(deleteTooltipText)}">
+                                <i class="fa-solid fa-trash"></i>
+                            </button>
+                        </div>
+                    </td>
+                </tr>
+            `;
+        }).join('');
+
+        tbody.innerHTML = rowsHtml;
+        updatePaginationUI(filtered.length, totalPages, startIdx, endIdx);
+    }
+
+    updateBatchBadgeUI(filtered);
+}
+
+function toggleSelectWord(id, isChecked) {
+    if (isChecked) {
+        selectedWordIds.add(id);
+    } else {
+        selectedWordIds.delete(id);
+    }
+    updateBatchBadgeUI();
+}
+
+function toggleSelectAllWords(masterCheckbox) {
+    ensureAllWordsHaveUniqueIds();
+    const isChecked = masterCheckbox.checked;
+    const filtered = getFilteredWords();
+
+    if (isChecked) {
+        filtered.forEach(item => {
+            if (item && item.id) selectedWordIds.add(item.id);
+        });
+    } else {
+        const filteredIdSet = new Set(filtered.map(item => item.id));
+        for (const id of Array.from(selectedWordIds)) {
+            if (filteredIdSet.has(id)) {
+                selectedWordIds.delete(id);
+            }
+        }
+    }
+
+    renderWordList(false);
+}
+
+function updateBatchBadgeUI(precomputedFiltered = null) {
+    ensureAllWordsHaveUniqueIds();
+    const badge = document.getElementById('selectedCountBadge');
+    const masterCheckbox = document.getElementById('selectAllCheckbox');
+    const filtered = Array.isArray(precomputedFiltered) ? precomputedFiltered : getFilteredWords();
+
+    let selectedInFilteredCount = 0;
+    for (let i = 0; i < filtered.length; i++) {
+        if (selectedWordIds.has(filtered[i].id)) {
+            selectedInFilteredCount++;
+        }
+    }
+
+    if (masterCheckbox) {
+        const isAllSelected = filtered.length > 0 && selectedInFilteredCount === filtered.length;
+        masterCheckbox.checked = isAllSelected;
+        masterCheckbox.indeterminate = selectedInFilteredCount > 0 && selectedInFilteredCount < filtered.length;
+    }
+
+    if (!badge) return;
+    if (selectedWordIds.size > 0) {
+        const unitItem = tr('unitItem', '筆');
+        badge.innerText = `${selectedWordIds.size} / ${filtered.length} ${unitItem}`;
+        badge.classList.remove('hidden');
+    } else {
+        badge.classList.add('hidden');
+    }
+}
+
+/* ==========================================================================
+   ✏️ 單字新增與編輯表單控制
+   ========================================================================== */
+
+/**
+ * ⚡ 動態建立與更新單字編輯視窗中的「自由練習臨時等級」選單（支援即時 i18n）
+ */
+function ensureFreeLevelFormField() {
+    const freeWrapper = document.getElementById('formFreeLevelWrapper');
+    if (freeWrapper) {
+        const selectEl = document.getElementById('formFreeLevel');
+        if (selectEl) {
+            const prevVal = selectEl.value || '1';
+            selectEl.innerHTML = `
+                <option value="1">${tr('optFreeLv1', '臨時 Lv.1')}</option>
+                <option value="2">${tr('optFreeLv2', '臨時 Lv.2')}</option>
+                <option value="3">${tr('optFreeLv3', '臨時 Lv.3')}</option>
+                <option value="4">${tr('optFreeLv4', '臨時 Lv.4')}</option>
+                <option value="5">${tr('optFreeLv5', '臨時 Lv.5')}</option>
+            `;
+            selectEl.value = prevVal;
+        }
+    }
+}
+
+function editCard(id) {
+    const item = wordList.find(w => w.id === id);
+    if (!item) return;
+
+    const defaultCatName = tr('defaultCategoryName', '預設字庫');
+    const targetCat = (item.category && item.category.trim() !== '') ? item.category.trim() : defaultCatName;
+
+    ensureFreeLevelFormField();
+
+    document.getElementById('editCardId').value = item.id;
+    if (typeof setCategorySelectorValue === 'function') {
+        setCategorySelectorValue('form', targetCat);
+    } else {
+        document.getElementById('formCategory').value = targetCat;
+    }
+    document.getElementById('formWord').value = item.word || '';
+    document.getElementById('formPos').value = item.pos || '';
+    document.getElementById('formPhonetic').value = item.phonetic || '';
+    document.getElementById('formMeaning').value = item.meaning || '';
+    document.getElementById('formSentence').value = item.sentence || '';
+    document.getElementById('formTranslation').value = item.translation || '';
+
+    const levelSelect = document.getElementById('formLevel');
+    if (levelSelect) levelSelect.value = item.level || 1;
+
+    const freeLevelSelect = document.getElementById('formFreeLevel');
+    if (freeLevelSelect) freeLevelSelect.value = item.freeLevel || 1;
+
+    const diffLevelSelect = document.getElementById('formDiffLevel');
+    if (diffLevelSelect) {
+        if (item.diffLevelManual === true && typeof item.diffLevel === 'number') {
+            diffLevelSelect.value = String(item.diffLevel);
+        } else {
+            diffLevelSelect.value = 'auto';
+        }
+    }
+
+    document.getElementById('cardModalTitle').innerText = tr('modalTitleEdit', '編輯單字');
+    openModal('cardModal');
+}
+
+async function deleteCard(id) {
+    const ok = await (typeof window.lzhConfirm === 'function'
+        ? window.lzhConfirm(tr('confirmDeleteSingle', '確定要刪除此單字？'))
+        : Promise.resolve(false));
+    if (ok) {
+        wordList = wordList.filter(w => w.id !== id);
+        selectedWordIds.delete(id);
+        saveStorage(true);
+        updateCategorySelects();
+        updateUI();
+        if (currentCard && currentCard.id === id) nextCard(true);
+        showToast(tr('toastWordDeleted', '已刪除單字'), 'info');
+    }
+}
+
+async function handleClearAllWords() {
+    const ok = await (typeof window.lzhConfirm === 'function'
+        ? window.lzhConfirm(tr('confirmClearAll', '確定要清空所有單字？'))
+        : Promise.resolve(false));
+    if (ok) {
+        wordList = [];
+        selectedWordIds.clear();
+        ratingUndoStack = [];
+        saveStorage(true);
+        updateCategorySelects();
+        updateUI();
+        nextCard(true);
+        showToast(tr('toastDeckCleared', '單字庫已清空'), 'warning');
+    }
+}
+
+function handleSaveCardForm(e) {
+    e.preventDefault();
+
+    const defaultCategoryName = tr('defaultCategoryName', '預設字庫');
+    const defaultMeaningText = tr('noMeaning', '未設定釋義');
+
+    const id = document.getElementById('editCardId').value;
+
+    const catRes = (typeof getCategorySelectorValue === 'function')
+        ? getCategorySelectorValue('form')
+        : { isNew: false, value: document.getElementById('formCategory')?.value.trim() || '' };
+
+    if (catRes.isNew && !catRes.value) {
+        showToast(tr('toastEnterNewDeckName', '請輸入新字庫名稱！'), 'warning');
+        document.getElementById('formCategory')?.focus();
+        return;
+    }
+    const category = catRes.value || defaultCategoryName;
+
+    const rawWord = document.getElementById('formWord').value.trim();
+    const rawPos = document.getElementById('formPos').value.trim();
+    const phonetic = document.getElementById('formPhonetic').value.trim();
+    const rawMeaning = document.getElementById('formMeaning').value.trim() || defaultMeaningText;
+    const sentence = document.getElementById('formSentence').value.trim();
+    const translation = document.getElementById('formTranslation').value.trim();
+
+    const levelElem = document.getElementById('formLevel');
+    const level = levelElem ? (parseInt(levelElem.value, 10) || 1) : 1;
+
+    const freeLevelElem = document.getElementById('formFreeLevel');
+    const freeLevel = freeLevelElem ? (parseInt(freeLevelElem.value, 10) || 1) : 1;
+
+    const diffLevelElem = document.getElementById('formDiffLevel');
+    const diffRawVal = diffLevelElem ? diffLevelElem.value : 'auto';
+    const isManualDiff = diffRawVal !== 'auto';
+    const computedAutoDiff = (typeof getWordDifficultyInfo === 'function') ? getWordDifficultyInfo(rawWord).level : 0;
+    const resolvedDiffLevel = isManualDiff ? Math.min(6, Math.max(0, parseInt(diffRawVal, 10) || 0)) : computedAutoDiff;
+
+    if (!rawWord) {
+        showToast(tr('toastFillWordFirst', '請先輸入單字！'), 'warning');
+        return;
+    }
+
+    const cleanObj = (typeof sanitizeWordAndPos === 'function')
+        ? sanitizeWordAndPos(rawWord, rawPos, rawMeaning)
+        : { word: rawWord, pos: rawPos, meaning: rawMeaning };
+
+    const targetDeckId = (typeof generateDeterministicDeckId === 'function')
+        ? generateDeterministicDeckId(category)
+        : undefined;
+    const deterministicCardId = (typeof generateDeterministicCardId === 'function')
+        ? generateDeterministicCardId(category, cleanObj.word)
+        : '';
+
+    if (id) {
+        const index = wordList.findIndex(w => w.id === id);
+        if (index !== -1) {
+            const prevCard = wordList[index];
+            const levelChanged = (prevCard.level || 1) !== level;
+            const freeLevelChanged = (prevCard.freeLevel || 1) !== freeLevel;
+            const updatedCard = {
+                ...prevCard,
+                id: deterministicCardId || prevCard.id,
+                deckId: targetDeckId || prevCard.deckId,
+                category,
+                word: cleanObj.word,
+                pos: cleanObj.pos,
+                phonetic,
+                meaning: cleanObj.meaning,
+                sentence,
+                translation,
+                level,
+                freeLevel,
+                freeStreak: freeLevelChanged ? 0 : (prevCard.freeStreak || 0),
+                diffLevelManual: isManualDiff,
+                diffLevel: isManualDiff ? resolvedDiffLevel : ((typeof getWordDifficultyInfo === 'function') ? getWordDifficultyInfo(cleanObj.word).level : 0),
+                updatedAt: Date.now()
+            };
+
+            if (levelChanged) {
+                delete updatedCard.stability;
+                delete updatedCard.difficulty;
+                delete updatedCard.nextReview;
+                updatedCard.knowStreak = 0;
+            }
+            if (typeof migrateCardFSRS === 'function') {
+                migrateCardFSRS(updatedCard);
+            }
+            wordList[index] = updatedCard;
+            if ((levelChanged || freeLevelChanged) && typeof syncDuplicateWordsProgress === 'function') {
+                syncDuplicateWordsProgress(updatedCard);
+            }
+        }
+        showToast(tr('toastCardSaved', '單字已儲存！'), 'success');
+    } else {
+        const normWord = cleanObj.word.trim().toLowerCase();
+        const sameDeckIdx = wordList.findIndex(w =>
+            ((w.category && w.category.trim() !== '') ? w.category.trim() : defaultCategoryName) === category.trim() &&
+            (w.word || '').trim().toLowerCase() === normWord
+        );
+
+        if (sameDeckIdx !== -1) {
+            const existing = wordList[sameDeckIdx];
+            const keepHigherLevel = Math.max(existing.level || 1, level);
+            const keepHigherFreeLevel = Math.max(existing.freeLevel || 1, freeLevel);
+            const mergedCard = {
+                ...existing,
+                id: deterministicCardId || existing.id,
+                deckId: targetDeckId || existing.deckId,
+                pos: cleanObj.pos || existing.pos,
+                phonetic: phonetic || existing.phonetic,
+                meaning: (cleanObj.meaning && cleanObj.meaning !== defaultMeaningText) ? cleanObj.meaning : existing.meaning,
+                sentence: sentence || existing.sentence,
+                translation: translation || existing.translation,
+                level: keepHigherLevel,
+                freeLevel: keepHigherFreeLevel,
+                freeStreak: keepHigherFreeLevel !== (existing.freeLevel || 1) ? 0 : (existing.freeStreak || 0),
+                diffLevelManual: isManualDiff || existing.diffLevelManual === true,
+                diffLevel: isManualDiff ? resolvedDiffLevel : ((typeof getWordDifficultyInfo === 'function') ? getWordDifficultyInfo(cleanObj.word).level : (existing.diffLevel || 0)),
+                updatedAt: Date.now()
+            };
+            if (keepHigherLevel !== (existing.level || 1)) {
+                delete mergedCard.stability;
+                delete mergedCard.difficulty;
+                delete mergedCard.nextReview;
+                mergedCard.knowStreak = 0;
+            }
+            if (typeof migrateCardFSRS === 'function') {
+                migrateCardFSRS(mergedCard);
+            }
+            wordList[sameDeckIdx] = mergedCard;
+            showToast(tr('toastCardMerged', '同字庫已存在相同單字，已自動合併並保留最高進度！'), 'info');
+        } else {
+            const newCard = {
+                id: deterministicCardId || ('w_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4)),
+                deckId: targetDeckId,
+                category, 
+                word: cleanObj.word, 
+                pos: cleanObj.pos, 
+                phonetic, 
+                meaning: cleanObj.meaning, 
+                sentence, 
+                translation,
+                level,
+                knowStreak: 0,
+                freeLevel,
+                freeStreak: 0,
+                diffLevelManual: isManualDiff,
+                diffLevel: isManualDiff ? resolvedDiffLevel : ((typeof getWordDifficultyInfo === 'function') ? getWordDifficultyInfo(cleanObj.word).level : 0),
+                updatedAt: Date.now()
+            };
+            if (typeof migrateCardFSRS === 'function') {
+                migrateCardFSRS(newCard);
+            }
+            wordList.unshift(newCard);
+            showToast(tr('toastCardAdded', '新增單字成功！'), 'success');
+        }
+    }
+
+    saveStorage();
+    updateCategorySelects();
+    updateUI();
+    closeModal('cardModal');
+    if (!currentCard) nextCard(true);
+}
+
+async function handleAiSingleFill() {
+    const word = document.getElementById('formWord').value.trim();
+    if (!word) {
+        showToast(tr('toastEnterEnglishFirst', '請先輸入外文單字！'), 'warning');
+        return;
+    }
+
+    const btn = document.getElementById('aiGenerateBtn');
+    const origHtml = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i><span>${tr('progressAiParsing', 'AI 解析中...')}</span>`;
+
+    if (typeof autoFillWithAI === 'function') {
+        const result = await autoFillWithAI(word);
+        if (result) {
+            if (result.pos) document.getElementById('formPos').value = result.pos;
+            if (result.phonetic) document.getElementById('formPhonetic').value = result.phonetic;
+            if (result.meaning) document.getElementById('formMeaning').value = result.meaning;
+            if (result.sentence) document.getElementById('formSentence').value = result.sentence;
+            if (result.translation) document.getElementById('formTranslation').value = result.translation;
+            showToast(tr('toastAiSingleSuccess', 'AI 自動補齊成功！'), 'success');
+        }
+    }
+
+    btn.disabled = false;
+    btn.innerHTML = origHtml;
+}
+
+function openModal(id) {
+    const modal = document.getElementById(id);
+    if (!modal) return;
+    modal.classList.remove('hidden');
+    modal.classList.add('flex');
+
+    if (id === 'backupModal') {
+        if (typeof updateCategorySelects === 'function') {
+            updateCategorySelects();
+        }
+        const exportSelect = document.getElementById('exportCategorySelect');
+        const activeCats = Array.isArray(window.selectedCategories) ? window.selectedCategories : ['ALL'];
+        if (exportSelect) {
+            if (!activeCats.includes('ALL') && activeCats.length === 1) {
+                exportSelect.value = activeCats[0];
+            } else {
+                exportSelect.value = 'ALL';
+            }
+        }
+    }
+
+    if (id === 'cardModal') {
+        ensureFreeLevelFormField();
+        const isEditing = !!document.getElementById('editCardId')?.value;
+        if (!isEditing) {
+            const freeLevelSelect = document.getElementById('formFreeLevel');
+            if (freeLevelSelect) freeLevelSelect.value = '1';
+            const diffLevelSelect = document.getElementById('formDiffLevel');
+            if (diffLevelSelect) diffLevelSelect.value = 'auto';
+            const defaultCatName = tr('defaultCategoryName', '預設字庫');
+            const activeCats = window.selectedCategories || ['ALL'];
+            const initialCat = (activeCats.length === 1 && activeCats[0] !== 'ALL') ? activeCats[0] : defaultCatName;
+            setCategorySelectorValue('form', initialCat);
+        }
+    }
+
+    if (id === 'batchModal' || id === 'quickAddModal') {
+        if (typeof updateBatchPlaceholders === 'function') {
+            updateBatchPlaceholders();
+        }
+    }
+
+    if (typeof applyLanguageUI === 'function') {
+        applyLanguageUI();
+    }
+
+    if (id === 'keyModal') {
+        const keyStorageName = typeof API_KEY_STORAGE_NAME !== 'undefined' ? API_KEY_STORAGE_NAME : 'flashcard_gemini_key_v1';
+        const existingGeminiKey = localStorage.getItem(keyStorageName) || '';
+        const existingGroqKey = localStorage.getItem('lzhcard_groq_key_v1') || '';
+        const groqInput = document.getElementById('groqApiKeyInput');
+        const keyInput = document.getElementById('geminiApiKeyInput');
+        if (groqInput) groqInput.value = existingGroqKey;
+        if (keyInput) keyInput.value = existingGeminiKey;
+
+        const hasAny = Boolean(existingGroqKey.trim() || existingGeminiKey.trim());
+        const savedMode = hasAny ? 'personal' : (localStorage.getItem('lzhcard_api_mode') || 'shared');
+        const radShared = document.getElementById('apiModeShared');
+        const radPersonal = document.getElementById('apiModePersonal');
+        if (radShared) radShared.checked = (savedMode === 'shared');
+        if (radPersonal) radPersonal.checked = (savedMode === 'personal');
+        if (typeof switchApiMode === 'function') switchApiMode(savedMode);
+
+        if (hasAny) {
+            showToast(tr('toastKeyLoaded', '已載入本機個人 API Key'), "info");
+        }
+    }
+}
+
+
+function closeModal(id) {
+    const modal = document.getElementById(id);
+    if (!modal) return;
+    modal.classList.remove('flex');
+    modal.classList.add('hidden');
+
+    if (id === 'cardModal') {
+        const cardForm = document.getElementById('cardForm');
+        if (cardForm) cardForm.reset();
+        const editIdInput = document.getElementById('editCardId');
+        if (editIdInput) editIdInput.value = '';
+        const freeLevelSelect = document.getElementById('formFreeLevel');
+        if (freeLevelSelect) freeLevelSelect.value = '1';
+        const diffLevelSelect = document.getElementById('formDiffLevel');
+        if (diffLevelSelect) diffLevelSelect.value = 'auto';
+        const defaultCatName = tr('defaultCategoryName', '預設字庫');
+        setCategorySelectorValue('form', defaultCatName);
+        const titleElem = document.getElementById('cardModalTitle');
+        if (titleElem) titleElem.innerText = tr('modalTitleAdd', '新增單字');
+    }
+    if (id === 'batchModal' && typeof resetBatchModal === 'function') {
+        resetBatchModal();
+    }
+}
+
+function isDesktopWidgetClient() {
+    try {
+        if (typeof window !== 'undefined') {
+            if (window.LZHDesktopWidget && window.LZHDesktopWidget.isElectron) return true;
+            if (window.location && window.location.search) {
+                if (new URLSearchParams(window.location.search).get('widget') === 'desktop') return true;
+            }
+        }
+        if (typeof document !== 'undefined' && document.documentElement) {
+            if (
+                document.documentElement.getAttribute('data-widget-mode') === 'desktop' ||
+                document.documentElement.dataset?.widgetMode === 'desktop'
+            ) {
+                return true;
+            }
+        }
+    } catch (e) {}
+    return false;
+}
+
+function isAndroidNativeOverlayCapable() {
+    try {
+        if (typeof window === 'undefined' || !window.Capacitor) return false;
+        if (typeof window.Capacitor.isNativePlatform === 'function') {
+            return Boolean(window.Capacitor.isNativePlatform());
+        }
+        return Boolean(window.Capacitor.isNative);
+    } catch (e) {
+        return false;
+    }
+}
+
+function getMasterFloatingEnabledState() {
+    if (isAndroidNativeOverlayCapable()) {
+        const nativeSt = window._nativeSystemOverlayStatus;
+        if (nativeSt && nativeSt.supported) {
+            return Boolean(nativeSt.granted && nativeSt.running);
+        }
+        return localStorage.getItem('lzhcard_system_overlay_enabled') === 'true';
+    }
+    if (typeof FloatingTranslator !== 'undefined' && typeof FloatingTranslator.isEnabled === 'function') {
+        return Boolean(FloatingTranslator.isEnabled());
+    }
+    const stored = localStorage.getItem('lzhcard_floating_translator_enabled');
+    return stored === null ? true : stored === 'true';
+}
+
+function updateFloatingMasterSwitchUI() {
+    const enabled = getMasterFloatingEnabledState();
+    const btn = document.getElementById('quickActionFloatingToggleBtn');
+    const iconWrap = document.getElementById('quickFloatingIconWrap');
+    const badge = document.getElementById('quickFloatingStateBadge');
+    const settingsToggle = document.getElementById('floatingTranslatorToggle');
+    const systemOverlayToggle = document.getElementById('systemOverlayToggle');
+
+    if (isAndroidNativeOverlayCapable()) {
+        const nativeSt = window._nativeSystemOverlayStatus;
+        if (systemOverlayToggle) {
+            systemOverlayToggle.checked = nativeSt && nativeSt.supported
+                ? Boolean(nativeSt.granted && nativeSt.running)
+                : enabled;
+        }
+        if (settingsToggle) {
+            const ftStored = localStorage.getItem('lzhcard_floating_translator_enabled');
+            settingsToggle.checked = enabled || (ftStored === null ? true : ftStored === 'true');
+        }
+    } else if (settingsToggle) {
+        settingsToggle.checked = enabled;
+    }
+
+    if (btn) {
+        btn.setAttribute('aria-pressed', enabled ? 'true' : 'false');
+        btn.className = enabled
+            ? 'min-h-[48px] px-3 py-2.5 bg-white dark:bg-slate-800 hover:bg-brand-50/80 dark:hover:bg-slate-700/70 rounded-2xl border border-emerald-300 dark:border-emerald-700 transition shadow-2xs flex items-center justify-between gap-2 cursor-pointer group'
+            : 'min-h-[48px] px-3 py-2.5 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700/70 rounded-2xl border border-slate-200 dark:border-slate-700 transition shadow-2xs flex items-center justify-between gap-2 cursor-pointer group';
+    }
+
+    if (iconWrap) {
+        iconWrap.className = enabled
+            ? 'w-8 h-8 rounded-xl bg-emerald-100 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform'
+            : 'w-8 h-8 rounded-xl bg-slate-100 dark:bg-slate-700 text-slate-400 dark:text-slate-400 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform';
+    }
+
+    if (badge) {
+        badge.textContent = enabled
+            ? tr('quickFloatingOn', 'ON')
+            : tr('quickFloatingOff', 'OFF');
+        badge.className = enabled
+            ? 'px-1.5 py-0.5 rounded-full text-[10px] font-black bg-emerald-100 dark:bg-emerald-950/70 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700 shrink-0 uppercase'
+            : 'px-1.5 py-0.5 rounded-full text-[10px] font-black bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-slate-600 shrink-0 uppercase';
+    }
+}
+
+async function toggleUnifiedAndroidOverlay(desiredEnable) {
+    const next = typeof desiredEnable === 'boolean' ? desiredEnable : !getMasterFloatingEnabledState();
+    const sharedToggle = window.ensureAndToggleAndroidOverlayPermission || window.handleSystemOverlayToggle;
+    if (typeof sharedToggle === 'function') {
+        const result = await sharedToggle(next);
+        updateFloatingMasterSwitchUI();
+        return result;
+    }
+    return false;
+}
+
+async function toggleMasterFloatingOverlay() {
+    if (isAndroidNativeOverlayCapable()) {
+        const nextNative = !getMasterFloatingEnabledState();
+        const ok = await toggleUnifiedAndroidOverlay(nextNative);
+        if (ok && typeof saveStorage === 'function') {
+            try { saveStorage(); } catch (e) {}
+        }
+        return ok;
+    }
+
+    const next = !getMasterFloatingEnabledState();
+    try {
+        localStorage.setItem('lzhcard_floating_translator_enabled', next ? 'true' : 'false');
+    } catch (e) {}
+
+    if (typeof FloatingTranslator !== 'undefined' && typeof FloatingTranslator.setEnabled === 'function') {
+        FloatingTranslator.setEnabled(next);
+    }
+
+    if (window.LZHDesktopWidget && window.LZHDesktopWidget.isElectron) {
+        try {
+            if (next && typeof window.LZHDesktopWidget.showWidget === 'function') {
+                window.LZHDesktopWidget.showWidget();
+            } else if (!next && typeof window.LZHDesktopWidget.hideWidget === 'function') {
+                window.LZHDesktopWidget.hideWidget();
+            }
+        } catch (e) {}
+    }
+
+    updateFloatingMasterSwitchUI();
+    if (typeof saveStorage === 'function') {
+        try { saveStorage(); } catch (e) {}
+    }
+    if (typeof showToast === 'function') {
+        showToast(
+            next
+                ? tr('toastFloatingMasterOn', '已開啟懸浮視窗（網頁懸浮球與桌面版小工具已同步啟用）')
+                : tr('toastFloatingMasterOff', '已關閉懸浮視窗（網頁懸浮球與桌面版小工具已同步隱藏）'),
+            next ? 'success' : 'info'
+        );
+    }
+    return next;
+}
+
+if (typeof window !== 'undefined') {
+    window.isDesktopWidgetClient = isDesktopWidgetClient;
+    window.getMasterFloatingEnabledState = getMasterFloatingEnabledState;
+    window.updateFloatingMasterSwitchUI = updateFloatingMasterSwitchUI;
+    window.toggleUnifiedAndroidOverlay = toggleUnifiedAndroidOverlay;
+    window.toggleMasterFloatingOverlay = toggleMasterFloatingOverlay;
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', updateFloatingMasterSwitchUI);
+    } else {
+        setTimeout(updateFloatingMasterSwitchUI, 0);
+    }
+}

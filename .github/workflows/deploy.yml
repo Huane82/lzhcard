@@ -1,0 +1,29 @@
+name: Deploy to Firebase
+
+on:
+  push:
+    branches:
+      - main
+      - master
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Firebase CLI
+        run: npm install -g firebase-tools
+
+      - name: Deploy Hosting and Database Rules
+        env:
+          FIREBASE_SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          printf '%s' "$FIREBASE_SA" > sa.json
+          export GOOGLE_APPLICATION_CREDENTIALS="$(pwd)/sa.json"
+          firebase deploy --only hosting,firestore,database --project flashcards-5f514
+          rm -f sa.json

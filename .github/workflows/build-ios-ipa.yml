@@ -1,0 +1,62 @@
+name: 自動打包 iOS IPA (未簽章版)
+
+on:
+  # 建議使用手動按鈕觸發，避免每次改網頁小字都耗掉免費額度
+  workflow_dispatch:
+  # 如果你希望每次 push 到 main 分支都自動打包，把下面這兩行的 # 刪掉即可：
+  # push:
+  #   branches: [ main ]
+
+jobs:
+  build-ios:
+    runs-on: macos-latest
+
+    steps:
+      - name: 1. 下載專案程式碼
+        uses: actions/checkout@v4
+
+      - name: 2. 安裝 Node.js 22 環境
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: 3. 安裝專案相依套件
+        run: npm install
+
+      - name: 4. 動態建立 iOS 專案並同步 www 網頁
+        run: |
+          if [ ! -d "ios" ]; then
+            CAP_VER=$(node -p "require('./node_modules/@capacitor/core/package.json').version.split('.')[0]")
+            npm install @capacitor/ios@^${CAP_VER}.0.0
+            npx cap add ios
+          fi
+          npx cap sync ios
+
+      - name: 5. 透過 Xcode 編譯未簽章 App
+        run: |
+          if [ -d "ios/App/App.xcworkspace" ]; then
+            TARGET_FLAG="-workspace ios/App/App.xcworkspace"
+          else
+            TARGET_FLAG="-project ios/App/App.xcodeproj"
+          fi
+
+          xcodebuild $TARGET_FLAG \
+            -scheme App \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: 6. 打包成 IPA 安裝檔
+        run: |
+          mkdir -p Payload
+          cp -r build/Build/Products/Release-iphoneos/App.app Payload/
+          zip -r lzhcard-unsigned.ipa Payload
+
+      - name: 7. 上傳 IPA 供下載
+        uses: actions/upload-artifact@v4
+        with:
+          name: lzhcard-ios-ipa
+          path: lzhcard-unsigned.ipa

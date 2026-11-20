@@ -1,0 +1,2862 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>LZHCard 跨 App 三語懸浮翻譯 & 聊天</title>
+  <style>
+    :root {
+      --bg: #ffffff;
+      --surface: #f8fafc;
+      --surface-2: #f1f5f9;
+      --border: #e2e8f0;
+      --text: #0f172a;
+      --muted: #64748b;
+      --brand: #4f46e5;
+      --brand-hover: #4338ca;
+      --brand-soft: #eef2ff;
+      --emerald: #059669;
+      --emerald-soft: #ecfdf5;
+      --amber: #d97706;
+      --rose: #e11d48;
+      --bg-glass: rgba(255, 255, 255, 0.9);
+      --shadow: 0 18px 40px rgba(2, 6, 23, 0.28);
+    }
+    html.dark {
+      --bg: #1e293b;
+      --surface: #0f172a;
+      --surface-2: #334155;
+      --border: #334155;
+      --text: #f8fafc;
+      --muted: #94a3b8;
+      --brand: #6366f1;
+      --brand-hover: #4f46e5;
+      --brand-soft: rgba(99, 102, 241, 0.22);
+      --emerald: #10b981;
+      --emerald-soft: rgba(16, 185, 129, 0.16);
+      --bg-glass: rgba(15, 23, 42, 0.9);
+      --shadow: 0 20px 44px rgba(0, 0, 0, 0.56);
+    }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: transparent;
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans TC", sans-serif;
+      font-size: 13px;
+      line-height: 1.45;
+      overflow: hidden;
+    }
+    .hidden { display: none !important; }
+
+    /* ================== 一般懸浮面板容器 ================== */
+    .panel {
+      width: 100%;
+      max-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      background: var(--bg-glass);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+      transition: transform 260ms cubic-bezier(0.16, 1, 0.3, 1), opacity 220ms cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+      padding: 9px 11px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      cursor: move;
+      user-select: none;
+      touch-action: none;
+      flex-shrink: 0;
+    }
+    .header-actions { display: flex; align-items: center; gap: 5px; flex-shrink: 0; }
+    .mode-switch-pill {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px 9px;
+      border-radius: 11px;
+      background: var(--brand-soft);
+      border: 1px solid rgba(99, 102, 241, 0.35);
+      color: var(--brand);
+      font-size: 11px;
+      font-weight: 900;
+      cursor: pointer;
+    }
+    .unread-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 999px;
+      background: var(--rose);
+      display: inline-block;
+    }
+    .pill-btn {
+      border: 1px solid var(--border);
+      background: var(--bg);
+      color: var(--text);
+      font-size: 11px;
+      font-weight: 700;
+      border-radius: 8px;
+      padding: 4px 7px;
+      cursor: pointer;
+    }
+    .icon-btn {
+      width: 28px;
+      height: 28px;
+      border: 0;
+      background: var(--surface-2);
+      color: var(--text);
+      border-radius: 8px;
+      font-weight: 800;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .tabs {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 6px;
+      padding: 7px 10px;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg);
+      flex-shrink: 0;
+    }
+    .tab-btn {
+      border: 0;
+      border-radius: 11px;
+      padding: 6px 5px;
+      font-size: 11px;
+      font-weight: 800;
+      background: var(--surface-2);
+      color: var(--muted);
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      transition: background 200ms cubic-bezier(0.16, 1, 0.3, 1), color 200ms cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .tab-btn.active {
+      background: var(--brand);
+      color: #ffffff;
+    }
+    .body {
+      padding: 10px 12px 12px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 9px;
+      max-height: calc(100vh - 96px);
+    }
+    .card-box {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 9px 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 7px;
+    }
+    .row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+    .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 5px; }
+    .btn {
+      border: 0;
+      border-radius: 10px;
+      padding: 7px 10px;
+      font-size: 11px;
+      font-weight: 800;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+    }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-brand { background: var(--brand); color: #ffffff; }
+    .btn-emerald { background: var(--emerald); color: #ffffff; }
+    .btn-rose { background: var(--rose); color: #ffffff; }
+    .btn-amber { background: var(--amber); color: #ffffff; }
+    .btn-chip { background: var(--surface-2); color: var(--text); border: 1px solid var(--border); }
+    .btn-sm { padding: 4px 8px; font-size: 10.5px; border-radius: 8px; }
+    .label-xs { font-size: 11px; font-weight: 800; color: var(--muted); }
+    .muted { font-size: 11px; color: var(--muted); }
+    textarea, input[type="text"], select {
+      width: 100%;
+      border: 1px solid var(--border);
+      background: var(--bg);
+      color: var(--text);
+      border-radius: 10px;
+      padding: 7px 9px;
+      font-size: 12px;
+      font-family: inherit;
+      outline: none;
+    }
+    .token-area {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 11px;
+      padding: 9px;
+      font-size: 13px;
+      line-height: 1.75;
+    }
+    .tok {
+      display: inline;
+      padding: 1px 2px;
+      border-radius: 4px;
+      border-bottom: 1px dotted rgba(99, 102, 241, 0.48);
+      cursor: pointer;
+    }
+    .tok:hover, .tok.active { background: var(--brand-soft); color: var(--brand); }
+    .tok.selected { background: rgba(250, 204, 21, 0.42); border-bottom: 2px solid #eab308; }
+    .bubble {
+      background: var(--bg);
+      border: 1.5px solid var(--brand);
+      border-radius: 12px;
+      padding: 9px 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      box-shadow: 0 8px 20px rgba(15, 23, 42, 0.14);
+    }
+    .badge {
+      display: inline-block;
+      padding: 1px 6px;
+      border-radius: 6px;
+      font-size: 10px;
+      font-weight: 800;
+      background: var(--brand-soft);
+      color: var(--brand);
+    }
+    .sel-box {
+      background: var(--emerald-soft);
+      border: 1px solid rgba(16, 185, 129, 0.35);
+      border-radius: 12px;
+      padding: 8px 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .chip-wrap { display: flex; flex-wrap: wrap; gap: 5px; max-height: 68px; overflow-y: auto; }
+    .sel-chip {
+      background: var(--bg);
+      border: 1px solid rgba(16, 185, 129, 0.45);
+      color: var(--emerald);
+      border-radius: 8px;
+      padding: 2px 7px;
+      font-size: 11px;
+      font-weight: 800;
+      cursor: pointer;
+    }
+
+    /* 圖片熱區精準對框容器 */
+    .stage-viewport {
+      width: 100%;
+      height: 195px;
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #020617;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+      touch-action: none;
+    }
+    .stage-box {
+      position: relative;
+      display: inline-block;
+      max-width: 100%;
+      max-height: 100%;
+      flex-shrink: 0;
+      line-height: 0;
+      transform-origin: center center;
+      will-change: transform;
+    }
+    .stage-box > img {
+      display: block;
+      width: auto;
+      height: auto;
+      max-width: 100%;
+      max-height: 190px;
+      object-fit: contain;
+      image-orientation: from-image;
+      user-select: none;
+      -webkit-user-drag: none;
+    }
+    .ov-zoom-controls {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .ov-zoom-btn {
+      min-width: 44px;
+      min-height: 44px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0 8px;
+      border-radius: 10px;
+      font-size: 11px;
+      font-weight: 800;
+      cursor: pointer;
+    }
+    .photo-overlay { position: absolute; inset: 0; }
+    .hotspot {
+      position: absolute;
+      border: 1.5px solid rgba(59, 130, 246, 0.78);
+      background: rgba(59, 130, 246, 0.14);
+      border-radius: 4px;
+      padding: 0;
+      cursor: pointer;
+    }
+    .hotspot.active { border-color: #6366f1; background: rgba(99, 102, 241, 0.32); box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.35); }
+    .hotspot.selected { border-color: #10b981; background: rgba(16, 185, 129, 0.32); }
+    .hotspot.selected::after {
+      content: "";
+      position: absolute;
+      top: -7px;
+      right: -7px;
+      width: 14px;
+      height: 14px;
+      border-radius: 999px;
+      background-color: #10b981;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='3.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E");
+      background-size: 9px 9px;
+      background-position: center;
+      background-repeat: no-repeat;
+    }
+
+    /* ================== 高科技動效：等化器 LIVE SYNC / 掃描線 / 分層徽章 ================== */
+    .ov-motion-enter {
+      animation: ovMotionFadeSlide 240ms cubic-bezier(0.16, 1, 0.3, 1) both;
+    }
+    @keyframes ovMotionFadeSlide {
+      0% { opacity: 0; transform: translate3d(0, 7px, 0) scale(0.985); }
+      100% { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+    }
+    .ov-live-beacon {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 2px 7px;
+      border-radius: 999px;
+      background: rgba(16, 185, 129, 0.15);
+      border: 1px solid rgba(16, 185, 129, 0.38);
+      color: var(--emerald);
+      font-size: 9.5px;
+      font-weight: 900;
+      letter-spacing: 0.05em;
+    }
+    .ov-live-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 999px;
+      background: #10b981;
+      box-shadow: 0 0 8px rgba(16, 185, 129, 0.85);
+      animation: ovLiveBreath 1.4s ease-in-out infinite;
+      flex-shrink: 0;
+    }
+    @keyframes ovLiveBreath {
+      0%, 100% { opacity: 0.55; transform: scale(0.9); }
+      50% { opacity: 1; transform: scale(1.2); }
+    }
+    .ov-eq-bars {
+      display: inline-flex;
+      align-items: flex-end;
+      gap: 2px;
+      height: 10px;
+    }
+    .ov-eq-bar {
+      width: 2px;
+      height: 100%;
+      border-radius: 999px;
+      background: #10b981;
+      transform-origin: bottom center;
+      animation: ovEqPulse 900ms cubic-bezier(0.4, 0, 0.2, 1) infinite;
+    }
+    .ov-eq-bar:nth-child(2) { animation-delay: 160ms; background: #06b6d4; }
+    .ov-eq-bar:nth-child(3) { animation-delay: 320ms; }
+    .ov-eq-bar:nth-child(4) { animation-delay: 480ms; background: #38bdf8; }
+    @keyframes ovEqPulse {
+      0%, 100% { transform: scaleY(0.28); opacity: 0.75; }
+      50% { transform: scaleY(1); opacity: 1; }
+    }
+    .ov-scanline-layer {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      overflow: hidden;
+      background: rgba(6, 182, 212, 0.06);
+    }
+    .ov-scanline-beam {
+      position: absolute;
+      left: 0;
+      right: 0;
+      height: 32px;
+      background: linear-gradient(180deg, rgba(34, 211, 238, 0) 0%, rgba(34, 211, 238, 0.28) 78%, rgba(103, 232, 249, 0.95) 100%);
+      border-bottom: 2px solid #67e8f9;
+      box-shadow: 0 4px 16px rgba(34, 211, 238, 0.65);
+      animation: ovLaserSweep 1.65s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+    }
+    @keyframes ovLaserSweep {
+      0% { transform: translateY(-36px); opacity: 0; }
+      12% { opacity: 1; }
+      88% { opacity: 1; }
+      100% { transform: translateY(200px); opacity: 0; }
+    }
+    .ov-scanline-layer--fs .ov-scanline-beam {
+      animation-name: ovLaserSweepFs;
+    }
+    @keyframes ovLaserSweepFs {
+      0% { transform: translateY(-40px); opacity: 0; }
+      12% { opacity: 1; }
+      88% { opacity: 1; }
+      100% { transform: translateY(74vh); opacity: 0; }
+    }
+    .ov-reticle-corner {
+      position: absolute;
+      width: 13px;
+      height: 13px;
+      border-color: #22d3ee;
+      border-style: solid;
+      opacity: 0.92;
+    }
+    .ov-reticle-tl { top: 6px; left: 6px; border-width: 2px 0 0 2px; border-top-left-radius: 3px; }
+    .ov-reticle-tr { top: 6px; right: 6px; border-width: 2px 2px 0 0; border-top-right-radius: 3px; }
+    .ov-reticle-bl { bottom: 6px; left: 6px; border-width: 0 0 2px 2px; border-bottom-left-radius: 3px; }
+    .ov-reticle-br { bottom: 6px; right: 6px; border-width: 0 2px 2px 0; border-bottom-right-radius: 3px; }
+    .ov-tier-badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 1.5px 6px;
+      border-radius: 6px;
+      font-size: 9px;
+      font-weight: 900;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      transition: background-color 260ms cubic-bezier(0.16, 1, 0.3, 1), color 260ms ease;
+    }
+    .ov-tier-badge--draft {
+      background: rgba(245, 158, 11, 0.16);
+      color: #b45309;
+      border: 1px solid rgba(245, 158, 11, 0.38);
+    }
+    html.dark .ov-tier-badge--draft {
+      color: #fcd34d;
+    }
+    .ov-tier-badge--context {
+      background: linear-gradient(110deg, rgba(16, 185, 129, 0.18), rgba(6, 182, 212, 0.22), rgba(99, 102, 241, 0.2));
+      color: var(--emerald);
+      border: 1px solid rgba(16, 185, 129, 0.42);
+      animation: ovTierShimmer 1.35s cubic-bezier(0.16, 1, 0.3, 1) 1;
+    }
+    .ov-tier-badge--youtube {
+      background: rgba(225, 29, 72, 0.14);
+      color: var(--rose);
+      border: 1px solid rgba(225, 29, 72, 0.36);
+    }
+    @keyframes ovTierShimmer {
+      0% { filter: brightness(1.35); transform: scale(1.04); }
+      100% { filter: brightness(1); transform: scale(1); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .ov-motion-enter, .ov-live-dot, .ov-eq-bar, .ov-scanline-beam, .ov-tier-badge--context {
+        animation: none !important;
+        transition: none !important;
+      }
+    }
+
+    .deck-picker { position: relative; flex: 1; min-width: 120px; }
+    .deck-menu {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: calc(100% + 4px);
+      z-index: 30;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      box-shadow: 0 10px 24px rgba(2, 6, 23, 0.25);
+      max-height: 140px;
+      overflow-y: auto;
+      padding: 4px;
+    }
+    .deck-opt {
+      display: block;
+      width: 100%;
+      text-align: left;
+      border: 0;
+      background: transparent;
+      color: var(--text);
+      padding: 6px 8px;
+      border-radius: 7px;
+      font-size: 11px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .deck-opt:hover { background: var(--surface-2); }
+
+    /* ================== 聊天面板 ================== */
+    .chat-wrap {
+      display: flex;
+      flex-direction: column;
+      height: 360px;
+      max-height: calc(100vh - 82px);
+      gap: 7px;
+    }
+    .chat-list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; padding-right: 2px; }
+    .chat-item {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 9px;
+      border-radius: 12px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text);
+      text-align: left;
+      cursor: pointer;
+    }
+    .chat-item:hover { border-color: var(--brand); }
+    .chat-avatar-wrap { position: relative; flex-shrink: 0; }
+    .chat-avatar { width: 34px; height: 34px; border-radius: 999px; object-fit: cover; background: var(--surface-2); }
+    .online-dot {
+      position: absolute;
+      bottom: 0;
+      right: 0;
+      width: 9px;
+      height: 9px;
+      border-radius: 999px;
+      border: 2px solid var(--surface);
+      background: #94a3b8;
+    }
+    .online-dot.on { background: #10b981; }
+    .chat-msgs {
+      flex: 1;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding: 4px 2px;
+    }
+    .msg-row { display: flex; flex-direction: column; gap: 2px; }
+    .msg-row.me { align-items: flex-end; }
+    .msg-row.peer { align-items: flex-start; }
+    .msg-bubble {
+      max-width: 82%;
+      padding: 7px 10px;
+      font-size: 12px;
+      line-height: 1.45;
+      word-break: break-word;
+    }
+    .msg-row.me .msg-bubble {
+      background: linear-gradient(135deg, #4f46e5, #2563eb);
+      color: #ffffff;
+      border-radius: 14px 14px 4px 14px;
+    }
+    .msg-row.peer .msg-bubble {
+      background: var(--surface-2);
+      color: var(--text);
+      border-radius: 14px 14px 14px 4px;
+    }
+
+    /* ================== 全螢幕定格點詞 / 拍照全螢幕檢視器 ================== */
+    .freeze-shell {
+      position: fixed;
+      inset: 0;
+      background: rgba(2, 6, 23, 0.96);
+      color: #f8fafc;
+      display: flex;
+      flex-direction: column;
+      z-index: 100;
+    }
+    .freeze-topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+      padding: calc(env(safe-area-inset-top, 0px) + 8px) 10px 8px;
+      background: rgba(15, 23, 42, 0.94);
+      border-bottom: 1px solid rgba(148, 163, 184, 0.25);
+      flex-shrink: 0;
+    }
+    .freeze-stage-vp {
+      flex: 1;
+      width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 4px;
+      overflow: hidden;
+      position: relative;
+      touch-action: none;
+    }
+    .freeze-stage-box {
+      position: relative;
+      display: inline-block;
+      max-width: 100%;
+      max-height: 100%;
+      flex-shrink: 0;
+      line-height: 0;
+      transform-origin: center center;
+      will-change: transform;
+    }
+    .freeze-stage-box > img {
+      display: block;
+      width: auto;
+      height: auto;
+      max-width: 100%;
+      max-height: calc(100vh - 120px);
+      object-fit: contain;
+      image-orientation: from-image;
+      user-select: none;
+      -webkit-user-drag: none;
+    }
+    .freeze-bubble {
+      position: fixed;
+      z-index: 120;
+      width: min(300px, calc(100vw - 24px));
+      background: #ffffff;
+      color: #0f172a;
+      border-radius: 14px;
+      border: 1.5px solid #4f46e5;
+      box-shadow: 0 16px 36px rgba(0, 0, 0, 0.45);
+      padding: 10px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    html.dark .freeze-bubble {
+      background: #1e293b;
+      color: #f8fafc;
+      border-color: #6366f1;
+    }
+    .freeze-footer {
+      padding: 8px 10px calc(env(safe-area-inset-bottom, 0px) + 8px);
+      background: rgba(15, 23, 42, 0.94);
+      border-top: 1px solid rgba(16, 185, 129, 0.35);
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      flex-shrink: 0;
+    }
+  </style>
+</head>
+<body>
+  <!-- 模式 A：一般懸浮主面板（UI/UX 100% 統一 app 內浮窗） -->
+  <div class="panel" id="appPanel">
+    <div class="header" id="dragHandle">
+      <div class="row" style="min-width:0;flex:1;">
+        <button type="button" class="mode-switch-pill" id="viewModeToggleBtn" title="切換翻譯與好友聊天">
+          <span id="viewModeToggleText" style="display:inline-flex;align-items:center;gap:4px;">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3.6 9h16.8M3.6 15h16.8"/><path d="M12 3a13 13 0 0 1 0 18M12 3a13 13 0 0 0 0 18"/></svg>
+            <span>翻譯</span>
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7 16-4-4 4-4M17 8l4 4-4 4M3 12h18"/></svg>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+            <span>聊天</span>
+          </span>
+          <span class="unread-dot hidden" id="chatUnreadDot"></span>
+        </button>
+      </div>
+      <div class="header-actions">
+        <button type="button" class="pill-btn" id="nativeLangBtn" title="切換目標母語">繁中</button>
+        <button type="button" class="icon-btn" id="closePanelBtn" title="收合回懸浮球">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <div class="tabs" id="translatorTabs">
+      <button type="button" class="tab-btn active" data-tab="camera">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+        <span>拍照翻譯</span>
+      </button>
+      <button type="button" class="tab-btn" data-tab="screen">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7V4h3M20 7V4h-3M4 17v3h3M20 17v3h-3"/><rect x="7" y="8" width="10" height="8" rx="1.5"/></svg>
+        <span>螢幕點詞</span>
+      </button>
+      <button type="button" class="tab-btn" data-tab="subtitle">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="20" height="16" rx="2.5"/><path d="M6 12h4M12 12h6M6 16h8M16 16h2"/></svg>
+        <span>即時字幕</span>
+      </button>
+    </div>
+
+    <div class="body" id="panelBody"></div>
+  </div>
+
+  <!-- 模式 B：全螢幕截圖定格點詞 / 拍照全螢幕熱區檢視器 -->
+  <div class="freeze-shell hidden" id="freezeShell"></div>
+
+<script>
+(function () {
+  'use strict';
+
+  const SHARED_WORKER_BASE = 'https://lzhcard.tomlin980415.workers.dev';
+  const DEFAULT_RTDB_URL = 'https://flashcards-5f514-default-rtdb.asia-southeast1.firebasedatabase.app';
+  const NATIVE_LANGS = [
+    { code: 'zh-TW', short: '繁中', aiName: 'Traditional Chinese (繁體中文)' },
+    { code: 'en', short: 'EN', aiName: 'English' },
+    { code: 'ja', short: '日本語', aiName: 'Japanese (日本語)' }
+  ];
+
+  const isFreezeWindowInit = new URLSearchParams(window.location.search).get('mode') === 'freeze';
+
+  const state = {
+    viewMode: 'translator', // 'translator' | 'chat'
+    activeTab: 'camera', // 'camera' | 'screen' | 'subtitle'
+    nativeLang: 'zh-TW',
+    apiMode: 'shared',
+    apiKey: '',
+    groqApiKey: '',
+    decks: ['我的單字本'],
+    selectedDeck: '我的單字本',
+    deckMenuOpen: false,
+    newDeckPromptOpen: false,
+    newDeckNameInput: '',
+
+    // 螢幕點詞
+    screenSelectMode: false,
+    scratchText: '',
+    scratchTrans: '',
+    isScratchBusy: false,
+    selectedWords: new Map(),
+    bubble: null,
+
+    // 拍照 & 全螢幕截圖點詞
+    photoMode: 'lookup', // 'lookup' | 'select'
+    photoDataUrl: '',
+    photoBase64: '',
+    photoSummary: '',
+    photoTokens: [],
+    photoSelectedIds: new Set(),
+    photoActiveId: '',
+    isVisionBusy: false,
+    fullscreenOpen: isFreezeWindowInit,
+    fullscreenFromFreezeService: isFreezeWindowInit,
+    fsBubble: null,
+    fsBubbleRect: null,
+    inlineZoom: { scale: 1, tx: 0, ty: 0 },
+    fsZoom: { scale: 1, tx: 0, ty: 0 },
+
+    // 即時字幕三引擎
+    subMode: 'video', // 'video' | 'stt' | 'youtube'
+    subtitleOverlayVisible: true,
+    nativeVideoOcrRunning: false,
+    videoRoiMode: 'bottom25', // 'bottom25' | 'bottom40' | 'top25' | 'auto' | 'custom' | 'full'
+    videoRoiRect: { xPct: 0.08, yPct: 0.72, wPct: 0.84, hPct: 0.24 },
+    nativeSttRunning: false,
+    sttLang: 'en-US',
+    sttInterim: '',
+    sttInterimDraft: '',
+    subtitleFeed: [], // [{ id, orig, trans, tier, lang, ts, provisional }]
+
+    // 多平台影片 0ms 時間軸
+    ytUrl: '',
+    ytTitle: '',
+    ytPlatform: '',
+    ytLanguageCode: 'en',
+    ytCues: [],
+    ytLoading: false,
+    ytStatus: '',
+    ytFallbackSuggested: false,
+    ytSuggestedModes: [],
+    ytPlaying: false,
+    ytCurrentMs: 0,
+    ytRate: 1.0,
+    ytOffsetMs: 0,
+    ytActiveIdx: -1,
+
+    // 聊天室資料
+    chatSession: { uid: '', nickname: '', avatar: '', frame: 'default', idToken: '', databaseURL: DEFAULT_RTDB_URL, friends: [], threads: [] },
+    chatFilter: '',
+    activeChatId: '',
+    activeChatTitle: '',
+    activeChatPeerUid: '',
+    chatMessages: [],
+    chatReadBy: {},
+    onlineStatusMap: {},
+    chatSending: false,
+    membershipTier: 'free',
+    aiUsage: null,
+    fastRefineExhausted: false
+  };
+
+  let speechRec = null;
+  let ytTimer = null;
+  let ytLastTickAt = 0;
+  let chatStreamSource = null;
+  let chatPollTimer = null;
+  let pinchGuardUntil = 0;
+
+  // 4 層串流字幕穩定器
+  const SUB_STOPWORDS = new Set([
+    'a', 'an', 'the', 'um', 'uh', 'er', 'ah', 'well', 'so', 'like', 'and', 'or', 'but',
+    'えっと', 'あの', 'その', 'まあ', 'うん', 'ええ',
+    '嗯', '啊', '呃', '那個', '就是', '然後'
+  ]);
+  let sttActiveProvisionalId = '';
+  let sttLastRefinedOrig = '';
+  let sttLastFastRefineAt = 0;
+  let sttStopwordTimer = null;
+  let sttInactivityTimer = null;
+  const offlineSubDictCache = new Map();
+
+  function esc(s) {
+    return String(s || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  const OV_SVG = {
+    globe: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3.6 9h16.8M3.6 15h16.8"/><path d="M12 3a13 13 0 0 1 0 18M12 3a13 13 0 0 0 0 18"/></svg>',
+    chat: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>',
+    chatLg: '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>',
+    arrows: '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7 16-4-4 4-4M17 8l4 4-4 4M3 12h18"/></svg>',
+    camera: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>',
+    cameraLg: '<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>',
+    gallery: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>',
+    scan: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7V4h3M20 7V4h-3M4 17v3h3M20 17v3h-3"/><rect x="7" y="8" width="10" height="8" rx="1.5"/></svg>',
+    cursor: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4l7 16 2.5-6.5L20 11 4 4z"/></svg>',
+    checkbox: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="m9 12 2 2 4-4"/></svg>',
+    expand: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>',
+    close: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>',
+    speaker: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>',
+    clip: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/></svg>',
+    sparkle: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3z"/></svg>',
+    mic: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="2" width="6" height="11" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 19v3M8 22h8"/></svg>',
+    play: '<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><polygon points="6 4 20 12 6 20 6 4"/></svg>',
+    pause: '<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>',
+    stop: '<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="2"/></svg>',
+    windowSub: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M7 15h10"/></svg>',
+    chevronDown: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>',
+    folder: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>',
+    check: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>',
+    arrowLeft: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>'
+  };
+
+  function nativeCfg() {
+    return NATIVE_LANGS.find(x => x.code === state.nativeLang) || NATIVE_LANGS[0];
+  }
+
+  function detectLang(text, hint) {
+    const s = String(text || '').trim();
+    if (/[\u3040-\u309F\u30A0-\u30FF々〆ヵヶ]/.test(s)) return 'ja';
+    if (/[\u4E00-\u9FFF\u3400-\u4DBF]/.test(s)) return hint === 'ja' ? 'ja' : 'zh-TW';
+    if (/[A-Za-z]/.test(s)) return 'en';
+    return hint || 'en';
+  }
+
+  function normKey(w, lang) {
+    const c = String(w || '').trim().replace(/^[\s"'“”‘’()\[\]{}.,!?;:、。！？「」『』【】]+|[\s"'“”‘’()\[\]{}.,!?;:、。！？「」『』【】]+$/g, '');
+    return lang === 'en' ? c.toLowerCase() : c;
+  }
+
+  function segmentText(text, hint) {
+    const str = String(text || '');
+    if (!str) return [];
+    const out = [];
+    const hasKana = /[\u3040-\u309F\u30A0-\u30FF々]/.test(str);
+    const re = /([A-Za-z]+(?:[’'\-][A-Za-z]+)*)|([\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF\u3400-\u4DBF々〆ヵヶ]+)|([^\sA-Za-z\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF\u3400-\u4DBF]+|\s+)/g;
+    let m;
+    while ((m = re.exec(str)) !== null) {
+      if (m[1]) {
+        out.push({ text: m[0], isWord: true, lang: 'en' });
+      } else if (m[2]) {
+        const lang = (hint === 'ja' || hasKana || /[\u3040-\u309F\u30A0-\u30FF々]/.test(m[0])) ? 'ja' : 'zh-TW';
+        if (typeof Intl !== 'undefined' && typeof Intl.Segmenter === 'function') {
+          const seg = new Intl.Segmenter(lang, { granularity: 'word' });
+          for (const p of seg.segment(m[0])) {
+            out.push({ text: p.segment, isWord: Boolean(p.isWordLike && /[\p{L}]/u.test(p.segment)), lang });
+          }
+        } else {
+          out.push({ text: m[0], isWord: true, lang });
+        }
+      } else {
+        out.push({ text: m[0], isWord: false, lang: '' });
+      }
+    }
+    return out;
+  }
+
+  function safeJson(raw) {
+    let s = String(raw || '').trim();
+    const fence = s.match(/```(?:json)?\s*([\s\S]*?)```/i);
+    if (fence) s = fence[1].trim();
+    const a = s.indexOf('{');
+    const b = s.indexOf('[');
+    let idx = -1;
+    if (a !== -1 && b !== -1) idx = Math.min(a, b);
+    else idx = a !== -1 ? a : b;
+    if (idx > 0) s = s.slice(idx);
+    const endObj = s.lastIndexOf('}');
+    const endArr = s.lastIndexOf(']');
+    const endIdx = Math.max(endObj, endArr);
+    if (endIdx !== -1) s = s.slice(0, endIdx + 1);
+    return JSON.parse(s);
+  }
+
+  async function callGroqDirect(promptText, model = 'llama-3.3-70b-versatile') {
+    const key = String(state.groqApiKey || '').trim();
+    if (!key) throw new Error('No Groq key');
+    const resp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${key}`
+      },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: 'user', content: String(promptText || '') }],
+        temperature: 0.2
+      })
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      throw new Error(data?.error?.message || `Groq HTTP ${resp.status}`);
+    }
+    const txt = String(data?.choices?.[0]?.message?.content || '').trim();
+    if (!txt) throw new Error('Groq 未回傳結果');
+    return txt;
+  }
+
+  async function callGemini(prompt, inlineData, featureName) {
+    const hasMedia = Boolean(inlineData && inlineData.data);
+    const feature = featureName || (hasMedia ? 'vision_ocr' : 'def_fill');
+    const groqKey = String(state.groqApiKey || '').trim();
+    const geminiKey = String(state.apiKey || '').trim();
+
+    // Priority 1: 本機個人 Groq / Gemini Key 直接呼叫官方 API，不扣系統次數
+    if (!hasMedia && groqKey) {
+      try {
+        return await callGroqDirect(prompt, 'llama-3.3-70b-versatile');
+      } catch (e) {
+        if (!geminiKey) throw e;
+      }
+    }
+
+    const parts = [{ text: prompt }];
+    if (hasMedia) {
+      parts.push({ inlineData: { mimeType: inlineData.mimeType || 'image/jpeg', data: inlineData.data } });
+    }
+    const useCustomGemini = Boolean(geminiKey);
+    const url = useCustomGemini
+      ? `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key=${encodeURIComponent(geminiKey)}`
+      : SHARED_WORKER_BASE;
+    const headers = { 'Content-Type': 'application/json' };
+    if (!useCustomGemini) {
+      headers['X-AI-Feature'] = feature;
+      if (state.chatSession && state.chatSession.idToken) {
+        headers['Authorization'] = `Bearer ${state.chatSession.idToken}`;
+      }
+    }
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(useCustomGemini ? { contents: [{ parts }] } : { feature, contents: [{ parts }] })
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (resp.status === 429) {
+      const qErr = new Error(data?.error || 'AI 配額已達上限');
+      qErr.code = 'QUOTA_EXCEEDED';
+      throw qErr;
+    }
+    if (!resp.ok) {
+      throw new Error(data?.error || `HTTP ${resp.status}`);
+    }
+    const txt = data?.candidates?.[0]?.content?.parts?.map(p => p.text || '').join('') || '';
+    if (!txt) throw new Error('AI 未回傳結果');
+    return txt.trim();
+  }
+
+  async function gtxTranslate(text, sl, tl) {
+    const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${encodeURIComponent(sl || 'auto')}&tl=${encodeURIComponent(tl || 'zh-TW')}&dt=t&q=${encodeURIComponent(text)}`;
+    const resp = await fetch(url);
+    const data = await resp.json();
+    if (!Array.isArray(data) || !Array.isArray(data[0])) return '';
+    return data[0].map(s => (Array.isArray(s) ? s[0] : '')).join('').trim();
+  }
+
+  async function callFastRefine(text, draft, sourceLang, contextLines) {
+    const cfg = nativeCfg();
+    const groqKey = String(state.groqApiKey || '').trim();
+    const geminiKey = String(state.apiKey || '').trim();
+
+    // Priority 1: 本機個人 Groq / Gemini Key 直接於客戶端完成字幕精修，不扣系統次數
+    if (groqKey || geminiKey) {
+      const ctx = Array.isArray(contextLines) && contextLines.length
+        ? `前文語境：${contextLines.slice(-3).join(' / ')}\n`
+        : '';
+      const draftHint = draft ? `初稿：${draft}\n` : '';
+      const refinePrompt = `將以下口語／影片字幕自然翻成「${cfg.aiName}」，僅輸出精修譯文：\n${ctx}${draftHint}原文：${String(text || '').trim()}`;
+      if (groqKey) {
+        try {
+          const out = await callGroqDirect(refinePrompt, 'llama-3.1-8b-instant');
+          if (out) return out;
+        } catch (e) {}
+      }
+      if (geminiKey) {
+        try {
+          const out = await callGemini(refinePrompt, null, 'fast_refine');
+          if (out) return out;
+        } catch (e) {}
+      }
+    }
+
+    // Priority 2: 未填寫個人 Key 時才依方案走系統共用 Worker 精修
+    if (state.fastRefineExhausted || state.membershipTier === 'free') {
+      return '';
+    }
+    const headers = { 'Content-Type': 'application/json' };
+    if (state.chatSession && state.chatSession.idToken) {
+      headers['Authorization'] = `Bearer ${state.chatSession.idToken}`;
+    }
+    const resp = await fetch(`${SHARED_WORKER_BASE}/ai/fast-refine`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        text,
+        draftTranslation: draft || '',
+        sourceLang: sourceLang || 'auto',
+        targetLang: cfg.code,
+        targetLangName: cfg.aiName,
+        contextLines: contextLines || []
+      })
+    });
+    if (resp.status === 429) {
+      state.fastRefineExhausted = true;
+      return '';
+    }
+    if (!resp.ok) throw new Error('fast-refine failed');
+    const data = await resp.json();
+    return String(data?.translation || '').trim();
+  }
+
+  function normalizeBox1000(rawBox) {
+    if (!Array.isArray(rawBox) || rawBox.length < 4) return null;
+    let ymin = Number(rawBox[0]), xmin = Number(rawBox[1]), ymax = Number(rawBox[2]), xmax = Number(rawBox[3]);
+    if (![ymin, xmin, ymax, xmax].every(Number.isFinite)) return null;
+    if (ymax <= 1 && xmax <= 1 && ymin >= 0 && xmin >= 0) {
+      ymin *= 1000; xmin *= 1000; ymax *= 1000; xmax *= 1000;
+    }
+    ymin = Math.max(0, Math.min(998, ymin));
+    xmin = Math.max(0, Math.min(998, xmin));
+    ymax = Math.max(ymin + 8, Math.min(1000, ymax));
+    xmax = Math.max(xmin + 8, Math.min(1000, xmax));
+    return [Math.round(ymin), Math.round(xmin), Math.round(ymax), Math.round(xmax)];
+  }
+
+  function boxToRectStyle(box) {
+    const b = normalizeBox1000(box);
+    if (!b) return '';
+    const [ymin, xmin, ymax, xmax] = b;
+    return `top:${(ymin / 10).toFixed(2)}%;left:${(xmin / 10).toFixed(2)}%;width:${((xmax - xmin) / 10).toFixed(2)}%;height:${((ymax - ymin) / 10).toFixed(2)}%;`;
+  }
+
+  function clampOvRoiRect(r) {
+    const src = r && typeof r === 'object' ? r : {};
+    const xPct = Math.max(0, Math.min(0.9, Number(src.xPct ?? 0.08) || 0));
+    const yPct = Math.max(0, Math.min(0.9, Number(src.yPct ?? 0.72) || 0));
+    const wPct = Math.max(0.1, Math.min(1 - xPct, Number(src.wPct ?? 0.84) || 0.84));
+    const hPct = Math.max(0.08, Math.min(1 - yPct, Number(src.hPct ?? 0.24) || 0.24));
+    return {
+      xPct: Number(xPct.toFixed(3)),
+      yPct: Number(yPct.toFixed(3)),
+      wPct: Number(wPct.toFixed(3)),
+      hPct: Number(hPct.toFixed(3))
+    };
+  }
+
+  function applyVideoRoiConfig(mode, rectOverride, skipNativeSync) {
+    const allowed = ['bottom25', 'bottom40', 'top25', 'auto', 'custom', 'full'];
+    const m = allowed.includes(mode) ? mode : 'bottom25';
+    state.videoRoiMode = m;
+    if (rectOverride) state.videoRoiRect = clampOvRoiRect(rectOverride);
+    else if (m === 'bottom25') state.videoRoiRect = { xPct: 0.08, yPct: 0.72, wPct: 0.84, hPct: 0.24 };
+    else if (m === 'bottom40') state.videoRoiRect = { xPct: 0.06, yPct: 0.58, wPct: 0.88, hPct: 0.38 };
+    else if (m === 'top25') state.videoRoiRect = { xPct: 0.08, yPct: 0.04, wPct: 0.84, hPct: 0.24 };
+    else if (m === 'full') state.videoRoiRect = { xPct: 0.0, yPct: 0.0, wPct: 1.0, hPct: 1.0 };
+
+    if (!skipNativeSync) {
+      try {
+        window.AndroidOverlay?.setVideoRoiConfig?.(state.videoRoiMode, JSON.stringify(state.videoRoiRect));
+      } catch (e) {}
+    }
+  }
+
+  function applyOverlayZoomTransform(stageBoxEl, zoomState, resetBtnEl) {
+    if (!stageBoxEl || !zoomState) return;
+    zoomState.scale = Math.max(0.75, Math.min(2.5, Number(zoomState.scale) || 1));
+    if (Math.abs(zoomState.scale - 1) < 0.02 && Math.abs(zoomState.tx) < 2 && Math.abs(zoomState.ty) < 2) {
+      zoomState.scale = 1;
+      zoomState.tx = 0;
+      zoomState.ty = 0;
+    }
+    const maxPan = 220 * zoomState.scale;
+    zoomState.tx = Math.max(-maxPan, Math.min(maxPan, Number(zoomState.tx) || 0));
+    zoomState.ty = Math.max(-maxPan, Math.min(maxPan, Number(zoomState.ty) || 0));
+    stageBoxEl.style.transform = `translate3d(${zoomState.tx.toFixed(1)}px, ${zoomState.ty.toFixed(1)}px, 0) scale(${zoomState.scale.toFixed(3)})`;
+    if (resetBtnEl) resetBtnEl.textContent = `${Math.round(zoomState.scale * 100)}%`;
+  }
+
+  function bindOverlayZoomGestures(viewportEl, stageBoxEl, zoomState, resetBtnEl) {
+    if (!viewportEl || !stageBoxEl || !zoomState) return;
+    applyOverlayZoomTransform(stageBoxEl, zoomState, resetBtnEl);
+
+    let mode = '';
+    let startDist = 0;
+    let startScale = 1;
+    let startX = 0;
+    let startY = 0;
+    let startTx = 0;
+    let startTy = 0;
+
+    viewportEl.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const factor = e.deltaY < 0 ? 1.12 : 0.9;
+      zoomState.scale = Math.max(0.75, Math.min(2.5, zoomState.scale * factor));
+      if (zoomState.scale <= 1.01) { zoomState.tx = 0; zoomState.ty = 0; }
+      applyOverlayZoomTransform(stageBoxEl, zoomState, resetBtnEl);
+    }, { passive: false });
+
+    viewportEl.addEventListener('touchstart', (e) => {
+      if (e.touches.length === 2) {
+        mode = 'pinch';
+        const dx = e.touches[0].clientX - e.touches[1].clientX;
+        const dy = e.touches[0].clientY - e.touches[1].clientY;
+        startDist = Math.hypot(dx, dy) || 1;
+        startScale = zoomState.scale;
+        pinchGuardUntil = Date.now() + 300;
+      } else if (e.touches.length === 1 && zoomState.scale > 1.02) {
+        mode = 'pan';
+        startX = e.touches[0].clientX;
+        startY = e.touches[0].clientY;
+        startTx = zoomState.tx;
+        startTy = zoomState.ty;
+      } else {
+        mode = '';
+      }
+    }, { passive: true });
+
+    viewportEl.addEventListener('touchmove', (e) => {
+      if (mode === 'pinch' && e.touches.length === 2) {
+        e.preventDefault();
+        const dx = e.touches[0].clientX - e.touches[1].clientX;
+        const dy = e.touches[0].clientY - e.touches[1].clientY;
+        const dist = Math.hypot(dx, dy) || startDist;
+        zoomState.scale = Math.max(0.75, Math.min(2.5, startScale * (dist / startDist)));
+        pinchGuardUntil = Date.now() + 300;
+        applyOverlayZoomTransform(stageBoxEl, zoomState, resetBtnEl);
+      } else if (mode === 'pan' && e.touches.length === 1) {
+        const dx = e.touches[0].clientX - startX;
+        const dy = e.touches[0].clientY - startY;
+        if (Math.hypot(dx, dy) > 5) {
+          e.preventDefault();
+          pinchGuardUntil = Date.now() + 260;
+          zoomState.tx = startTx + dx;
+          zoomState.ty = startTy + dy;
+          applyOverlayZoomTransform(stageBoxEl, zoomState, resetBtnEl);
+        }
+      }
+    }, { passive: false });
+
+    viewportEl.addEventListener('touchend', () => {
+      if (mode) pinchGuardUntil = Date.now() + 220;
+      mode = '';
+    }, { passive: true });
+
+    viewportEl.addEventListener('pointerdown', (e) => {
+      if (e.pointerType !== 'mouse' || e.button !== 0 || zoomState.scale <= 1.02) return;
+      mode = 'mousepan';
+      startX = e.clientX;
+      startY = e.clientY;
+      startTx = zoomState.tx;
+      startTy = zoomState.ty;
+    });
+
+    viewportEl.addEventListener('pointermove', (e) => {
+      if (mode !== 'mousepan') return;
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+      if (Math.hypot(dx, dy) > 5) {
+        pinchGuardUntil = Date.now() + 260;
+        zoomState.tx = startTx + dx;
+        zoomState.ty = startTy + dy;
+        applyOverlayZoomTransform(stageBoxEl, zoomState, resetBtnEl);
+      }
+    });
+
+    const endMousePan = () => {
+      if (mode === 'mousepan') mode = '';
+    };
+    viewportEl.addEventListener('pointerup', endMousePan);
+    viewportEl.addEventListener('pointercancel', endMousePan);
+  }
+
+  function getResolvedTargetDeck() {
+    if (state.newDeckPromptOpen && state.newDeckNameInput.trim()) return state.newDeckNameInput.trim();
+    return state.selectedDeck || state.decks[0] || '我的單字本';
+  }
+
+  function ensureDeckInList(deck) {
+    const d = String(deck || '').trim();
+    if (d && !state.decks.includes(d)) state.decks.unshift(d);
+    if (d) state.selectedDeck = d;
+  }
+
+  function formatClock(ms) {
+    const s = Math.max(0, Math.floor((Number(ms) || 0) / 1000));
+    return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+  }
+
+  /* ================== 字詞查詢與加入字庫 ================== */
+  async function lookupWordDetails(rawWord, langHint, preloaded, targetBubbleKey = 'bubble') {
+    const lang = detectLang(rawWord, langHint);
+    const cfg = nativeCfg();
+    state[targetBubbleKey] = {
+      word: rawWord,
+      lang,
+      phonetic: preloaded?.phonetic || '',
+      pos: preloaded?.pos || '',
+      meaning: preloaded?.meaning || '',
+      loading: !(preloaded && preloaded.meaning)
+    };
+    render();
+
+    if (preloaded && preloaded.meaning) return;
+
+    let meaning = '';
+    let phonetic = '';
+    let pos = '';
+    // Tier-1 極速原生/GTX草稿
+    try {
+      const quick = await gtxTranslate(rawWord, lang, cfg.code);
+      if (quick && state[targetBubbleKey] && state[targetBubbleKey].word === rawWord) {
+        meaning = quick;
+        state[targetBubbleKey].meaning = quick;
+        render();
+      }
+    } catch (e) {}
+
+    // Tier-2 Gemini 詳細音標 / 詞性 / 釋義
+    try {
+      const pRule = lang === 'ja' ? 'phonetic必須填寫純平假名讀音' : (lang === 'en' ? 'phonetic填IPA音標' : 'phonetic填簡短拼音');
+      const prompt = `查詢 ${lang} 詞彙「${rawWord}」並以「${cfg.aiName}」解釋，${pRule}。只輸出純JSON：{"phonetic":"","pos":"","meaning":""}`;
+      const res = safeJson(await callGemini(prompt));
+      phonetic = res.phonetic || '';
+      pos = res.pos || '';
+      meaning = res.meaning || meaning || '無可用釋義';
+    } catch (e) {
+      if (!meaning) meaning = '暫時無法查詢釋義';
+    }
+
+    if (state[targetBubbleKey] && state[targetBubbleKey].word === rawWord) {
+      state[targetBubbleKey].phonetic = phonetic;
+      state[targetBubbleKey].pos = pos;
+      state[targetBubbleKey].meaning = meaning;
+      state[targetBubbleKey].loading = false;
+      render();
+    }
+  }
+
+  async function saveCardsToLZHCard(items, btnEl) {
+    if (!items || !items.length) return;
+    const deck = getResolvedTargetDeck();
+    ensureDeckInList(deck);
+    if (btnEl) { btnEl.disabled = true; btnEl.textContent = 'AI 建卡中...'; }
+
+    const cfg = nativeCfg();
+    let finalList = items;
+    try {
+      const inputJson = JSON.stringify(items.map(x => ({ word: x.word, lang: x.lang || detectLang(x.word) })));
+      const prompt = `補齊單字字卡欄位（母語釋義與例句翻譯語言：${cfg.aiName}；日文 phonetic 必須為純平假名）。輸入：${inputJson}
+只輸出純 JSON 陣列：[{"word":"","lang":"en|ja|zh-TW","pos":"","phonetic":"","meaning":"","sentence":"","translation":""}]`;
+      const arr = safeJson(await callGemini(prompt));
+      if (Array.isArray(arr) && arr.length > 0) finalList = arr;
+    } catch (e) {}
+
+    try {
+      window.AndroidOverlay?.queueCardsForApp(JSON.stringify(finalList), deck);
+      window.AndroidOverlay?.showNativeToast(`已暫存 ${finalList.length} 張字卡至【${deck}】`);
+    } finally {
+      if (btnEl) btnEl.disabled = false;
+    }
+  }
+
+  /* ================== RTDB 跨源好友聊天 ================== */
+  function rtdbAuthSuffix() {
+    const tok = state.chatSession?.idToken;
+    return tok ? `?auth=${encodeURIComponent(tok)}` : '';
+  }
+
+  function rtdbBaseUrl() {
+    return (state.chatSession?.databaseURL || DEFAULT_RTDB_URL).replace(/\/+$/, '');
+  }
+
+  function closeChatStreams() {
+    if (chatStreamSource) {
+      try { chatStreamSource.close(); } catch (e) {}
+      chatStreamSource = null;
+    }
+    if (chatPollTimer) {
+      clearInterval(chatPollTimer);
+      chatPollTimer = null;
+    }
+  }
+
+  async function refreshOnlineStatuses() {
+    const friends = Array.isArray(state.chatSession?.friends) ? state.chatSession.friends : [];
+    if (!friends.length) return;
+    try {
+      const resp = await fetch(`${rtdbBaseUrl()}/status.json${rtdbAuthSuffix()}`);
+      if (resp.ok) {
+        const data = await resp.json();
+        if (data && typeof data === 'object') {
+          state.onlineStatusMap = data;
+          render();
+        }
+      }
+    } catch (e) {}
+  }
+
+  async function fetchActiveChatRoomSnapshot() {
+    const cid = state.activeChatId;
+    if (!cid) return;
+    try {
+      const [mResp, rResp] = await Promise.all([
+        fetch(`${rtdbBaseUrl()}/chats/${encodeURIComponent(cid)}/messages.json${rtdbAuthSuffix()}`),
+        fetch(`${rtdbBaseUrl()}/chats/${encodeURIComponent(cid)}/readBy.json${rtdbAuthSuffix()}`)
+      ]);
+      if (mResp.ok) {
+        const raw = (await mResp.json()) || {};
+        const arr = Object.keys(raw).map(k => ({ id: k, ...(raw[k] || {}) })).filter(m => m && m.text);
+        arr.sort((a, b) => (Number(a.createdAt) || 0) - (Number(b.createdAt) || 0));
+        state.chatMessages = arr.slice(-80);
+      }
+      if (rResp.ok) {
+        state.chatReadBy = (await rResp.json()) || {};
+      }
+      const myUid = state.chatSession?.uid;
+      if (myUid) {
+        fetch(`${rtdbBaseUrl()}/chats/${encodeURIComponent(cid)}/readBy/${encodeURIComponent(myUid)}.json${rtdbAuthSuffix()}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(Date.now())
+        }).catch(() => {});
+      }
+      render();
+    } catch (e) {}
+  }
+
+  function openChatRoom(chatId, title, peerUid) {
+    closeChatStreams();
+    state.activeChatId = chatId;
+    state.activeChatTitle = title || '好友聊天';
+    state.activeChatPeerUid = peerUid || '';
+    state.chatMessages = [];
+    state.chatReadBy = {};
+    render();
+    fetchActiveChatRoomSnapshot();
+
+    try {
+      const sseUrl = `${rtdbBaseUrl()}/chats/${encodeURIComponent(chatId)}/messages.json${rtdbAuthSuffix()}`;
+      chatStreamSource = new EventSource(sseUrl);
+      const onSseChange = () => fetchActiveChatRoomSnapshot();
+      chatStreamSource.addEventListener('put', onSseChange);
+      chatStreamSource.addEventListener('patch', onSseChange);
+    } catch (e) {}
+
+    chatPollTimer = setInterval(() => {
+      if (state.viewMode === 'chat' && state.activeChatId === chatId) {
+        fetchActiveChatRoomSnapshot();
+      }
+    }, 3200);
+  }
+
+  async function sendChatMessage(text) {
+    const clean = String(text || '').trim();
+    const myUid = state.chatSession?.uid;
+    const cid = state.activeChatId;
+    if (!clean || !myUid || !cid || state.chatSending) return;
+    state.chatSending = true;
+
+    const myName = state.chatSession.nickname || 'LZHCard 玩家';
+    const myAvatar = state.chatSession.avatar || `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(myUid)}`;
+    const myFrame = state.chatSession.frame || 'default';
+    const now = new Date();
+    const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    const nowMs = Date.now();
+    const msgPayload = {
+      sender: myName,
+      senderUid: myUid,
+      senderAvatar: myAvatar,
+      senderFrame: myFrame,
+      text: clean,
+      time: timeStr,
+      createdAt: nowMs
+    };
+
+    try {
+      await fetch(`${rtdbBaseUrl()}/chats/${encodeURIComponent(cid)}/messages.json${rtdbAuthSuffix()}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(msgPayload)
+      });
+      await fetch(`${rtdbBaseUrl()}/chats/${encodeURIComponent(cid)}.json${rtdbAuthSuffix()}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          lastMessage: `${myName}: ${clean}`,
+          lastSenderUid: myUid,
+          updatedAt: nowMs
+        })
+      });
+      await fetch(`${rtdbBaseUrl()}/chats/${encodeURIComponent(cid)}/readBy/${encodeURIComponent(myUid)}.json${rtdbAuthSuffix()}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(nowMs)
+      });
+      await fetchActiveChatRoomSnapshot();
+    } catch (e) {
+      window.AndroidOverlay?.showNativeToast('訊息傳送失敗，請確認網路與登入狀態');
+    } finally {
+      state.chatSending = false;
+    }
+  }
+
+  /* ================== 多平台 0ms 時間軸 & 4 層串流字幕穩定器 ================== */
+  function clearSttStabilizerTimers() {
+    if (sttStopwordTimer) { clearTimeout(sttStopwordTimer); sttStopwordTimer = null; }
+    if (sttInactivityTimer) { clearTimeout(sttInactivityTimer); sttInactivityTimer = null; }
+  }
+
+  function isSubStopwordOnly(text) {
+    const clean = String(text || '').trim().toLowerCase().replace(/[.,!?;:'"()\[\]{}、。！？]/g, '');
+    if (!clean) return true;
+    const parts = clean.split(/\s+/).filter(Boolean);
+    if (parts.length === 1 && SUB_STOPWORDS.has(parts[0])) return true;
+    return clean.length <= 2 && SUB_STOPWORDS.has(clean);
+  }
+
+  function lookupOfflineSubtitleDraft(text, lang) {
+    const key = `${lang || 'auto'}::${String(text || '').trim().toLowerCase()}`;
+    if (offlineSubDictCache.has(key)) return offlineSubDictCache.get(key) || '';
+    try {
+      const raw = localStorage.getItem('lzh_offline_vocab_cache') || localStorage.getItem('lzhcard_offline_vocab');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object') {
+          const hit = parsed[String(text || '').trim().toLowerCase()] || parsed[key];
+          if (typeof hit === 'string' && hit.trim()) return hit.trim();
+          if (hit && typeof hit.meaning === 'string') return hit.meaning.trim();
+        }
+      }
+    } catch (e) {}
+    return '';
+  }
+
+  function storeOfflineSubtitleCache(text, lang, translation) {
+    const t = String(translation || '').trim();
+    if (!text || !t) return;
+    const key = `${lang || 'auto'}::${String(text || '').trim().toLowerCase()}`;
+    if (offlineSubDictCache.size > 400) offlineSubDictCache.clear();
+    offlineSubDictCache.set(key, t);
+  }
+
+  function upsertProvisionalSubtitle(orig, trans, tier, lang, isFinalCommit) {
+    const cleanOrig = String(orig || '').trim();
+    if (!cleanOrig) return null;
+    const nowTs = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    let entry = null;
+    if (sttActiveProvisionalId) {
+      entry = state.subtitleFeed.find(x => x.id === sttActiveProvisionalId) || null;
+    }
+    if (entry) {
+      entry.orig = cleanOrig;
+      if (trans !== undefined && trans !== null && String(trans).trim()) entry.trans = String(trans).trim();
+      entry.tier = tier || entry.tier || 'draft';
+      entry.lang = lang || entry.lang || detectLang(cleanOrig);
+      entry.ts = nowTs;
+      entry.provisional = !isFinalCommit;
+    } else {
+      const id = 'sub_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
+      entry = {
+        id,
+        orig: cleanOrig,
+        trans: String(trans || '').trim(),
+        tier: tier || 'draft',
+        lang: lang || detectLang(cleanOrig),
+        ts: nowTs,
+        provisional: !isFinalCommit
+      };
+      sttActiveProvisionalId = id;
+      state.subtitleFeed.unshift(entry);
+      if (state.subtitleFeed.length > 30) state.subtitleFeed.length = 30;
+    }
+    if (isFinalCommit) sttActiveProvisionalId = '';
+    if (state.subtitleOverlayVisible) {
+      const label = entry.tier === 'youtube' ? '0MS SYNC' : (entry.tier === 'draft' ? 'FAST DRAFT' : 'CONTEXT AI');
+      window.AndroidOverlay?.updateSubtitleOverlay(entry.orig, entry.trans, label);
+    }
+    render();
+    return entry;
+  }
+
+  function stopYoutubePlayback() {
+    state.ytPlaying = false;
+    if (ytTimer) { clearInterval(ytTimer); ytTimer = null; }
+  }
+
+  function findActiveYoutubeCue(ms) {
+    const eff = Math.max(0, ms + state.ytOffsetMs);
+    for (let i = 0; i < state.ytCues.length; i++) {
+      if (eff >= state.ytCues[i].startMs && eff <= state.ytCues[i].endMs) {
+        return { idx: i, cue: state.ytCues[i] };
+      }
+    }
+    return { idx: -1, cue: null };
+  }
+
+  function pushSubtitleEntryAndHud(orig, trans, tier, lang) {
+    const cleanOrig = String(orig || '').trim();
+    if (!cleanOrig) return;
+    const item = {
+      id: 'sub_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+      orig: cleanOrig,
+      trans: String(trans || '').trim(),
+      tier: tier || 'refined',
+      lang: lang || detectLang(cleanOrig),
+      ts: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+      provisional: false
+    };
+    state.subtitleFeed.unshift(item);
+    if (state.subtitleFeed.length > 30) state.subtitleFeed.length = 30;
+    if (state.subtitleOverlayVisible) {
+      const label = tier === 'youtube' ? '0MS SYNC' : (tier === 'draft' ? 'FAST DRAFT' : 'CONTEXT AI');
+      window.AndroidOverlay?.updateSubtitleOverlay(item.orig, item.trans, label);
+    }
+    render();
+  }
+
+  function startYoutubePlayback() {
+    if (!state.ytCues.length) return;
+    stopYoutubePlayback();
+    state.ytPlaying = true;
+    state.subtitleOverlayVisible = true;
+    window.AndroidOverlay?.setSubtitleOverlayVisible(true);
+    ytLastTickAt = Date.now();
+    ytTimer = setInterval(() => {
+      if (!state.ytPlaying) return;
+      const now = Date.now();
+      state.ytCurrentMs += Math.max(0, now - ytLastTickAt) * state.ytRate;
+      ytLastTickAt = now;
+      const maxEnd = state.ytCues[state.ytCues.length - 1].endMs + 1000;
+      if (state.ytCurrentMs > maxEnd) {
+        stopYoutubePlayback();
+        render();
+        return;
+      }
+      const { idx, cue } = findActiveYoutubeCue(state.ytCurrentMs);
+      if (idx !== state.ytActiveIdx) {
+        state.ytActiveIdx = idx;
+        if (cue) pushSubtitleEntryAndHud(cue.text, cue.trans, 'youtube', state.ytLanguageCode);
+      }
+      const clk = document.getElementById('ytClock');
+      if (clk) clk.textContent = formatClock(state.ytCurrentMs);
+      const scrub = document.getElementById('ytScrub');
+      if (scrub) scrub.value = String(Math.round(state.ytCurrentMs));
+    }, 120);
+    render();
+  }
+
+  async function loadYoutubeTimeline(url) {
+    const clean = String(url || '').trim();
+    if (!clean) return;
+    const cfg = nativeCfg();
+    state.ytUrl = clean;
+    state.ytLoading = true;
+    state.ytFallbackSuggested = false;
+    state.ytSuggestedModes = [];
+    state.ytStatus = '正在解析多平台影片字幕軌...';
+    stopYoutubePlayback();
+    render();
+    try {
+      const resp = await fetch(`${SHARED_WORKER_BASE}/youtube/subtitles`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: clean, lang: cfg.code })
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok || !data?.ok || !Array.isArray(data.cues) || !data.cues.length) {
+        if (resp.status === 404 || data?.fallbackSuggested) {
+          state.ytFallbackSuggested = true;
+          state.ytSuggestedModes = Array.isArray(data?.suggestedModes) && data.suggestedModes.length
+            ? data.suggestedModes
+            : ['video', 'stt'];
+        }
+        throw new Error(data?.error || '無法載入字幕軌');
+      }
+      state.ytTitle = data.title || '影片字幕';
+      state.ytPlatform = data.platform || '';
+      state.ytLanguageCode = data.languageCode || 'en';
+      state.ytCues = data.cues.map(c => ({ startMs: Number(c.startMs) || 0, endMs: Number(c.endMs) || 0, text: String(c.text || '').trim(), trans: '' })).filter(c => c.text);
+      state.ytCurrentMs = 0;
+      state.ytActiveIdx = -1;
+
+      const batchSize = 18;
+      for (let i = 0; i < state.ytCues.length; i += batchSize) {
+        const slice = state.ytCues.slice(i, i + batchSize);
+        await Promise.all(slice.map(async (c) => {
+          try { c.trans = await gtxTranslate(c.text, detectLang(c.text, state.ytLanguageCode), cfg.code); } catch (e) {}
+        }));
+        state.ytStatus = `預譯進度 ${Math.min(i + batchSize, state.ytCues.length)} / ${state.ytCues.length}`;
+        render();
+      }
+      state.ytStatus = `已完成 ${state.ytCues.length} 句預譯，可立即 0ms 同步播放`;
+    } catch (e) {
+      state.ytStatus = '解析失敗：' + (e?.message || '無法取得字幕軌，可改用畫面字幕或語音字幕');
+    } finally {
+      state.ytLoading = false;
+      render();
+    }
+  }
+
+  async function runDraftTranslationForText(clean, lang) {
+    const cfg = nativeCfg();
+    const detected = detectLang(clean, lang);
+    let draft = lookupOfflineSubtitleDraft(clean, detected);
+    if (!draft) {
+      try {
+        draft = await gtxTranslate(clean, detected, cfg.code);
+        if (draft) storeOfflineSubtitleCache(clean, detected, draft);
+      } catch (e) {}
+    }
+    return { detected, draft: draft || '' };
+  }
+
+  async function flushSttCommit(orig, lang) {
+    const clean = String(orig || '').trim();
+    if (!clean) return;
+    clearSttStabilizerTimers();
+    const { detected, draft } = await runDraftTranslationForText(clean, lang);
+    const entry = upsertProvisionalSubtitle(clean, draft, 'draft', detected, true);
+    if (!entry) return;
+
+    const now = Date.now();
+    if (clean === sttLastRefinedOrig || (now - sttLastFastRefineAt) < 350) return;
+    sttLastRefinedOrig = clean;
+    sttLastFastRefineAt = now;
+
+    const ctxLines = state.subtitleFeed
+      .filter(x => x.id !== entry.id)
+      .slice(0, 3)
+      .map(x => x.orig)
+      .reverse();
+    try {
+      const refined = await callFastRefine(clean, draft, detected, ctxLines);
+      if (refined) {
+        entry.trans = refined;
+        entry.tier = 'refined';
+        storeOfflineSubtitleCache(clean, detected, refined);
+        if (state.subtitleOverlayVisible) {
+          window.AndroidOverlay?.updateSubtitleOverlay(entry.orig, entry.trans, 'CONTEXT AI');
+        }
+        render();
+      }
+    } catch (e) {}
+  }
+
+  function handleInterimSubtitleUpdate(interimText, draftOverride, lang) {
+    const clean = String(interimText || '').trim();
+    state.sttInterim = clean;
+    state.sttInterimDraft = String(draftOverride || '').trim();
+    if (!clean) {
+      clearSttStabilizerTimers();
+      render();
+      return;
+    }
+    if (sttInactivityTimer) clearTimeout(sttInactivityTimer);
+    sttInactivityTimer = setTimeout(() => {
+      if (state.sttInterim) {
+        const snapshot = state.sttInterim;
+        state.sttInterim = '';
+        state.sttInterimDraft = '';
+        flushSttCommit(snapshot, lang);
+      }
+    }, 650);
+
+    const publishDraft = async () => {
+      let draft = state.sttInterimDraft;
+      const detected = detectLang(clean, lang);
+      if (!draft) {
+        draft = lookupOfflineSubtitleDraft(clean, detected);
+      }
+      if (!draft && clean.length >= 4) {
+        try {
+          draft = await gtxTranslate(clean, detected, nativeCfg().code);
+          if (draft) storeOfflineSubtitleCache(clean, detected, draft);
+        } catch (e) {}
+      }
+      state.sttInterimDraft = draft || '';
+      upsertProvisionalSubtitle(clean, state.sttInterimDraft, 'draft', detected, false);
+    };
+
+    if (isSubStopwordOnly(clean)) {
+      if (sttStopwordTimer) clearTimeout(sttStopwordTimer);
+      sttStopwordTimer = setTimeout(() => {
+        if (state.sttInterim === clean) publishDraft();
+      }, 400);
+    } else {
+      if (sttStopwordTimer) { clearTimeout(sttStopwordTimer); sttStopwordTimer = null; }
+      publishDraft();
+    }
+    render();
+  }
+
+  async function translateFinalSubtitleLine(orig, lang) {
+    const clean = String(orig || '').trim();
+    if (!clean) return;
+    if (/[.!?。！？]$/.test(clean) || clean.length >= 6 || !isSubStopwordOnly(clean)) {
+      await flushSttCommit(clean, lang);
+      return;
+    }
+    if (sttStopwordTimer) clearTimeout(sttStopwordTimer);
+    sttStopwordTimer = setTimeout(() => flushSttCommit(clean, lang), 400);
+  }
+
+  function toggleNativeVideoSubtitle() {
+    const next = !state.nativeVideoOcrRunning;
+    state.nativeVideoOcrRunning = next;
+    state.subtitleOverlayVisible = true;
+    applyVideoRoiConfig(state.videoRoiMode, state.videoRoiMode === 'custom' ? state.videoRoiRect : null, false);
+    window.AndroidOverlay?.setSubtitleOverlayVisible(true);
+    window.AndroidOverlay?.toggleScreenSubtitleOcr(next);
+    render();
+  }
+
+  function toggleNativeOrWebStt() {
+    if (state.nativeSttRunning) {
+      state.nativeSttRunning = false;
+      clearSttStabilizerTimers();
+      sttActiveProvisionalId = '';
+      state.sttInterim = '';
+      state.sttInterimDraft = '';
+      window.AndroidOverlay?.stopNativeStt();
+      if (speechRec) { try { speechRec.onend = null; speechRec.stop(); } catch (e) {} speechRec = null; }
+      render();
+      return;
+    }
+    state.nativeSttRunning = true;
+    state.subtitleOverlayVisible = true;
+    window.AndroidOverlay?.setSubtitleOverlayVisible(true);
+    if (window.AndroidOverlay && typeof window.AndroidOverlay.startNativeStt === 'function') {
+      window.AndroidOverlay.startNativeStt(state.sttLang);
+      render();
+      return;
+    }
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (SR) {
+      const rec = new SR();
+      rec.continuous = true;
+      rec.interimResults = true;
+      rec.lang = state.sttLang;
+      rec.onresult = (ev) => {
+        let interim = '';
+        for (let i = ev.resultIndex; i < ev.results.length; i++) {
+          const r = ev.results[i];
+          const t = (r[0]?.transcript || '').trim();
+          if (!t) continue;
+          if (r.isFinal) {
+            state.sttInterim = '';
+            state.sttInterimDraft = '';
+            translateFinalSubtitleLine(t, state.sttLang);
+          } else {
+            interim += t + ' ';
+          }
+        }
+        const trimmedInterim = interim.trim();
+        if (trimmedInterim) {
+          if (/[.!?。！？]$/.test(trimmedInterim)) {
+            state.sttInterim = '';
+            state.sttInterimDraft = '';
+            translateFinalSubtitleLine(trimmedInterim, state.sttLang);
+          } else {
+            handleInterimSubtitleUpdate(trimmedInterim, '', state.sttLang);
+          }
+        }
+      };
+      rec.onend = () => { if (state.nativeSttRunning && speechRec === rec) { try { rec.start(); } catch (e) {} } };
+      speechRec = rec;
+      try { rec.start(); } catch (e) { state.nativeSttRunning = false; }
+    }
+    render();
+  }
+
+  /* ================== UI 渲染：翻譯視窗 + 聊天視窗 + 全螢幕模式 ================== */
+  function renderDeckSelectorHtml() {
+    const resolved = getResolvedTargetDeck();
+    return `
+      <div class="row" style="gap:6px;">
+        <div class="deck-picker">
+          <button type="button" class="pill-btn" style="width:100%;text-align:left;display:flex;justify-content:space-between;align-items:center;gap:6px;" id="deckDropdownBtn">
+            <span style="display:inline-flex;align-items:center;gap:5px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${OV_SVG.folder}<span>${esc(resolved)}</span></span>
+            ${OV_SVG.chevronDown}
+          </button>
+          ${state.deckMenuOpen ? `
+            <div class="deck-menu">
+              ${state.decks.map(d => `<button type="button" class="deck-opt" style="display:flex;align-items:center;justify-content:space-between;${d === state.selectedDeck ? 'color:var(--brand);font-weight:900;' : ''}" data-pick-deck="${esc(d)}"><span>${esc(d)}</span>${d === state.selectedDeck ? OV_SVG.check : ''}</button>`).join('')}
+              <button type="button" class="deck-opt" style="color:var(--emerald);" data-pick-deck="__NEW__">＋ 新增字庫名稱...</button>
+            </div>
+          ` : ''}
+        </div>
+      </div>
+      ${state.newDeckPromptOpen ? `
+        <div class="row" style="margin-top:5px;">
+          <input type="text" id="newDeckInput" value="${esc(state.newDeckNameInput)}" placeholder="輸入新字庫名稱..." style="flex:1;">
+          <button type="button" class="btn btn-emerald btn-sm" id="applyNewDeckBtn">確定</button>
+        </div>
+      ` : ''}
+    `;
+  }
+
+  function renderBubbleHtml(bubbleKey = 'bubble') {
+    const b = state[bubbleKey];
+    if (!b) return '';
+    return `
+      <div class="bubble ov-motion-enter">
+        <div class="row" style="justify-content:space-between;">
+          <div class="row" style="gap:4px;">
+            <strong style="font-size:14px;">${esc(b.word)}</strong>
+            <span class="badge">${b.lang === 'ja' ? 'JA' : (b.lang === 'zh-TW' ? 'ZH' : 'EN')}</span>
+            ${b.pos ? `<span class="badge" style="background:var(--surface-2);color:var(--text);">${esc(b.pos)}</span>` : ''}
+          </div>
+          <div class="row" style="gap:4px;">
+            <button type="button" class="icon-btn" data-bubble-speak="${esc(bubbleKey)}" title="發音">${OV_SVG.speaker}</button>
+            <button type="button" class="icon-btn" data-bubble-close="${esc(bubbleKey)}" title="關閉">${OV_SVG.close}</button>
+          </div>
+        </div>
+        ${b.phonetic ? `<div style="font-size:11px;font-weight:700;color:var(--brand);">${esc(b.phonetic)}</div>` : ''}
+        <div style="font-size:12px;font-weight:600;background:var(--surface);padding:6px 8px;border-radius:8px;">
+          ${b.meaning ? esc(b.meaning) : (b.loading ? '正在查詢釋義...' : '無可用釋義')}
+        </div>
+        <button type="button" class="btn btn-emerald" data-bubble-add="${esc(bubbleKey)}">＋ 快速加入【${esc(getResolvedTargetDeck())}】</button>
+      </div>
+    `;
+  }
+
+  function renderCameraTab(body) {
+    const selCount = state.photoSelectedIds.size;
+    body.innerHTML = `
+      <div class="grid-3">
+        <button type="button" class="btn btn-brand" id="camTakeBtn">${OV_SVG.camera}<span>拍照</span></button>
+        <button type="button" class="btn btn-chip" id="camGalBtn">${OV_SVG.gallery}<span>相簿</span></button>
+        <button type="button" class="btn btn-emerald" id="screenFreezeBtn">${OV_SVG.scan}<span>截圖點詞</span></button>
+      </div>
+
+      <div class="row" style="justify-content:space-between;">
+        <div class="row">
+          <button type="button" class="btn btn-sm ${state.photoMode === 'lookup' ? 'btn-brand' : 'btn-chip'}" id="pModeLook">${OV_SVG.cursor}<span>查義</span></button>
+          <button type="button" class="btn btn-sm ${state.photoMode === 'select' ? 'btn-emerald' : 'btn-chip'}" id="pModeSel">${OV_SVG.checkbox}<span>選取</span></button>
+          ${state.photoDataUrl ? `<button type="button" class="btn btn-sm btn-chip" id="pOpenFsBtn">${OV_SVG.expand}<span>全螢幕</span></button>` : ''}
+        </div>
+        ${state.photoTokens.length > 0 ? `
+          <div class="row">
+            <button type="button" class="btn btn-sm btn-chip" id="pSelAll">全選</button>
+            <button type="button" class="btn btn-sm btn-chip" id="pClearSel">清空</button>
+          </div>
+        ` : ''}
+      </div>
+
+      ${renderDeckSelectorHtml()}
+      ${renderBubbleHtml('bubble')}
+
+      ${state.isVisionBusy ? `<div class="card-box" style="text-align:center;flex-direction:row;align-items:center;justify-content:center;gap:8px;border-color:rgba(6,182,212,0.5);background:rgba(6,182,212,0.08);"><span class="ov-live-dot" style="background:#06b6d4;box-shadow:0 0 8px rgba(6,182,212,0.9);"></span><strong style="color:#0891b2;font-size:11.5px;">視覺取詞引擎 · 偵測框校準中...</strong></div>` : ''}
+
+      ${state.photoDataUrl ? `
+        <div class="row" style="justify-content:space-between;">
+          <span class="muted">雙指捏合 / 滾輪縮放與拖曳</span>
+          <div class="ov-zoom-controls">
+            <button type="button" class="btn btn-chip ov-zoom-btn" id="inlineZoomOutBtn">−</button>
+            <button type="button" class="btn btn-chip ov-zoom-btn" id="inlineZoomResetBtn">${Math.round((state.inlineZoom?.scale || 1) * 100)}%</button>
+            <button type="button" class="btn btn-chip ov-zoom-btn" id="inlineZoomInBtn">＋</button>
+          </div>
+        </div>
+        <div class="stage-viewport" id="inlineStageViewport">
+          <div class="stage-box" id="inlineStageBox">
+            <img id="inlineStageImg" src="${state.photoDataUrl}" alt="辨識照片">
+            ${state.isVisionBusy ? `
+              <div class="ov-scanline-layer" aria-hidden="true">
+                <div class="ov-scanline-beam"></div>
+                <span class="ov-reticle-corner ov-reticle-tl"></span>
+                <span class="ov-reticle-corner ov-reticle-tr"></span>
+                <span class="ov-reticle-corner ov-reticle-bl"></span>
+                <span class="ov-reticle-corner ov-reticle-br"></span>
+              </div>
+            ` : ''}
+            <div class="photo-overlay">
+              ${state.photoTokens.map(t => {
+                const st = boxToRectStyle(t.box);
+                if (!st) return '';
+                const isSel = state.photoSelectedIds.has(t.id);
+                const isAct = state.photoActiveId === t.id;
+                return `<button type="button" class="hotspot ${isSel ? 'selected' : ''} ${isAct ? 'active' : ''}" data-ptok="${esc(t.id)}" style="${st}"></button>`;
+              }).join('')}
+            </div>
+          </div>
+        </div>
+      ` : `<div class="card-box" style="text-align:center;align-items:center;padding:16px 12px;"><div>${OV_SVG.cameraLg}</div><div class="muted">點擊「拍照／相簿」或「螢幕點譯」，即可在全螢幕圖片上點擊單字查義或批次入庫</div></div>`}
+
+      ${state.photoSummary ? `<div class="card-box"><div class="label-xs">全文語意翻譯</div><div style="font-size:12px;font-weight:600;">${esc(state.photoSummary)}</div></div>` : ''}
+
+      ${(state.photoMode === 'select' || selCount > 0) ? `
+        <div class="sel-box">
+          <div class="chip-wrap">
+            ${selCount === 0 ? '<span class="muted">點擊圖片方框勾選欲收錄的單字</span>' : state.photoTokens.filter(t => state.photoSelectedIds.has(t.id)).map(t => `<button type="button" class="sel-chip" data-pchip="${esc(t.id)}">${esc(t.text)} ×</button>`).join('')}
+          </div>
+          <button type="button" class="btn btn-emerald" id="photoImportBtn" ${selCount === 0 ? 'disabled' : ''}>確認收錄 (${selCount}) 至【${esc(getResolvedTargetDeck())}】</button>
+        </div>
+      ` : ''}
+    `;
+  }
+
+  function renderScreenTab(body) {
+    const segs = segmentText(state.scratchText);
+    const tokensHtml = segs.length === 0
+      ? '<span class="muted">使用「全螢幕截圖定格點詞」直接點擊任何 App 畫面單字，或在此貼上文句進行三語分詞查義。</span>'
+      : segs.map(s => {
+          if (!s.isWord) return esc(s.text);
+          const key = `${s.lang}::${normKey(s.text, s.lang)}`;
+          return `<span class="tok ${state.selectedWords.has(key) ? 'selected' : ''}" data-word="${esc(s.text)}" data-lang="${esc(s.lang)}">${esc(s.text)}</span>`;
+        }).join('');
+    const selArr = Array.from(state.selectedWords.entries());
+
+    body.innerHTML = `
+      <button type="button" class="btn btn-emerald" style="padding:10px;font-size:12px;" id="screenFreezeHeroBtn">
+        ${OV_SVG.scan}<span>螢幕點譯 · 全螢幕截圖定格取詞</span>
+      </button>
+
+      <div class="card-box">
+        <div class="grid-2">
+          <button type="button" class="btn ${!state.screenSelectMode ? 'btn-brand' : 'btn-chip'}" id="modeLookupBtn">${OV_SVG.cursor}<span>點擊查義</span></button>
+          <button type="button" class="btn ${state.screenSelectMode ? 'btn-amber' : 'btn-chip'}" id="modeSelectBtn">${OV_SVG.checkbox}<span>選字入庫 (${selArr.length})</span></button>
+        </div>
+        ${renderDeckSelectorHtml()}
+      </div>
+
+      ${renderBubbleHtml('bubble')}
+
+      <div class="card-box">
+        <div class="row" style="justify-content:space-between;">
+          <span class="label-xs">剪貼簿 ／ 文字智能斷詞 (EN / JA / ZH)</span>
+          <button type="button" class="btn btn-chip btn-sm" id="pasteClipBtn">${OV_SVG.clip}<span>貼上</span></button>
+        </div>
+        <textarea id="scratchInput" rows="2" placeholder="貼上任何英文、日文或中文句子...">${esc(state.scratchText)}</textarea>
+        <div class="row">
+          <button type="button" class="btn btn-brand" style="flex:1;" id="runTransBtn" ${state.isScratchBusy ? 'disabled' : ''}>${OV_SVG.sparkle}<span>${state.isScratchBusy ? '翻譯中...' : '斷詞與整句翻譯'}</span></button>
+          <button type="button" class="btn btn-chip" id="clearScratchBtn">清空</button>
+        </div>
+      </div>
+
+      <div class="token-area" id="tokenArea">
+        <div>${tokensHtml}</div>
+        ${state.scratchTrans ? `<div style="margin-top:6px;padding-top:6px;border-top:1px solid var(--border);font-size:12px;font-weight:700;color:var(--emerald);">${esc(state.scratchTrans)}</div>` : ''}
+      </div>
+
+      ${(state.screenSelectMode || selArr.length > 0) ? `
+        <div class="sel-box">
+          <div class="chip-wrap">
+            ${selArr.length === 0 ? '<span class="muted">點擊上方分詞單字勾選</span>' : selArr.map(([k, it]) => `<button type="button" class="sel-chip" data-del-sel="${esc(k)}">${esc(it.word)} ×</button>`).join('')}
+          </div>
+          <button type="button" class="btn btn-emerald" id="confirmBatchBtn" ${selArr.length === 0 ? 'disabled' : ''}>確認收錄 (${selArr.length}) 至【${esc(getResolvedTargetDeck())}】</button>
+        </div>
+      ` : ''}
+    `;
+  }
+
+  function renderSubtitleTab(body) {
+    const maxEnd = state.ytCues.length ? state.ytCues[state.ytCues.length - 1].endMs : 0;
+    const streamLive = Boolean(state.nativeVideoOcrRunning || state.nativeSttRunning || state.ytPlaying);
+    body.innerHTML = `
+      <div class="row" style="justify-content:space-between;padding:0 2px;">
+        <span class="label-xs" style="letter-spacing:0.04em;">即時雙語串流引擎</span>
+        ${streamLive ? `
+          <span class="ov-live-beacon"><span class="ov-live-dot"></span><span>LIVE SYNC</span><span class="ov-eq-bars" aria-hidden="true"><span class="ov-eq-bar"></span><span class="ov-eq-bar"></span><span class="ov-eq-bar"></span><span class="ov-eq-bar"></span></span></span>
+        ` : '<span class="muted" style="font-size:10px;font-weight:800;">STANDBY</span>'}
+      </div>
+
+      <div class="grid-3">
+        <button type="button" class="btn ${state.subMode === 'video' ? 'btn-brand' : 'btn-chip'}" id="subVideoBtn">${OV_SVG.scan}<span>畫面字幕</span></button>
+        <button type="button" class="btn ${state.subMode === 'stt' ? 'btn-brand' : 'btn-chip'}" id="subSttBtn">${OV_SVG.mic}<span>語音字幕</span></button>
+        <button type="button" class="btn ${state.subMode === 'youtube' ? 'btn-rose' : 'btn-chip'}" id="subYtBtn">${OV_SVG.play}<span>YT 0ms</span></button>
+      </div>
+
+      <label class="card-box" style="flex-direction:row;align-items:center;justify-content:space-between;cursor:pointer;">
+        <span style="font-size:11px;font-weight:800;display:inline-flex;align-items:center;gap:5px;">${OV_SVG.windowSub}<span>螢幕覆蓋式透明字幕窗（可自由拖曳）</span></span>
+        <input type="checkbox" id="subOverlayToggle" ${state.subtitleOverlayVisible ? 'checked' : ''} style="width:16px;height:16px;">
+      </label>
+
+      ${state.subMode === 'video' ? `
+        <div class="card-box">
+          <div class="label-xs">字幕擷取 ROI 掃描區域（即時套用至原生螢幕掃描）</div>
+          <div class="grid-3">
+            <button type="button" class="btn btn-sm ${state.videoRoiMode === 'bottom25' ? 'btn-brand' : 'btn-chip'}" data-ov-roi="bottom25">底部 25%</button>
+            <button type="button" class="btn btn-sm ${state.videoRoiMode === 'bottom40' ? 'btn-brand' : 'btn-chip'}" data-ov-roi="bottom40">底部 40%</button>
+            <button type="button" class="btn btn-sm ${state.videoRoiMode === 'top25' ? 'btn-brand' : 'btn-chip'}" data-ov-roi="top25">頂部 25%</button>
+            <button type="button" class="btn btn-sm ${state.videoRoiMode === 'auto' ? 'btn-brand' : 'btn-chip'}" data-ov-roi="auto">自動偵測</button>
+            <button type="button" class="btn btn-sm ${state.videoRoiMode === 'custom' ? 'btn-brand' : 'btn-chip'}" data-ov-roi="custom">自訂區域</button>
+            <button type="button" class="btn btn-sm ${state.videoRoiMode === 'full' ? 'btn-brand' : 'btn-chip'}" data-ov-roi="full">全螢幕</button>
+          </div>
+          ${state.videoRoiMode === 'custom' ? `
+            <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;">
+              <label class="muted" style="display:flex;flex-direction:column;gap:2px;">X%<input type="number" id="ovRoiX" min="0" max="90" value="${Math.round((state.videoRoiRect?.xPct || 0.08) * 100)}"></label>
+              <label class="muted" style="display:flex;flex-direction:column;gap:2px;">Y%<input type="number" id="ovRoiY" min="0" max="90" value="${Math.round((state.videoRoiRect?.yPct || 0.72) * 100)}"></label>
+              <label class="muted" style="display:flex;flex-direction:column;gap:2px;">W%<input type="number" id="ovRoiW" min="10" max="100" value="${Math.round((state.videoRoiRect?.wPct || 0.84) * 100)}"></label>
+              <label class="muted" style="display:flex;flex-direction:column;gap:2px;">H%<input type="number" id="ovRoiH" min="8" max="100" value="${Math.round((state.videoRoiRect?.hPct || 0.24) * 100)}"></label>
+            </div>
+          ` : ''}
+          <button type="button" class="btn ${state.nativeVideoOcrRunning ? 'btn-rose' : 'btn-emerald'}" id="toggleNativeVideoOcrBtn">
+            ${state.nativeVideoOcrRunning ? `${OV_SVG.stop}<span>停止螢幕 ROI 字幕掃描 (250ms)</span>` : `${OV_SVG.play}<span>啟動螢幕 ML Kit 畫面字幕（免費零延遲）</span>`}
+          </button>
+          <div class="muted">支援底部／頂部／自動／自訂／全螢幕 ROI（最高 250ms 偵測），本地相似去重並先顯示離線草稿再背景精修。</div>
+        </div>
+      ` : state.subMode === 'stt' ? `
+        <div class="card-box">
+          <div class="grid-3">
+            <button type="button" class="btn btn-sm ${state.sttLang === 'en-US' ? 'btn-brand' : 'btn-chip'}" data-stt-lang="en-US">英文 (EN)</button>
+            <button type="button" class="btn btn-sm ${state.sttLang === 'ja-JP' ? 'btn-brand' : 'btn-chip'}" data-stt-lang="ja-JP">日文 (JA)</button>
+            <button type="button" class="btn btn-sm ${state.sttLang === 'zh-TW' ? 'btn-brand' : 'btn-chip'}" data-stt-lang="zh-TW">中文 (ZH)</button>
+          </div>
+          <button type="button" class="btn ${state.nativeSttRunning ? 'btn-rose' : 'btn-emerald'}" id="sttToggleBtn">
+            ${state.nativeSttRunning ? `${OV_SVG.stop}<span>停止語音字幕</span>` : `${OV_SVG.mic}<span>啟動即時雙語串流字幕</span>`}
+          </button>
+        </div>
+      ` : `
+        <div class="card-box">
+          <div class="row">
+            <input type="text" id="ytUrlInp" value="${esc(state.ytUrl)}" placeholder="貼上 YouTube / Bilibili / Vimeo / Dailymotion / Niconico / Twitch 網址..." style="flex:1;">
+            <button type="button" class="btn btn-rose" id="ytLoadBtn" ${state.ytLoading ? 'disabled' : ''}>${state.ytLoading ? '解析中' : '預譯'}</button>
+          </div>
+          ${state.ytStatus ? `<div class="muted" style="font-weight:700;color:var(--text);">${esc(state.ytStatus)}</div>` : ''}
+          ${state.ytFallbackSuggested ? `
+            <div class="row" style="flex-wrap:wrap;gap:5px;padding-top:4px;">
+              ${state.ytSuggestedModes.includes('video') ? `<button type="button" class="btn btn-sm btn-emerald" id="ytFallbackVideoBtn">切換至「畫面字幕」</button>` : ''}
+              ${state.ytSuggestedModes.includes('stt') ? `<button type="button" class="btn btn-sm btn-brand" id="ytFallbackSttBtn">切換至「語音字幕」</button>` : ''}
+            </div>
+          ` : ''}
+          ${state.ytCues.length ? `
+            <div class="row" style="justify-content:space-between;">
+              <strong style="font-size:11px;max-width:70%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(state.ytTitle)}</strong>
+              <span id="ytClock" style="font-family:monospace;font-weight:800;color:var(--rose);">${formatClock(state.ytCurrentMs)}</span>
+            </div>
+            <input type="range" id="ytScrub" min="0" max="${maxEnd}" value="${Math.round(state.ytCurrentMs)}">
+            <div class="row" style="justify-content:space-between;">
+              <button type="button" class="btn btn-sm ${state.ytPlaying ? 'btn-rose' : 'btn-emerald'}" id="ytPlayBtn">${state.ytPlaying ? `${OV_SVG.pause}<span>暫停</span>` : `${OV_SVG.play}<span>開始 0ms 同步</span>`}</button>
+              <div class="row" style="gap:4px;">
+                <button type="button" class="btn btn-sm btn-chip" id="ytMinusBtn">-0.5s</button>
+                <button type="button" class="btn btn-sm btn-chip" id="ytPlusBtn">+0.5s</button>
+              </div>
+            </div>
+          ` : ''}
+        </div>
+      `}
+
+      ${state.sttInterim ? `<div class="card-box"><div class="label-xs">即時串流辨識中...</div><div style="font-weight:700;">${esc(state.sttInterim)}</div></div>` : ''}
+
+      <div style="display:flex;flex-direction:column;gap:6px;">
+        ${state.subtitleFeed.length === 0 ? '<div class="muted" style="text-align:center;padding:10px 0;">字幕出現後會即時投射到透明螢幕字幕窗</div>' : state.subtitleFeed.slice(0, 12).map(it => `
+          <div class="card-box ov-motion-enter" style="padding:7px 9px;gap:3px;">
+            <div class="row" style="justify-content:space-between;">
+              <span class="ov-tier-badge ${it.tier === 'draft' ? 'ov-tier-badge--draft' : (it.tier === 'youtube' ? 'ov-tier-badge--youtube' : 'ov-tier-badge--context')}">${it.tier === 'draft' ? 'FAST DRAFT' : (it.tier === 'youtube' ? '0MS SYNC' : 'CONTEXT AI')}</span>
+              <span class="muted">${esc(it.ts)}</span>
+            </div>
+            <div style="font-size:12px;font-weight:800;">${esc(it.orig)}</div>
+            ${it.trans ? `<div style="font-size:11px;font-weight:700;color:var(--emerald);">${esc(it.trans)}</div>` : ''}
+          </div>
+        `).join('')}
+      </div>
+    `;
+  }
+
+  function renderChatView(body) {
+    const myUid = state.chatSession?.uid || '';
+    if (!myUid) {
+      body.innerHTML = `
+        <div class="card-box ov-motion-enter" style="text-align:center;align-items:center;padding:24px 14px;">
+          <div style="width:46px;height:46px;border-radius:14px;background:var(--brand-soft);display:flex;align-items:center;justify-content:center;">${OV_SVG.chatLg}</div>
+          <strong>尚未同步登入帳號</strong>
+          <div class="muted">請先在 LZHCard 主畫面登入帳號，即可跨 App 與好友即時聊天</div>
+          <button type="button" class="btn btn-brand" id="chatOpenAppBtn">回到 LZHCard 登入</button>
+        </div>
+      `;
+      const goBtn = document.getElementById('chatOpenAppBtn');
+      if (goBtn) goBtn.onclick = () => window.AndroidOverlay?.openAppMain();
+      return;
+    }
+
+    if (state.activeChatId) {
+      const peerOnline = Boolean(state.activeChatPeerUid && state.onlineStatusMap[state.activeChatPeerUid]?.online && !state.onlineStatusMap[state.activeChatPeerUid]?.hidePrivacy);
+      body.innerHTML = `
+        <div class="chat-wrap">
+          <div class="row" style="justify-content:space-between;padding-bottom:6px;border-bottom:1px solid var(--border);flex-shrink:0;">
+            <button type="button" class="btn btn-chip btn-sm" id="chatBackBtn">${OV_SVG.arrowLeft}<span>返回</span></button>
+            <div class="row" style="min-width:0;flex:1;justify-content:center;">
+              <span style="width:8px;height:8px;border-radius:999px;background:${peerOnline ? '#10b981' : '#94a3b8'};"></span>
+              <strong style="font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(state.activeChatTitle)}</strong>
+            </div>
+            <span style="width:42px;"></span>
+          </div>
+          <div class="chat-msgs" id="chatMsgsScroll">
+            ${state.chatMessages.length === 0 ? '<div class="muted" style="text-align:center;padding:20px 0;">尚無訊息，快打聲招呼吧！</div>' : state.chatMessages.map(m => {
+              const isMe = m.senderUid === myUid;
+              let read = false;
+              if (isMe) {
+                Object.keys(state.chatReadBy || {}).forEach(u => {
+                  if (u !== myUid && (state.chatReadBy[u] || 0) >= (m.createdAt || 0)) read = true;
+                });
+              }
+              return `
+                <div class="msg-row ${isMe ? 'me' : 'peer'}">
+                  ${!isMe ? `<span class="muted" style="font-size:10px;">${esc(m.sender || '')}</span>` : ''}
+                  <div class="msg-bubble">${esc(m.text || '')}</div>
+                  <span class="muted" style="font-size:9px;">${isMe && read ? '已讀 · ' : ''}${esc(m.time || '')}</span>
+                </div>
+              `;
+            }).join('')}
+          </div>
+          <form class="row" id="chatSendForm" style="padding-top:6px;border-top:1px solid var(--border);flex-shrink:0;">
+            <input type="text" id="chatMsgInput" placeholder="輸入訊息..." style="flex:1;">
+            <button type="submit" class="btn btn-brand">送出</button>
+          </form>
+        </div>
+      `;
+      const scroll = document.getElementById('chatMsgsScroll');
+      if (scroll) scroll.scrollTop = scroll.scrollHeight;
+      const back = document.getElementById('chatBackBtn');
+      if (back) back.onclick = () => { closeChatStreams(); state.activeChatId = ''; state.activeChatPeerUid = ''; render(); };
+      const form = document.getElementById('chatSendForm');
+      const inp = document.getElementById('chatMsgInput');
+      if (form && inp) {
+        form.onsubmit = (e) => { e.preventDefault(); const v = inp.value.trim(); if (v) { inp.value = ''; sendChatMessage(v); } };
+      }
+      return;
+    }
+
+    const friends = Array.isArray(state.chatSession.friends) ? state.chatSession.friends : [];
+    const threads = Array.isArray(state.chatSession.threads) ? state.chatSession.threads : [];
+    const thMap = new Map(threads.map(t => [t.id, t]));
+    const rooms = [];
+    friends.forEach(f => {
+      if (!f || !f.uid || f.uid === myUid) return;
+      const cid = [myUid, f.uid].sort().join('_');
+      const th = thMap.get(cid);
+      const live = state.onlineStatusMap[f.uid];
+      const online = live ? Boolean(live.online && !live.hidePrivacy) : Boolean(f.online);
+      const unread = Boolean(th && (th.updatedAt || 0) > ((th.readBy && th.readBy[myUid]) || 0) && th.lastSenderUid !== myUid);
+      rooms.push({ chatId: cid, peerUid: f.uid, name: f.name || '好友', avatar: f.avatar, preview: th?.lastMessage || '點擊開啟 1對1 聊天', online, unread, updatedAt: th?.updatedAt || 0 });
+    });
+    threads.forEach(th => {
+      if (!th || !th.id || th.type !== 'group') return;
+      const unread = Boolean((th.updatedAt || 0) > ((th.readBy && th.readBy[myUid]) || 0) && th.lastSenderUid !== myUid);
+      rooms.push({ chatId: th.id, peerUid: '', name: th.name || '群組', avatar: `https://api.dicebear.com/7.x/shapes/svg?seed=${encodeURIComponent(th.id)}`, preview: th.lastMessage || '群組頻道', online: false, unread, updatedAt: th.updatedAt || 0 });
+    });
+
+    const kw = state.chatFilter.trim().toLowerCase();
+    const filtered = rooms.filter(r => !kw || r.name.toLowerCase().includes(kw) || r.preview.toLowerCase().includes(kw))
+      .sort((a, b) => (b.unread ? 1 : 0) - (a.unread ? 1 : 0) || (b.online ? 1 : 0) - (a.online ? 1 : 0) || b.updatedAt - a.updatedAt);
+
+    body.innerHTML = `
+      <div class="chat-wrap">
+        <input type="text" id="chatSearchInp" value="${esc(state.chatFilter)}" placeholder="搜尋好友或對話...">
+        <div class="chat-list">
+          ${filtered.length === 0 ? '<div class="muted" style="text-align:center;padding:24px 0;">尚無符合的好友或聊天室</div>' : filtered.map(r => `
+            <button type="button" class="chat-item" data-open-room="${esc(r.chatId)}" data-room-title="${esc(r.name)}" data-room-peer="${esc(r.peerUid)}">
+              <div class="chat-avatar-wrap">
+                <img class="chat-avatar" src="${esc(r.avatar)}" alt="">
+                <span class="online-dot ${r.online ? 'on' : ''}"></span>
+              </div>
+              <div style="min-width:0;flex:1;">
+                <div class="row" style="justify-content:space-between;">
+                  <strong style="font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(r.name)}</strong>
+                  ${r.unread ? '<span class="unread-dot"></span>' : ''}
+                </div>
+                <div class="muted" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(r.preview)}</div>
+              </div>
+            </button>
+          `).join('')}
+        </div>
+      </div>
+    `;
+
+    const sInp = document.getElementById('chatSearchInp');
+    if (sInp) sInp.oninput = () => { state.chatFilter = sInp.value; render(); };
+    body.querySelectorAll('[data-open-room]').forEach(btn => {
+      btn.onclick = () => openChatRoom(btn.getAttribute('data-open-room'), btn.getAttribute('data-room-title'), btn.getAttribute('data-room-peer'));
+    });
+  }
+
+  function renderFreezeViewer() {
+    const shell = document.getElementById('freezeShell');
+    if (!shell) return;
+    if (!state.fullscreenOpen) {
+      shell.classList.add('hidden');
+      return;
+    }
+    shell.classList.remove('hidden');
+    const selCount = state.photoSelectedIds.size;
+
+    shell.innerHTML = `
+      <div class="freeze-topbar" style="flex-wrap:wrap;">
+        <div class="row">
+          <button type="button" class="btn btn-sm btn-chip" id="fsExitBtn">${OV_SVG.close}<span>結束點詞</span></button>
+          <button type="button" class="btn btn-sm ${state.photoMode === 'lookup' ? 'btn-brand' : 'btn-chip'}" id="fsLookBtn">${OV_SVG.cursor}<span>點擊查義</span></button>
+          <button type="button" class="btn btn-sm ${state.photoMode === 'select' ? 'btn-emerald' : 'btn-chip'}" id="fsSelBtn">${OV_SVG.checkbox}<span>選取 (${selCount})</span></button>
+        </div>
+        <div class="row">
+          <div class="ov-zoom-controls">
+            <button type="button" class="btn btn-chip ov-zoom-btn" id="fsZoomOutBtn">−</button>
+            <button type="button" class="btn btn-chip ov-zoom-btn" id="fsZoomResetBtn">${Math.round((state.fsZoom?.scale || 1) * 100)}%</button>
+            <button type="button" class="btn btn-chip ov-zoom-btn" id="fsZoomInBtn">＋</button>
+          </div>
+          ${state.photoTokens.length > 0 ? `<button type="button" class="btn btn-sm btn-chip" id="fsAllBtn">全選</button>` : ''}
+          ${state.photoBase64 ? `<button type="button" class="btn btn-sm btn-amber" id="fsAiRescanBtn" ${state.isVisionBusy ? 'disabled' : ''}>${OV_SVG.sparkle}<span>${state.isVisionBusy ? '偵測框校準中' : 'AI深掃'}</span></button>` : ''}
+        </div>
+      </div>
+
+      <div class="freeze-stage-vp" id="fsStageViewport">
+        ${state.photoDataUrl ? `
+          <div class="freeze-stage-box" id="fsStageBox">
+            <img id="fsStageImg" src="${state.photoDataUrl}" alt="定格畫面">
+            ${state.isVisionBusy ? `
+              <div class="ov-scanline-layer ov-scanline-layer--fs" aria-hidden="true">
+                <div class="ov-scanline-beam"></div>
+                <span class="ov-reticle-corner ov-reticle-tl"></span>
+                <span class="ov-reticle-corner ov-reticle-tr"></span>
+                <span class="ov-reticle-corner ov-reticle-bl"></span>
+                <span class="ov-reticle-corner ov-reticle-br"></span>
+              </div>
+            ` : ''}
+            <div class="photo-overlay">
+              ${state.photoTokens.map(t => {
+                const st = boxToRectStyle(t.box);
+                if (!st) return '';
+                const isSel = state.photoSelectedIds.has(t.id);
+                const isAct = state.photoActiveId === t.id;
+                return `<button type="button" class="hotspot ${isSel ? 'selected' : ''} ${isAct ? 'active' : ''}" data-fstok="${esc(t.id)}" style="${st}"></button>`;
+              }).join('')}
+            </div>
+          </div>
+        ` : `<div class="muted" style="color:#cbd5e1;">正在載入畫面截圖...</div>`}
+
+        ${state.fsBubble ? `
+          <div class="freeze-bubble ov-motion-enter" id="fsLookupBubble" style="left:50%;bottom:16px;transform:translateX(-50%);">
+            <div class="row" style="justify-content:space-between;">
+              <div class="row" style="gap:4px;">
+                <strong style="font-size:15px;">${esc(state.fsBubble.word)}</strong>
+                <span class="badge">${state.fsBubble.lang === 'ja' ? 'JA' : (state.fsBubble.lang === 'zh-TW' ? 'ZH' : 'EN')}</span>
+                ${state.fsBubble.pos ? `<span class="badge">${esc(state.fsBubble.pos)}</span>` : ''}
+              </div>
+              <div class="row" style="gap:4px;">
+                <button type="button" class="icon-btn" data-bubble-speak="fsBubble" title="發音">${OV_SVG.speaker}</button>
+                <button type="button" class="icon-btn" data-bubble-close="fsBubble" title="關閉">${OV_SVG.close}</button>
+              </div>
+            </div>
+            ${state.fsBubble.phonetic ? `<div style="font-size:11px;font-weight:700;color:var(--brand);">${esc(state.fsBubble.phonetic)}</div>` : ''}
+            <div style="font-size:12.5px;font-weight:700;background:var(--surface);padding:7px 9px;border-radius:9px;">
+              ${state.fsBubble.meaning ? esc(state.fsBubble.meaning) : '正在翻譯...'}
+            </div>
+            <button type="button" class="btn btn-emerald" data-bubble-add="fsBubble">＋ 快速加入【${esc(getResolvedTargetDeck())}】</button>
+          </div>
+        ` : ''}
+      </div>
+
+      ${(state.photoMode === 'select' || selCount > 0) ? `
+        <div class="freeze-footer">
+          <div class="chip-wrap">
+            ${selCount === 0 ? '<span class="muted">點擊畫面單字方框進行複選</span>' : state.photoTokens.filter(t => state.photoSelectedIds.has(t.id)).map(t => `<button type="button" class="sel-chip" data-fschip="${esc(t.id)}">${esc(t.text)} ×</button>`).join('')}
+          </div>
+          <div class="row">
+            ${renderDeckSelectorHtml()}
+            <button type="button" class="btn btn-emerald" id="fsConfirmImportBtn" ${selCount === 0 ? 'disabled' : ''}>確認收錄 (${selCount})</button>
+          </div>
+        </div>
+      ` : ''}
+    `;
+
+    const vp = shell.querySelector('#fsStageViewport');
+    const sb = shell.querySelector('#fsStageBox');
+    const fsResetBtn = shell.querySelector('#fsZoomResetBtn');
+    const fsZoomInBtn = shell.querySelector('#fsZoomInBtn');
+    const fsZoomOutBtn = shell.querySelector('#fsZoomOutBtn');
+    if (vp && sb) {
+      bindOverlayZoomGestures(vp, sb, state.fsZoom, fsResetBtn);
+      if (fsZoomInBtn) fsZoomInBtn.onclick = () => { state.fsZoom.scale = Math.min(2.5, state.fsZoom.scale * 1.2); applyOverlayZoomTransform(sb, state.fsZoom, fsResetBtn); };
+      if (fsZoomOutBtn) fsZoomOutBtn.onclick = () => {
+        state.fsZoom.scale = Math.max(0.75, state.fsZoom.scale / 1.2);
+        if (state.fsZoom.scale <= 1.01) { state.fsZoom.tx = 0; state.fsZoom.ty = 0; }
+        applyOverlayZoomTransform(sb, state.fsZoom, fsResetBtn);
+      };
+      if (fsResetBtn) fsResetBtn.onclick = () => { state.fsZoom = { scale: 1, tx: 0, ty: 0 }; applyOverlayZoomTransform(sb, state.fsZoom, fsResetBtn); };
+    }
+
+    const exitBtn = shell.querySelector('#fsExitBtn');
+    if (exitBtn) {
+      exitBtn.onclick = () => {
+        state.fullscreenOpen = false;
+        state.fsBubble = null;
+        if (state.fullscreenFromFreezeService) window.AndroidOverlay?.closeFreezeMode();
+        render();
+      };
+    }
+    const lookBtn = shell.querySelector('#fsLookBtn');
+    if (lookBtn) lookBtn.onclick = () => { state.photoMode = 'lookup'; render(); };
+    const selBtn = shell.querySelector('#fsSelBtn');
+    if (selBtn) selBtn.onclick = () => { state.photoMode = 'select'; state.fsBubble = null; render(); };
+    const allBtn = shell.querySelector('#fsAllBtn');
+    if (allBtn) allBtn.onclick = () => { state.photoTokens.forEach(t => state.photoSelectedIds.add(t.id)); state.photoMode = 'select'; render(); };
+    const rescanBtn = shell.querySelector('#fsAiRescanBtn');
+    if (rescanBtn) rescanBtn.onclick = () => { if (state.photoBase64) analyzePhotoBase64(state.photoBase64, true); };
+
+    shell.querySelectorAll('[data-fstok]').forEach(btn => {
+      btn.onclick = () => {
+        if (Date.now() < pinchGuardUntil) return;
+        const id = btn.getAttribute('data-fstok');
+        const tk = state.photoTokens.find(x => x.id === id);
+        if (!tk) return;
+        if (state.photoMode === 'select') {
+          if (state.photoSelectedIds.has(id)) state.photoSelectedIds.delete(id);
+          else state.photoSelectedIds.add(id);
+          render();
+        } else {
+          state.photoActiveId = id;
+          lookupWordDetails(tk.text, tk.lang, { phonetic: tk.reading, pos: tk.pos, meaning: tk.translation }, 'fsBubble');
+        }
+      };
+    });
+    shell.querySelectorAll('[data-fschip]').forEach(btn => {
+      btn.onclick = () => { state.photoSelectedIds.delete(btn.getAttribute('data-fschip')); render(); };
+    });
+    const fsImp = shell.querySelector('#fsConfirmImportBtn');
+    if (fsImp) {
+      fsImp.onclick = async () => {
+        const picked = state.photoTokens.filter(t => state.photoSelectedIds.has(t.id)).map(t => ({
+          word: t.text, lang: t.lang, pos: t.pos, phonetic: t.reading, meaning: t.translation
+        }));
+        await saveCardsToLZHCard(picked, fsImp);
+        state.photoSelectedIds.clear();
+        render();
+      };
+    }
+  }
+
+  function render() {
+    const appPanel = document.getElementById('appPanel');
+    if (state.fullscreenFromFreezeService) {
+      if (appPanel) appPanel.classList.add('hidden');
+      renderFreezeViewer();
+      bindCommonBubbleAndDeckEvents(document.getElementById('freezeShell'));
+      return;
+    }
+
+    if (appPanel) appPanel.classList.remove('hidden');
+    document.getElementById('nativeLangBtn').textContent = nativeCfg().short;
+    document.getElementById('viewModeToggleText').innerHTML = state.viewMode === 'chat'
+      ? `${OV_SVG.chat}<span>聊天</span>${OV_SVG.arrows}${OV_SVG.globe}<span>翻譯</span>`
+      : `${OV_SVG.globe}<span>翻譯</span>${OV_SVG.arrows}${OV_SVG.chat}<span>聊天</span>`;
+    document.getElementById('translatorTabs').classList.toggle('hidden', state.viewMode === 'chat');
+    document.getElementById('nativeLangBtn').classList.toggle('hidden', state.viewMode === 'chat');
+
+    const myUid = state.chatSession?.uid || '';
+    const hasUnread = myUid && Array.isArray(state.chatSession?.threads) && state.chatSession.threads.some(th => (th.updatedAt || 0) > ((th.readBy && th.readBy[myUid]) || 0) && th.lastSenderUid !== myUid);
+    document.getElementById('chatUnreadDot').classList.toggle('hidden', !hasUnread);
+
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+      btn.classList.toggle('active', btn.getAttribute('data-tab') === state.activeTab);
+    });
+
+    const body = document.getElementById('panelBody');
+    if (state.viewMode === 'chat') {
+      renderChatView(body);
+    } else if (state.activeTab === 'camera') {
+      renderCameraTab(body);
+    } else if (state.activeTab === 'screen') {
+      renderScreenTab(body);
+    } else {
+      renderSubtitleTab(body);
+    }
+
+    bindPanelEvents();
+    bindCommonBubbleAndDeckEvents(body);
+    renderFreezeViewer();
+    if (state.fullscreenOpen) bindCommonBubbleAndDeckEvents(document.getElementById('freezeShell'));
+
+    const vp = document.getElementById('inlineStageViewport');
+    const sb = document.getElementById('inlineStageBox');
+    const inResetBtn = document.getElementById('inlineZoomResetBtn');
+    const inZoomInBtn = document.getElementById('inlineZoomInBtn');
+    const inZoomOutBtn = document.getElementById('inlineZoomOutBtn');
+    if (vp && sb) {
+      bindOverlayZoomGestures(vp, sb, state.inlineZoom, inResetBtn);
+      if (inZoomInBtn) inZoomInBtn.onclick = () => { state.inlineZoom.scale = Math.min(2.5, state.inlineZoom.scale * 1.2); applyOverlayZoomTransform(sb, state.inlineZoom, inResetBtn); };
+      if (inZoomOutBtn) inZoomOutBtn.onclick = () => {
+        state.inlineZoom.scale = Math.max(0.75, state.inlineZoom.scale / 1.2);
+        if (state.inlineZoom.scale <= 1.01) { state.inlineZoom.tx = 0; state.inlineZoom.ty = 0; }
+        applyOverlayZoomTransform(sb, state.inlineZoom, inResetBtn);
+      };
+      if (inResetBtn) inResetBtn.onclick = () => { state.inlineZoom = { scale: 1, tx: 0, ty: 0 }; applyOverlayZoomTransform(sb, state.inlineZoom, inResetBtn); };
+    }
+
+    notifyNativeHeight();
+  }
+
+  function bindCommonBubbleAndDeckEvents(scope) {
+    if (!scope) return;
+    const deckBtn = scope.querySelector('#deckDropdownBtn');
+    if (deckBtn) {
+      deckBtn.onclick = (e) => { e.stopPropagation(); state.deckMenuOpen = !state.deckMenuOpen; render(); };
+    }
+    scope.querySelectorAll('[data-pick-deck]').forEach(opt => {
+      opt.onclick = (e) => {
+        e.stopPropagation();
+        const v = opt.getAttribute('data-pick-deck');
+        state.deckMenuOpen = false;
+        if (v === '__NEW__') state.newDeckPromptOpen = true;
+        else { state.newDeckPromptOpen = false; state.selectedDeck = v; }
+        render();
+      };
+    });
+    const newDeckInp = scope.querySelector('#newDeckInput');
+    if (newDeckInp) newDeckInp.oninput = () => { state.newDeckNameInput = newDeckInp.value; };
+    const applyDeckBtn = scope.querySelector('#applyNewDeckBtn');
+    if (applyDeckBtn) {
+      applyDeckBtn.onclick = () => {
+        const name = (newDeckInp ? newDeckInp.value : state.newDeckNameInput).trim();
+        if (name) { ensureDeckInList(name); state.newDeckPromptOpen = false; }
+        render();
+      };
+    }
+    scope.querySelectorAll('[data-bubble-close]').forEach(btn => {
+      btn.onclick = () => { state[btn.getAttribute('data-bubble-close')] = null; render(); };
+    });
+    scope.querySelectorAll('[data-bubble-speak]').forEach(btn => {
+      btn.onclick = () => {
+        const b = state[btn.getAttribute('data-bubble-speak')];
+        if (b) window.AndroidOverlay?.speakText(b.word, b.lang);
+      };
+    });
+    scope.querySelectorAll('[data-bubble-add]').forEach(btn => {
+      btn.onclick = async () => {
+        const b = state[btn.getAttribute('data-bubble-add')];
+        if (!b) return;
+        await saveCardsToLZHCard([{ word: b.word, lang: b.lang, pos: b.pos, phonetic: b.phonetic, meaning: b.meaning }], btn);
+      };
+    });
+  }
+
+  function bindPanelEvents() {
+    const freezeTrigger = () => window.AndroidOverlay?.startScreenFreezeLookup();
+    const freezeBtn = document.getElementById('screenFreezeBtn');
+    if (freezeBtn) freezeBtn.onclick = freezeTrigger;
+    const freezeHeroBtn = document.getElementById('screenFreezeHeroBtn');
+    if (freezeHeroBtn) freezeHeroBtn.onclick = freezeTrigger;
+
+    const camTake = document.getElementById('camTakeBtn');
+    if (camTake) camTake.onclick = () => window.AndroidOverlay?.openImagePicker(true);
+    const camGal = document.getElementById('camGalBtn');
+    if (camGal) camGal.onclick = () => window.AndroidOverlay?.openImagePicker(false);
+    const pLook = document.getElementById('pModeLook');
+    if (pLook) pLook.onclick = () => { state.photoMode = 'lookup'; render(); };
+    const pSel = document.getElementById('pModeSel');
+    if (pSel) pSel.onclick = () => { state.photoMode = 'select'; state.bubble = null; render(); };
+    const pOpenFs = document.getElementById('pOpenFsBtn');
+    if (pOpenFs) pOpenFs.onclick = () => { state.fullscreenOpen = true; render(); };
+    const pAll = document.getElementById('pSelAll');
+    if (pAll) pAll.onclick = () => { state.photoTokens.forEach(t => state.photoSelectedIds.add(t.id)); state.photoMode = 'select'; render(); };
+    const pClr = document.getElementById('pClearSel');
+    if (pClr) pClr.onclick = () => { state.photoSelectedIds.clear(); render(); };
+
+    document.querySelectorAll('[data-ptok]').forEach(el => {
+      el.onclick = () => {
+        if (Date.now() < pinchGuardUntil) return;
+        const id = el.getAttribute('data-ptok');
+        const tk = state.photoTokens.find(x => x.id === id);
+        if (!tk) return;
+        if (state.photoMode === 'select') {
+          if (state.photoSelectedIds.has(id)) state.photoSelectedIds.delete(id);
+          else state.photoSelectedIds.add(id);
+          render();
+        } else {
+          state.photoActiveId = id;
+          lookupWordDetails(tk.text, tk.lang, { phonetic: tk.reading, pos: tk.pos, meaning: tk.translation }, 'bubble');
+        }
+      };
+    });
+    document.querySelectorAll('[data-pchip]').forEach(el => {
+      el.onclick = () => { state.photoSelectedIds.delete(el.getAttribute('data-pchip')); render(); };
+    });
+    const pImport = document.getElementById('photoImportBtn');
+    if (pImport) {
+      pImport.onclick = async () => {
+        const picked = state.photoTokens.filter(t => state.photoSelectedIds.has(t.id)).map(t => ({
+          word: t.text, lang: t.lang, pos: t.pos, phonetic: t.reading, meaning: t.translation
+        }));
+        await saveCardsToLZHCard(picked, pImport);
+        state.photoSelectedIds.clear();
+        render();
+      };
+    }
+
+    // 螢幕點詞頁面事件
+    const mLook = document.getElementById('modeLookupBtn');
+    if (mLook) mLook.onclick = () => { state.screenSelectMode = false; render(); };
+    const mSel = document.getElementById('modeSelectBtn');
+    if (mSel) mSel.onclick = () => { state.screenSelectMode = true; state.bubble = null; render(); };
+    const sInp = document.getElementById('scratchInput');
+    if (sInp) sInp.oninput = () => { state.scratchText = sInp.value; };
+    const pasteBtn = document.getElementById('pasteClipBtn');
+    if (pasteBtn) pasteBtn.onclick = () => {
+      const txt = window.AndroidOverlay?.readClipboard() || '';
+      if (txt) { state.scratchText = txt; render(); }
+    };
+    const runBtn = document.getElementById('runTransBtn');
+    if (runBtn) runBtn.onclick = runScratchTranslate;
+    const clrBtn = document.getElementById('clearScratchBtn');
+    if (clrBtn) clrBtn.onclick = () => { state.scratchText = ''; state.scratchTrans = ''; render(); };
+
+    document.querySelectorAll('#tokenArea .tok').forEach(el => {
+      el.onclick = () => {
+        const w = el.getAttribute('data-word');
+        const lang = el.getAttribute('data-lang');
+        if (!w) return;
+        if (state.screenSelectMode) {
+          const k = `${lang}::${normKey(w, lang)}`;
+          if (state.selectedWords.has(k)) state.selectedWords.delete(k);
+          else state.selectedWords.set(k, { word: w, lang });
+          render();
+        } else {
+          lookupWordDetails(w, lang, null, 'bubble');
+        }
+      };
+    });
+    document.querySelectorAll('[data-del-sel]').forEach(btn => {
+      btn.onclick = () => { state.selectedWords.delete(btn.getAttribute('data-del-sel')); render(); };
+    });
+    const batchBtn = document.getElementById('confirmBatchBtn');
+    if (batchBtn) {
+      batchBtn.onclick = async () => {
+        const items = Array.from(state.selectedWords.values());
+        await saveCardsToLZHCard(items, batchBtn);
+        state.selectedWords.clear();
+        render();
+      };
+    }
+
+    // 即時字幕事件
+    const subV = document.getElementById('subVideoBtn');
+    if (subV) subV.onclick = () => { state.subMode = 'video'; render(); };
+    const subS = document.getElementById('subSttBtn');
+    if (subS) subS.onclick = () => { state.subMode = 'stt'; render(); };
+    const subY = document.getElementById('subYtBtn');
+    if (subY) subY.onclick = () => { state.subMode = 'youtube'; render(); };
+
+    const subOverlayChk = document.getElementById('subOverlayToggle');
+    if (subOverlayChk) {
+      subOverlayChk.onchange = () => {
+        state.subtitleOverlayVisible = subOverlayChk.checked;
+        window.AndroidOverlay?.setSubtitleOverlayVisible(state.subtitleOverlayVisible);
+      };
+    }
+    const togNativeVid = document.getElementById('toggleNativeVideoOcrBtn');
+    if (togNativeVid) togNativeVid.onclick = toggleNativeVideoSubtitle;
+
+    document.querySelectorAll('[data-ov-roi]').forEach(btn => {
+      btn.onclick = () => {
+        applyVideoRoiConfig(btn.getAttribute('data-ov-roi'), null, false);
+        render();
+      };
+    });
+    ['ovRoiX', 'ovRoiY', 'ovRoiW', 'ovRoiH'].forEach(fid => {
+      const inp = document.getElementById(fid);
+      if (inp) {
+        inp.onchange = () => {
+          const rect = {
+            xPct: (Number(document.getElementById('ovRoiX')?.value) || 0) / 100,
+            yPct: (Number(document.getElementById('ovRoiY')?.value) || 0) / 100,
+            wPct: (Number(document.getElementById('ovRoiW')?.value) || 84) / 100,
+            hPct: (Number(document.getElementById('ovRoiH')?.value) || 24) / 100
+          };
+          applyVideoRoiConfig('custom', rect, false);
+          render();
+        };
+      }
+    });
+
+    document.querySelectorAll('[data-stt-lang]').forEach(el => {
+      el.onclick = () => { state.sttLang = el.getAttribute('data-stt-lang'); render(); };
+    });
+    const sttBtn = document.getElementById('sttToggleBtn');
+    if (sttBtn) sttBtn.onclick = toggleNativeOrWebStt;
+
+    const ytInp = document.getElementById('ytUrlInp');
+    if (ytInp) ytInp.oninput = () => { state.ytUrl = ytInp.value; };
+    const ytLoad = document.getElementById('ytLoadBtn');
+    if (ytLoad) ytLoad.onclick = () => loadYoutubeTimeline(ytInp ? ytInp.value : state.ytUrl);
+    const ytFallbackVideo = document.getElementById('ytFallbackVideoBtn');
+    if (ytFallbackVideo) ytFallbackVideo.onclick = () => { state.subMode = 'video'; state.ytFallbackSuggested = false; render(); };
+    const ytFallbackStt = document.getElementById('ytFallbackSttBtn');
+    if (ytFallbackStt) ytFallbackStt.onclick = () => { state.subMode = 'stt'; state.ytFallbackSuggested = false; render(); };
+    const ytPlay = document.getElementById('ytPlayBtn');
+    if (ytPlay) ytPlay.onclick = () => { if (state.ytPlaying) { stopYoutubePlayback(); render(); } else startYoutubePlayback(); };
+    const ytScrub = document.getElementById('ytScrub');
+    if (ytScrub) ytScrub.oninput = () => { state.ytCurrentMs = Number(ytScrub.value) || 0; state.ytActiveIdx = -1; };
+    const ytMinus = document.getElementById('ytMinusBtn');
+    if (ytMinus) ytMinus.onclick = () => { state.ytCurrentMs = Math.max(0, state.ytCurrentMs - 500); state.ytActiveIdx = -1; };
+    const ytPlus = document.getElementById('ytPlusBtn');
+    if (ytPlus) ytPlus.onclick = () => { state.ytCurrentMs += 500; state.ytActiveIdx = -1; };
+  }
+
+  async function runScratchTranslate() {
+    const txt = state.scratchText.trim();
+    if (!txt) return;
+    state.isScratchBusy = true;
+    render();
+    try {
+      const cfg = nativeCfg();
+      const tr = await callGemini(`將以下文字通順翻譯成「${cfg.aiName}」，僅輸出譯文：\n${txt}`)
+        .catch(() => gtxTranslate(txt, detectLang(txt), cfg.code));
+      state.scratchTrans = tr || '';
+    } finally {
+      state.isScratchBusy = false;
+      render();
+    }
+  }
+
+  async function analyzePhotoBase64(b64, keepFullscreen) {
+    state.activeTab = 'camera';
+    state.photoBase64 = b64;
+    state.photoDataUrl = b64.startsWith('data:') ? b64 : ('data:image/jpeg;base64,' + b64);
+    state.photoTokens = [];
+    state.photoSummary = '';
+    state.photoSelectedIds.clear();
+    state.isVisionBusy = true;
+    state.fullscreenOpen = keepFullscreen !== false;
+    render();
+
+    const cfg = nativeCfg();
+    const cleanB64 = state.photoBase64.includes(',') ? state.photoBase64.split(',')[1] : state.photoBase64;
+    const prompt = `對這張圖片進行高精準多語 OCR 與詞彙定位。回傳最多 80 個字詞，每個附上正規化邊界框 box:[ymin,xmin,ymax,xmax]（0~1000整數）。
+lang 為 en|ja|zh-TW；reading 英文填 IPA、日文必須填純平假名讀音；translation 與 summary 使用「${cfg.aiName}」。
+只輸出純 JSON：{"summary":"","tokens":[{"text":"","lang":"en|ja|zh-TW","reading":"","pos":"","translation":"","box":[0,0,100,200]}]}`;
+    try {
+      const raw = await callGemini(prompt, { mimeType: 'image/jpeg', data: cleanB64 }, 'vision_ocr');
+      const obj = safeJson(raw);
+      state.photoSummary = obj.summary || '';
+      state.photoTokens = (Array.isArray(obj.tokens) ? obj.tokens : []).map((t, i) => ({
+        id: 'pt_' + i,
+        text: String(t.text || '').trim(),
+        lang: t.lang || detectLang(t.text),
+        reading: String(t.reading || '').trim(),
+        pos: String(t.pos || '').trim(),
+        translation: String(t.translation || '').trim(),
+        box: normalizeBox1000(t.box) || [0, 0, 100, 100]
+      })).filter(x => x.text);
+    } catch (e) {
+      if (e && e.code === 'QUOTA_EXCEEDED') {
+        window.AndroidOverlay?.showNativeToast('雲端 AI 拍照額度已達上限，請使用「螢幕定格點詞 (免費 ML Kit)」或升級方案／填寫個人 Key');
+      } else {
+        window.AndroidOverlay?.showNativeToast('圖片辨識失敗，請稍後再試');
+      }
+    } finally {
+      state.isVisionBusy = false;
+      render();
+    }
+  }
+
+  function notifyNativeHeight() {
+    if (state.fullscreenFromFreezeService) return;
+    const panel = document.getElementById('appPanel');
+    if (!panel || !window.AndroidOverlay || typeof window.AndroidOverlay.updatePanelHeight !== 'function') return;
+    const h = Math.ceil(panel.getBoundingClientRect().height);
+    if (h > 100) window.AndroidOverlay.updatePanelHeight(h);
+  }
+
+  (function bindDrag() {
+    const handle = document.getElementById('dragHandle');
+    let dragging = false, lastX = 0, lastY = 0;
+    handle.addEventListener('pointerdown', (e) => {
+      if (e.target.closest('button')) return;
+      dragging = true;
+      lastX = e.screenX;
+      lastY = e.screenY;
+      try { handle.setPointerCapture(e.pointerId); } catch (err) {}
+    });
+    handle.addEventListener('pointermove', (e) => {
+      if (!dragging) return;
+      const dx = Math.round(e.screenX - lastX);
+      const dy = Math.round(e.screenY - lastY);
+      lastX = e.screenX;
+      lastY = e.screenY;
+      if (dx !== 0 || dy !== 0) window.AndroidOverlay?.movePanelBy(dx, dy);
+    });
+    const end = (e) => {
+      if (!dragging) return;
+      dragging = false;
+      try { handle.releasePointerCapture(e.pointerId); } catch (err) {}
+    };
+    handle.addEventListener('pointerup', end);
+    handle.addEventListener('pointercancel', end);
+  })();
+
+  if (typeof ResizeObserver !== 'undefined') {
+    new ResizeObserver(() => notifyNativeHeight()).observe(document.getElementById('appPanel'));
+  }
+
+  document.getElementById('viewModeToggleBtn').onclick = () => {
+    state.viewMode = state.viewMode === 'chat' ? 'translator' : 'chat';
+    if (state.viewMode === 'chat') {
+      refreshOnlineStatuses();
+    } else {
+      closeChatStreams();
+    }
+    render();
+  };
+
+  document.getElementById('nativeLangBtn').onclick = () => {
+    const idx = NATIVE_LANGS.findIndex(x => x.code === state.nativeLang);
+    const next = NATIVE_LANGS[(idx + 1) % NATIVE_LANGS.length];
+    state.nativeLang = next.code;
+    window.AndroidOverlay?.saveNativeLang(next.code);
+    render();
+  };
+
+  document.getElementById('closePanelBtn').onclick = () => {
+    closeChatStreams();
+    window.AndroidOverlay?.collapsePanel();
+  };
+
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.onclick = () => {
+      state.viewMode = 'translator';
+      state.activeTab = btn.getAttribute('data-tab');
+      state.deckMenuOpen = false;
+      render();
+    };
+  });
+
+  document.addEventListener('click', () => {
+    if (state.deckMenuOpen) { state.deckMenuOpen = false; render(); }
+  });
+
+  window.LZHOverlayApp = {
+    applyNativeConfig(cfg) {
+      if (!cfg) return;
+      if (cfg.nativeLang) state.nativeLang = cfg.nativeLang;
+      document.documentElement.classList.toggle('dark', Boolean(cfg.isDark));
+      if (cfg.apiMode) state.apiMode = cfg.apiMode;
+      if (cfg.apiKey !== undefined) state.apiKey = cfg.apiKey;
+      if (cfg.groqApiKey !== undefined) state.groqApiKey = cfg.groqApiKey;
+      if (cfg.membershipTier) {
+        if (cfg.membershipTier !== state.membershipTier) state.fastRefineExhausted = false;
+        state.membershipTier = cfg.membershipTier;
+      }
+      if (cfg.aiUsage !== undefined) state.aiUsage = cfg.aiUsage;
+      if (cfg.videoRoiMode || cfg.videoRoiRectJson) {
+        let parsedRect = null;
+        if (cfg.videoRoiRectJson) {
+          try { parsedRect = typeof cfg.videoRoiRectJson === 'string' ? JSON.parse(cfg.videoRoiRectJson) : cfg.videoRoiRectJson; } catch (e) {}
+        }
+        applyVideoRoiConfig(cfg.videoRoiMode || state.videoRoiMode, parsedRect, true);
+      }
+      if (Array.isArray(cfg.decks) && cfg.decks.length > 0) state.decks = cfg.decks;
+      if (cfg.defaultDeck && state.decks.includes(cfg.defaultDeck)) state.selectedDeck = cfg.defaultDeck;
+      if (cfg.chatSession && typeof cfg.chatSession === 'object') {
+        state.chatSession = { ...state.chatSession, ...cfg.chatSession };
+      }
+      render();
+    },
+    onNativeImageCaptured(b64) {
+      state.inlineZoom = { scale: 1, tx: 0, ty: 0 };
+      state.fsZoom = { scale: 1, tx: 0, ty: 0 };
+      if (b64) analyzePhotoBase64(b64, true);
+    },
+    openFreezeMode(payload) {
+      if (!payload) return;
+      state.fullscreenFromFreezeService = true;
+      state.fullscreenOpen = true;
+      state.photoMode = 'lookup';
+      state.photoSelectedIds.clear();
+      state.fsBubble = null;
+      state.fsZoom = { scale: 1, tx: 0, ty: 0 };
+      state.photoDataUrl = payload.imageDataUrl || (payload.imageBase64 ? ('data:image/jpeg;base64,' + payload.imageBase64) : '');
+      state.photoBase64 = payload.imageBase64 || '';
+      state.photoTokens = (Array.isArray(payload.tokens) ? payload.tokens : []).map((t, i) => ({
+        id: 'fz_' + i,
+        text: String(t.text || '').trim(),
+        lang: t.lang || detectLang(t.text),
+        reading: String(t.reading || '').trim(),
+        pos: String(t.pos || '').trim(),
+        translation: String(t.translation || '').trim(),
+        box: normalizeBox1000(t.box) || [0, 0, 100, 100]
+      })).filter(x => x.text);
+      if (Array.isArray(payload.decks) && payload.decks.length > 0) state.decks = payload.decks;
+      if (payload.defaultDeck) state.selectedDeck = payload.defaultDeck;
+      if (payload.nativeLang) state.nativeLang = payload.nativeLang;
+      document.documentElement.classList.toggle('dark', Boolean(payload.isDark));
+      render();
+    },
+    onNativeSubtitleUpdate(orig, trans, isFinal, tier, lang) {
+      if (!orig) return;
+      if (!isFinal) {
+        if (/[.!?。！？]$/.test(String(orig).trim())) {
+          state.sttInterim = '';
+          state.sttInterimDraft = '';
+          translateFinalSubtitleLine(orig, lang || '');
+        } else {
+          handleInterimSubtitleUpdate(orig, trans, lang || '');
+        }
+        return;
+      }
+      state.sttInterim = '';
+      state.sttInterimDraft = '';
+      if (trans) {
+        clearSttStabilizerTimers();
+        sttActiveProvisionalId = '';
+        pushSubtitleEntryAndHud(orig, trans, tier || 'refined', lang || '');
+      } else {
+        translateFinalSubtitleLine(orig, lang || '');
+      }
+    }
+  };
+
+  window.addEventListener('beforeunload', () => {
+    stopYoutubePlayback();
+    clearSttStabilizerTimers();
+    closeChatStreams();
+    if (speechRec) { try { speechRec.onend = null; speechRec.stop(); } catch (e) {} speechRec = null; }
+  });
+
+  try {
+    const initRaw = window.AndroidOverlay?.getInitialConfig();
+    if (initRaw) window.LZHOverlayApp.applyNativeConfig(JSON.parse(initRaw));
+    else render();
+  } catch (e) {
+    render();
+  }
+})();
+</script>
+</body>
+</html>

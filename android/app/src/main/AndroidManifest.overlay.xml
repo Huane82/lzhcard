@@ -1,0 +1,18 @@
+<!-- LZHCard AndroidManifest.xml 懸浮視窗與狀態列推播必要權限與 Service 宣告範本 -->
+<!-- 請將以下權限加入 android/app/src/main/AndroidManifest.xml 的 <manifest> 根標籤內 -->
+
+<uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+<uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+<!-- 請將以下 <service> 區塊加入 <application> 標籤內 -->
+<service
+    android:name=".FloatingOverlayService"
+    android:enabled="true"
+    android:exported="false"
+    android:foregroundServiceType="specialUse">
+    <property
+        android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+        android:value="Cross-app floating vocabulary lookup and translation bubble overlay" />
+</service>

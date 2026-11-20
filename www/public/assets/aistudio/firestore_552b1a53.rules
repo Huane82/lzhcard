@@ -1,0 +1,97 @@
+ rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // 🛠️ 輔助函式：檢查是否已登入
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // 🛠️ 輔助函式：先確認文件存在再驗證管理員身分（避免新帳號尚未建檔時報錯）
+    function isAdmin() {
+      return isSignedIn() && 
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+
+    // 👤 使用者資料庫 (放行本人建檔與資料同步，僅禁止非管理員將 role 設為 admin)
+    match /users/{userId} {
+      allow read: if isSignedIn();
+
+      allow create: if isSignedIn() && request.auth.uid == userId 
+        && (!('role' in request.resource.data) || request.resource.data.role != 'admin');
+
+      allow update: if isSignedIn() && request.auth.uid == userId 
+        && (
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role']) || 
+          request.resource.data.role != 'admin' || 
+          isAdmin()
+        );
+
+      allow delete: if isAdmin();
+
+      // 📦 單字庫大容量分片與使用者個人子集合 (突破單檔 1MB 上限)
+      match /{subcollection=**} {
+        allow read, write: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+      }
+    }
+
+    // 🛍️ 社群字庫商店 (storeDecks 與其底下所有單字分片子集合)
+    match /storeDecks/{deckId} {
+      allow read: if true;
+      allow create: if isSignedIn();
+      allow update: if isSignedIn() && (
+        resource == null || 
+        resource.data.authorId == request.auth.uid || 
+        isAdmin() ||
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['downloads', 'downloadCount'])
+      );
+      allow delete: if isSignedIn() && 
+        (resource == null || resource.data.authorId == request.auth.uid || isAdmin());
+
+      // 僅允許該字庫原作者或管理員寫入單字分片，所有人皆可讀取下載
+      match /{subcollection=**} {
+        allow read: if true;
+        allow write: if isSignedIn() && (
+          (exists(/databases/$(database)/documents/storeDecks/$(deckId)) &&
+           get(/databases/$(database)/documents/storeDecks/$(deckId)).data.authorId == request.auth.uid) || 
+          isAdmin()
+        );
+      }
+    }
+
+    // 📢 官方公告集合 (announcements)
+    match /announcements/{annId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // 💬 交流聊天室與訊息防禦 (chats)
+    match /chats/{chatId} {
+      allow read, create: if isSignedIn();
+      allow update: if isSignedIn() && (request.auth.uid in resource.data.members || isAdmin());
+      allow delete: if isAdmin();
+
+      match /messages/{msgId} {
+        allow read: if isSignedIn();
+        allow create: if isSignedIn() && request.resource.data.senderUid == request.auth.uid;
+        allow delete: if isAdmin();
+      }
+    }
+
+    // 📩 好友申請與群組邀請
+    match /friendRequests/{reqId} {
+      allow read, write: if isSignedIn();
+    }
+
+    match /groupInvites/{invId} {
+      allow read, write: if isSignedIn();
+    }
+
+    // 🌐 預設安全備援
+    match /{document=**} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+  }
+}
