@@ -27,12 +27,18 @@
         : 'https://lzhcard.tomlin980415.workers.dev';
 
     function hasLocalGeminiKey() {
+        try {
+            if (localStorage.getItem('lzhcard_api_mode') === 'shared') return false;
+        } catch (e) {}
         if (typeof global.getValidApiKey === 'function') return Boolean(global.getValidApiKey());
         const raw = localStorage.getItem('flashcard_gemini_key_v1');
         return Boolean(raw && raw.trim() && raw.trim() !== 'undefined' && raw.trim() !== 'null');
     }
 
     function hasLocalPersonalAiKey() {
+        try {
+            if (localStorage.getItem('lzhcard_api_mode') === 'shared') return false;
+        } catch (e) {}
         if (typeof global.hasAnyPersonalKey === 'function') return Boolean(global.hasAnyPersonalKey());
         const rawGroq = localStorage.getItem('lzhcard_groq_key_v1');
         const hasGroq = Boolean(rawGroq && rawGroq.trim() && rawGroq.trim() !== 'undefined' && rawGroq.trim() !== 'null');
@@ -160,11 +166,12 @@
     let iosScreenConfig = {
         setupCompleted: false,
         engine: 'apple_offline',
+        cloudKeyMode: 'shared',
         sourceLang: 'en',
         targetLang: 'zh-TW',
         customApiKey: '',
         regionMode: 'auto',
-        region: { x: 0.12, y: 0.75, width: 0.76, height: 0.18 }
+        region: { x: 0.05, y: 0.50, width: 0.90, height: 0.42 }
     };
 
     // 螢幕點詞輸入區狀態
@@ -6582,19 +6589,32 @@
                         ...iosScreenConfig,
                         ...parsed,
                         region: {
-                            x: clamp(Number(parsed.region?.x ?? 0.12), 0, 0.85),
-                            y: clamp(Number(parsed.region?.y ?? 0.75), 0, 0.88),
-                            width: clamp(Number(parsed.region?.width ?? 0.76), 0.12, 1),
-                            height: clamp(Number(parsed.region?.height ?? 0.18), 0.10, 1)
+                            x: clamp(Number(parsed.region?.x ?? 0.05), 0, 0.85),
+                            y: clamp(Number(parsed.region?.y ?? 0.50), 0, 0.88),
+                            width: clamp(Number(parsed.region?.width ?? 0.90), 0.12, 1),
+                            height: clamp(Number(parsed.region?.height ?? 0.42), 0.10, 1)
                         }
                     };
                 }
             }
         } catch (e) {}
-        if (!iosScreenConfig.customApiKey) {
+
+        const globalApiMode = (() => {
+            try { return localStorage.getItem('lzhcard_api_mode') || 'shared'; } catch (e) { return 'shared'; }
+        })();
+        if (globalApiMode === 'shared') {
+            if (!iosScreenConfig.cloudKeyMode || iosScreenConfig.cloudKeyMode !== 'personal' || !iosScreenConfig.customApiKey) {
+                iosScreenConfig.cloudKeyMode = 'shared';
+                iosScreenConfig.customApiKey = '';
+            }
+        } else if (!iosScreenConfig.customApiKey) {
             try {
-                const localGem = localStorage.getItem('flashcard_gemini_key_v1') || '';
-                if (localGem.trim()) iosScreenConfig.customApiKey = localGem.trim();
+                const localGroq = (localStorage.getItem('lzhcard_groq_key_v1') || '').trim();
+                const localGem = (localStorage.getItem('flashcard_gemini_key_v1') || '').trim();
+                if (localGroq || localGem) {
+                    iosScreenConfig.cloudKeyMode = 'personal';
+                    iosScreenConfig.customApiKey = localGroq || localGem;
+                }
             } catch (e) {}
         }
         return iosScreenConfig;
@@ -6622,7 +6642,7 @@
                 }
             });
             plugin.addListener('pipError', (ev) => {
-                toast('PiP 子母畫面啟動失敗：' + ((ev && ev.message) || '請確認裝置支援子母畫面'), 'error');
+                toast('PiP 子母畫面準備中：' + ((ev && ev.message) || '請確認已允許畫中畫或點選開始廣播'), 'warning');
             });
         } catch (e) {}
     }
@@ -6641,9 +6661,13 @@
         const plugin = getIosNativeScreenPlugin();
         if (!plugin || typeof plugin.saveConfig !== 'function') return false;
         const authToken = await getFirebaseIdTokenSafe();
-        const groqKey = (localStorage.getItem('lzhcard_groq_key_v1') || '').trim();
-        const geminiKey = (localStorage.getItem('flashcard_gemini_key_v1') || '').trim();
-        const effectiveKey = (iosScreenConfig.customApiKey || groqKey || geminiKey || '').trim();
+        const globalApiMode = localStorage.getItem('lzhcard_api_mode') || 'shared';
+        const usePersonalKey = iosScreenConfig.cloudKeyMode === 'personal' || (globalApiMode === 'personal' && hasLocalPersonalAiKey());
+        const groqKey = globalApiMode === 'personal' ? (localStorage.getItem('lzhcard_groq_key_v1') || '').trim() : '';
+        const geminiKey = globalApiMode === 'personal' ? (localStorage.getItem('flashcard_gemini_key_v1') || '').trim() : '';
+        const effectiveKey = usePersonalKey
+            ? (iosScreenConfig.customApiKey || groqKey || geminiKey || '').trim()
+            : '';
         let resolvedProvider = 'worker';
         let resolvedModel = 'gemini-2.0-flash';
         if (effectiveKey.startsWith('gsk_')) {
@@ -6653,6 +6677,9 @@
             resolvedProvider = 'gemini';
             resolvedModel = 'gemini-2.0-flash';
         }
+        const effectiveRect = iosScreenConfig.regionMode === 'custom'
+            ? iosScreenConfig.region
+            : { x: 0.05, y: 0.50, width: 0.90, height: 0.42 };
         await plugin.saveConfig({
             engine: iosScreenConfig.engine,
             sourceLang: iosScreenConfig.sourceLang || 'en',
@@ -6663,8 +6690,8 @@
             workerBaseUrl: SHARED_WORKER_BASE,
             authToken,
             regionMode: iosScreenConfig.regionMode || 'auto',
-            region: iosScreenConfig.region,
-            cropRect: iosScreenConfig.region
+            region: effectiveRect,
+            cropRect: effectiveRect
         });
         return true;
     }
@@ -6795,9 +6822,27 @@
                                         ${iosOfflineDownloading ? '正在檢查／喚起 Apple 離線語言包...' : (iosOfflinePackReady ? '✅ 已檢查 Apple 離線語言包（點擊可重新檢查）' : '檢查／下載 Apple 離線語言包')}
                                     </button>
                                 ` : `
-                                    <div>
-                                        <label class="block text-[10.5px] font-bold text-slate-500 dark:text-slate-400 mb-1">自訂 Gemini API Key（選填，優先不扣帳號額度）</label>
-                                        <input type="password" id="ftIosCustomApiKeyInput" value="${escapeHtml(iosScreenConfig.customApiKey || '')}" placeholder="AIza...（留空則使用系統共用配額）" class="w-full px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-mono outline-none">
+                                    <div class="space-y-2">
+                                        <div class="grid grid-cols-2 gap-2">
+                                            <label class="flex items-center gap-1.5 p-2 rounded-xl border cursor-pointer text-[11px] font-bold ${iosScreenConfig.cloudKeyMode !== 'personal' ? 'border-brand-600 bg-brand-50/60 dark:bg-brand-950/30 text-brand-700 dark:text-brand-300' : 'border-slate-200 dark:border-slate-700'}">
+                                                <input type="radio" name="ftIosCloudKeyMode" value="shared" ${iosScreenConfig.cloudKeyMode !== 'personal' ? 'checked' : ''} class="accent-brand-600">
+                                                <span>☁️ 雲端公用 API</span>
+                                            </label>
+                                            <label class="flex items-center gap-1.5 p-2 rounded-xl border cursor-pointer text-[11px] font-bold ${iosScreenConfig.cloudKeyMode === 'personal' ? 'border-brand-600 bg-brand-50/60 dark:bg-brand-950/30 text-brand-700 dark:text-brand-300' : 'border-slate-200 dark:border-slate-700'}">
+                                                <input type="radio" name="ftIosCloudKeyMode" value="personal" ${iosScreenConfig.cloudKeyMode === 'personal' ? 'checked' : ''} class="accent-brand-600">
+                                                <span>🔑 個人 API Key</span>
+                                            </label>
+                                        </div>
+                                        ${iosScreenConfig.cloudKeyMode === 'personal' ? `
+                                            <div id="ftIosCustomApiKeyBox">
+                                                <label class="block text-[10.5px] font-bold text-slate-500 dark:text-slate-400 mb-1">個人 Groq / Gemini API Key（不扣系統額度）</label>
+                                                <input type="password" id="ftIosCustomApiKeyInput" value="${escapeHtml(iosScreenConfig.customApiKey || '')}" placeholder="gsk_... 或 AIza..." class="w-full px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-mono outline-none">
+                                            </div>
+                                        ` : `
+                                            <div class="text-[11px] text-sky-700 dark:text-sky-300 bg-sky-50 dark:bg-sky-950/40 border border-sky-200 dark:border-sky-800/60 rounded-xl px-2.5 py-2">
+                                                已使用雲端公用翻譯通道，無需填寫個人金鑰。
+                                            </div>
+                                        `}
                                     </div>
                                 `}
                             </div>
@@ -6814,9 +6859,9 @@
                                 <div id="ftIosPhonePreviewBox" class="relative w-44 rounded-2xl border-2 border-slate-300 dark:border-slate-600 bg-slate-900 overflow-hidden select-none shadow-inner" style="aspect-ratio: 9 / 19.5;">
                                     <div class="absolute inset-x-4 top-2 h-1.5 rounded-full bg-slate-700/80"></div>
                                     <div class="absolute inset-0 flex flex-col items-center justify-center px-3 text-center pointer-events-none">
-                                        <div class="text-[10px] font-bold text-slate-400">${iosScreenConfig.regionMode === 'custom' ? '拖曳綠框定位字幕／漫畫區' : '自動掃描畫面字幕與主要文字區'}</div>
+                                        <div class="text-[10px] font-bold text-slate-400">${iosScreenConfig.regionMode === 'custom' ? '拖曳綠框定位字幕／漫畫區' : '自動掃描中下字幕與橫向影片字幕區'}</div>
                                     </div>
-                                    <div id="ftIosRegionRectEl" class="absolute border-2 ${iosScreenConfig.regionMode === 'custom' ? 'border-emerald-400 bg-emerald-400/20 cursor-move' : 'border-indigo-400/70 bg-indigo-400/15 border-dashed pointer-events-none'}" style="left:${iosScreenConfig.regionMode === 'custom' ? rxPct : 8}%;top:${iosScreenConfig.regionMode === 'custom' ? ryPct : 64}%;width:${iosScreenConfig.regionMode === 'custom' ? rwPct : 84}%;height:${iosScreenConfig.regionMode === 'custom' ? rhPct : 24}%;touch-action:none;">
+                                    <div id="ftIosRegionRectEl" class="absolute border-2 ${iosScreenConfig.regionMode === 'custom' ? 'border-emerald-400 bg-emerald-400/20 cursor-move' : 'border-indigo-400/70 bg-indigo-400/15 border-dashed pointer-events-none'}" style="left:${iosScreenConfig.regionMode === 'custom' ? rxPct : 5}%;top:${iosScreenConfig.regionMode === 'custom' ? ryPct : 50}%;width:${iosScreenConfig.regionMode === 'custom' ? rwPct : 90}%;height:${iosScreenConfig.regionMode === 'custom' ? rhPct : 42}%;touch-action:none;">
                                         <span class="px-1 py-0.5 bg-slate-950/80 text-[9px] font-bold text-white rounded-br">${iosScreenConfig.regionMode === 'custom' ? `${rwPct}%×${rhPct}%` : 'AUTO'}</span>
                                         ${iosScreenConfig.regionMode === 'custom' ? '<span id="ftIosRegionResizeHandle" class="absolute -bottom-1.5 -right-1.5 w-4 h-4 rounded-full bg-emerald-400 border-2 border-white shadow cursor-nwse-resize"></span>' : ''}
                                     </div>
@@ -6903,6 +6948,17 @@
                 persistIosScreenConfig();
             };
         }
+
+        modal.querySelectorAll('input[name="ftIosCloudKeyMode"]').forEach(rad => {
+            rad.onchange = () => {
+                iosScreenConfig.cloudKeyMode = rad.value === 'personal' ? 'personal' : 'shared';
+                if (iosScreenConfig.cloudKeyMode === 'shared') {
+                    iosScreenConfig.customApiKey = '';
+                }
+                persistIosScreenConfig();
+                renderIosScreenTranslateModal();
+            };
+        });
 
         const keyInp = modal.querySelector('#ftIosCustomApiKeyInput');
         if (keyInp) {
@@ -7101,7 +7157,8 @@
                     return;
                 }
                 try {
-                    const initText = 'LZHCard 螢幕翻譯就緒，請點選開始廣播';
+                    closeIosScreenTranslateModal();
+                    const initText = 'LZHCard 預覽浮窗（可拖曳移動），點選開始廣播後切換畫面';
                     if (typeof plugin.startScreenTranslate === 'function') {
                         await plugin.startScreenTranslate({ initialText: initText });
                     } else {
@@ -7109,8 +7166,7 @@
                         await plugin.showBroadcastPicker();
                     }
                     iosPipActive = true;
-                    toast('已開啟子母畫面與系統廣播選擇器，請點選「開始廣播」', 'success');
-                    renderIosScreenTranslateModal();
+                    toast('已開啟可拖曳子母畫面與系統廣播選擇器，請點選「開始廣播」', 'success');
                     if (typeof global.updateFloatingMasterSwitchUI === 'function') {
                         global.updateFloatingMasterSwitchUI();
                     }

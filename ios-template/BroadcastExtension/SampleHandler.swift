@@ -18,10 +18,10 @@ private struct TranslationRuntimeConfig {
     var workerBaseUrl: String = "https://lzhcard.tomlin980415.workers.dev"
     var authToken: String = ""
     var regionMode: String = "auto"
-    var regionX: Double = 0.12
-    var regionY: Double = 0.75
-    var regionW: Double = 0.76
-    var regionH: Double = 0.18
+    var regionX: Double = 0.05
+    var regionY: Double = 0.50
+    var regionW: Double = 0.90
+    var regionH: Double = 0.42
 }
 
 class SampleHandler: RPBroadcastSampleHandler {
@@ -53,6 +53,7 @@ class SampleHandler: RPBroadcastSampleHandler {
     private var lastConfigRefreshAt: TimeInterval = 0
     private var isProcessingFrame = false
     private var lastFrameAt: TimeInterval = 0
+    private var lastOcrCompletedAt: TimeInterval = 0
     private var lastSignature: [UInt8] = []
     private var lastRecognizedText: String = ""
     private var lastPushedSubtitle: String = ""
@@ -151,8 +152,8 @@ class SampleHandler: RPBroadcastSampleHandler {
             let rw = (reg["width"] as? NSNumber)?.doubleValue ?? (reg["width"] as? Double) ?? 0
             let rh = (reg["height"] as? NSNumber)?.doubleValue ?? (reg["height"] as? Double) ?? 0
             if rw > 0.05 && rh > 0.05 {
-                next.regionX = (reg["x"] as? NSNumber)?.doubleValue ?? (reg["x"] as? Double) ?? 0.12
-                next.regionY = (reg["y"] as? NSNumber)?.doubleValue ?? (reg["y"] as? Double) ?? 0.75
+                next.regionX = (reg["x"] as? NSNumber)?.doubleValue ?? (reg["x"] as? Double) ?? 0.05
+                next.regionY = (reg["y"] as? NSNumber)?.doubleValue ?? (reg["y"] as? Double) ?? 0.50
                 next.regionW = rw
                 next.regionH = rh
             }
@@ -273,6 +274,7 @@ class SampleHandler: RPBroadcastSampleHandler {
         lastPushedSubtitle = ""
         lastSignature = []
         lastFrameAt = 0
+        lastOcrCompletedAt = 0
         isProcessingFrame = false
 
         sharedDefaults.set(true, forKey: "lzh_broadcast_active")
@@ -280,7 +282,7 @@ class SampleHandler: RPBroadcastSampleHandler {
         writeSharedBridgeState(merging: ["broadcastActive": true])
 
         refreshConfigViaLoopback()
-        pushSubtitleToMainApp("LZHCard 廣播已連線，正在偵測字幕...", retryOnFailure: true)
+        pushSubtitleToMainApp("LZHCard 廣播已連線，正在偵測畫面字幕...", retryOnFailure: true)
     }
 
     override func broadcastPaused() {
@@ -299,28 +301,18 @@ class SampleHandler: RPBroadcastSampleHandler {
         pushSubtitleToMainApp("螢幕翻譯廣播已結束")
     }
 
-    // MARK: - Video Frame Processing (0.9s Throttle + Autoreleasepool Memory Guard)
+    // MARK: - Video Frame Processing (0.55s Throttle + Crop-Zone Luma Diff + 1.6s Periodic Rescan)
 
     override func processSampleBuffer(_ sampleBuffer: CMSampleBuffer, with sampleBufferType: RPSampleBufferType) {
         guard sampleBufferType == .video else { return }
 
         let now = Date().timeIntervalSince1970
-        if isProcessingFrame || (now - lastFrameAt) < 0.9 {
+        if isProcessingFrame || (now - lastFrameAt) < 0.55 {
             return
         }
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
 
-        let signature = computeQuickLumaSignature(pixelBuffer: pixelBuffer)
-        if !lastSignature.isEmpty && !hasSignificantVisualChange(prev: lastSignature, curr: signature) {
-            return
-        }
-
-        isProcessingFrame = true
-        lastFrameAt = now
-        lastSignature = signature
-
-        let orientation = extractSampleOrientation(from: sampleBuffer)
-        if (now - lastConfigRefreshAt) > 5.0 {
+        if (now - lastConfigRefreshAt) > 4.0 {
             lastConfigRefreshAt = now
             refreshConfigViaLoopback()
         }
@@ -334,8 +326,20 @@ class SampleHandler: RPBroadcastSampleHandler {
             let safeH = max(0.08, min(1.0 - safeY, activeConfig.regionH))
             cropNorm = CGRect(x: safeX, y: safeY, width: safeW, height: safeH)
         } else {
-            cropNorm = CGRect(x: 0.12, y: 0.75, width: 0.76, height: 0.18)
+            cropNorm = CGRect(x: 0.05, y: 0.50, width: 0.90, height: 0.42)
         }
+
+        let signature = computeQuickLumaSignature(pixelBuffer: pixelBuffer, cropNorm: cropNorm)
+        let shouldForceRescan = (now - lastOcrCompletedAt) >= 1.6
+        if !shouldForceRescan && !lastSignature.isEmpty && !hasSignificantVisualChange(prev: lastSignature, curr: signature) {
+            return
+        }
+
+        isProcessingFrame = true
+        lastFrameAt = now
+        lastSignature = signature
+
+        let orientation = extractSampleOrientation(from: sampleBuffer)
 
         var croppedCgImage: CGImage?
         autoreleasepool {
@@ -373,11 +377,11 @@ class SampleHandler: RPBroadcastSampleHandler {
                 request.recognitionLevel = .accurate
                 request.usesLanguageCorrection = true
                 if sourceLang.hasPrefix("ja") {
-                    request.recognitionLanguages = ["ja-JP"]
+                    request.recognitionLanguages = ["ja-JP", "en-US"]
                 } else if sourceLang.hasPrefix("ko") {
-                    request.recognitionLanguages = ["ko-KR"]
+                    request.recognitionLanguages = ["ko-KR", "en-US"]
                 } else if sourceLang.hasPrefix("zh") {
-                    request.recognitionLanguages = ["zh-Hant"]
+                    request.recognitionLanguages = ["zh-Hant", "en-US"]
                 } else {
                     request.recognitionLanguages = ["en-US"]
                 }
@@ -387,7 +391,7 @@ class SampleHandler: RPBroadcastSampleHandler {
                     try handler.perform([request])
                     let observations = request.results ?? []
                     let lines: [String] = observations.compactMap { obs in
-                        guard let top = obs.topCandidates(1).first, top.confidence >= 0.65 else {
+                        guard let top = obs.topCandidates(1).first, top.confidence >= 0.30 else {
                             return nil
                         }
                         let trimmed = top.string.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -399,6 +403,8 @@ class SampleHandler: RPBroadcastSampleHandler {
                 }
             }
 
+            self.lastOcrCompletedAt = Date().timeIntervalSince1970
+
             if recognizedText.isEmpty || recognizedText == self.lastRecognizedText {
                 self.isProcessingFrame = false
                 return
@@ -409,9 +415,9 @@ class SampleHandler: RPBroadcastSampleHandler {
                 defer { self.isProcessingFrame = false }
                 let cleanTranslated = (translated ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
                 if !cleanTranslated.isEmpty {
-                    self.pushSubtitleToMainApp(cleanTranslated, ocrSourceText: recognizedText)
+                    self.pushSubtitleToMainApp(cleanTranslated, ocrSourceText: nil)
                 } else {
-                    // Fallback relay via Channel A + Loopback so host app can translate if needed
+                    // Fallback relay via Channel A + Loopback so host app can translate
                     self.pushSubtitleToMainApp(recognizedText, ocrSourceText: recognizedText)
                 }
             }
@@ -539,7 +545,7 @@ class SampleHandler: RPBroadcastSampleHandler {
 
         let workerBase = config.workerBaseUrl.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !workerBase.isEmpty, let url = URL(string: "\(workerBase)/ai/fast-refine") else {
-            completion(nil)
+            translateViaFreeTier1(sourceText, sourceLang: config.sourceLang, completion: completion)
             return
         }
         var req = URLRequest(url: url)
@@ -555,12 +561,47 @@ class SampleHandler: RPBroadcastSampleHandler {
             "targetLangName": "繁體中文"
         ]
         req.httpBody = try? JSONSerialization.data(withJSONObject: body)
-        cloudSession.dataTask(with: req) { data, _, _ in
+        cloudSession.dataTask(with: req) { [weak self] data, _, _ in
             var translated = ""
             if let data = data,
                let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                let tr = json["translation"] as? String {
                 translated = tr.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            if !translated.isEmpty {
+                completion(translated)
+            } else {
+                self?.translateViaFreeTier1(sourceText, sourceLang: config.sourceLang, completion: completion)
+            }
+        }.resume()
+    }
+
+    private func translateViaFreeTier1(_ sourceText: String, sourceLang: String, completion: @escaping (String?) -> Void) {
+        let sl = sourceLang.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "auto" : sourceLang
+        var comps = URLComponents(string: "https://translate.googleapis.com/translate_a/single")
+        comps?.queryItems = [
+            URLQueryItem(name: "client", value: "gtx"),
+            URLQueryItem(name: "sl", value: sl),
+            URLQueryItem(name: "tl", value: "zh-TW"),
+            URLQueryItem(name: "dt", value: "t"),
+            URLQueryItem(name: "q", value: sourceText)
+        ]
+        guard let url = comps?.url else {
+            completion(nil)
+            return
+        }
+        cloudSession.dataTask(with: url) { data, _, _ in
+            var translated = ""
+            if let data = data,
+               let arr = try? JSONSerialization.jsonObject(with: data) as? [Any],
+               let segments = arr.first as? [Any] {
+                var joined = ""
+                for seg in segments {
+                    if let parts = seg as? [Any], let chunk = parts.first as? String {
+                        joined += chunk
+                    }
+                }
+                translated = joined.trimmingCharacters(in: .whitespacesAndNewlines)
             }
             completion(translated.isEmpty ? nil : translated)
         }.resume()
@@ -580,20 +621,21 @@ class SampleHandler: RPBroadcastSampleHandler {
                 let core = tok.trimmingCharacters(in: .punctuationCharacters)
                 if core.isEmpty { return false }
                 if core.count == 1 {
-                    return core == "a" || core == "A" || core == "I"
+                    return core == "a" || core == "A" || core == "I" || Int(core) != nil
                 }
                 return core.range(of: "[A-Za-z0-9]", options: .regularExpression) != nil
             }
             text = kept.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
         }
 
+        let compactCount = text.filter { !$0.isWhitespace }.count
         let meaningfulScalars = text.unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) }.count
         if meaningfulScalars < 2 { return "" }
-        if Double(meaningfulScalars) / Double(max(1, text.count)) < 0.45 { return "" }
+        if Double(meaningfulScalars) / Double(max(1, compactCount)) < 0.35 { return "" }
         return text
     }
 
-    private func computeQuickLumaSignature(pixelBuffer: CVPixelBuffer) -> [UInt8] {
+    private func computeQuickLumaSignature(pixelBuffer: CVPixelBuffer, cropNorm: CGRect) -> [UInt8] {
         CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
         defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
 
@@ -603,12 +645,17 @@ class SampleHandler: RPBroadcastSampleHandler {
         let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
         let ptr = baseAddr.assumingMemoryBound(to: UInt8.self)
 
+        let startX = max(0, min(width - 1, Int(Double(width) * cropNorm.origin.x)))
+        let spanW = max(1, min(width - startX, Int(Double(width) * cropNorm.width)))
+        let startY = max(0, min(height - 1, Int(Double(height) * cropNorm.origin.y)))
+        let spanH = max(1, min(height - startY, Int(Double(height) * cropNorm.height)))
+
         var sig: [UInt8] = []
         sig.reserveCapacity(64)
         for gy in 0..<8 {
-            let py = min(height - 1, (gy * height) / 8)
+            let py = min(height - 1, startY + (gy * spanH) / 8)
             for gx in 0..<8 {
-                let px = min(width - 1, (gx * width) / 8)
+                let px = min(width - 1, startX + (gx * spanW) / 8)
                 let offset = py * bytesPerRow + px * 4
                 if offset + 2 < bytesPerRow * height {
                     let b = Int(ptr[offset])
@@ -626,10 +673,10 @@ class SampleHandler: RPBroadcastSampleHandler {
         guard prev.count == curr.count, !curr.isEmpty else { return true }
         var diffCount = 0
         for i in 0..<curr.count {
-            if abs(Int(prev[i]) - Int(curr[i])) > 18 {
+            if abs(Int(prev[i]) - Int(curr[i])) > 14 {
                 diffCount += 1
             }
         }
-        return Double(diffCount) / Double(curr.count) >= 0.05
+        return Double(diffCount) / Double(curr.count) >= 0.04
     }
 }

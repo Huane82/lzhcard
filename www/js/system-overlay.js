@@ -136,9 +136,14 @@
             localStorage.getItem('lzhcard_native_lang') ||
             'zh-TW';
         const theme = localStorage.getItem('theme_preference') || 'system';
-        const groqApiKey = localStorage.getItem('lzhcard_groq_key_v1') || '';
-        const apiKey = localStorage.getItem('flashcard_gemini_key_v1') || '';
-        const apiMode = (groqApiKey.trim() || apiKey.trim()) ? 'personal' : (localStorage.getItem('lzhcard_api_mode') || 'shared');
+        const rawApiMode = localStorage.getItem('lzhcard_api_mode');
+        const rawGroqKey = localStorage.getItem('lzhcard_groq_key_v1') || '';
+        const rawGeminiKey = localStorage.getItem('flashcard_gemini_key_v1') || '';
+        const apiMode = (rawApiMode === 'shared' || rawApiMode === 'personal')
+            ? rawApiMode
+            : ((rawGroqKey.trim() || rawGeminiKey.trim()) ? 'personal' : 'shared');
+        const groqApiKey = apiMode === 'personal' ? rawGroqKey : '';
+        const apiKey = apiMode === 'personal' ? rawGeminiKey : '';
         const decks = getCurrentDecksList();
         const defaultDeck = getActivePrimaryDeckName(decks);
 

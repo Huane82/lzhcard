@@ -2590,21 +2590,25 @@ function openModal(id) {
         const keyStorageName = typeof API_KEY_STORAGE_NAME !== 'undefined' ? API_KEY_STORAGE_NAME : 'flashcard_gemini_key_v1';
         const existingGeminiKey = localStorage.getItem(keyStorageName) || '';
         const existingGroqKey = localStorage.getItem('lzhcard_groq_key_v1') || '';
+        const hasAny = Boolean(existingGroqKey.trim() || existingGeminiKey.trim());
+        const rawMode = localStorage.getItem('lzhcard_api_mode');
+        const savedMode = (rawMode === 'shared' || rawMode === 'personal')
+            ? rawMode
+            : (hasAny ? 'personal' : 'shared');
+
         const groqInput = document.getElementById('groqApiKeyInput');
         const keyInput = document.getElementById('geminiApiKeyInput');
-        if (groqInput) groqInput.value = existingGroqKey;
-        if (keyInput) keyInput.value = existingGeminiKey;
+        if (groqInput) groqInput.value = savedMode === 'personal' ? existingGroqKey : '';
+        if (keyInput) keyInput.value = savedMode === 'personal' ? existingGeminiKey : '';
 
-        const hasAny = Boolean(existingGroqKey.trim() || existingGeminiKey.trim());
-        const savedMode = hasAny ? 'personal' : (localStorage.getItem('lzhcard_api_mode') || 'shared');
         const radShared = document.getElementById('apiModeShared');
         const radPersonal = document.getElementById('apiModePersonal');
         if (radShared) radShared.checked = (savedMode === 'shared');
         if (radPersonal) radPersonal.checked = (savedMode === 'personal');
         if (typeof switchApiMode === 'function') switchApiMode(savedMode);
 
-        if (hasAny) {
-            showToast(tr('toastKeyLoaded', '已載入本機個人 API Key'), "info");
+        if (savedMode === 'personal' && hasAny) {
+            showToast(tr('toastKeyLoaded', '🔑 已載入本機個人 API Key'), "info");
         }
     }
 }

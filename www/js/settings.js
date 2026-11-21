@@ -122,11 +122,14 @@ function syncSettingsUI() {
     const apiKeyInput = document.getElementById('geminiApiKeyInput');
     const savedGroqKey = localStorage.getItem('lzhcard_groq_key_v1') || '';
     const savedGeminiKey = localStorage.getItem(API_KEY_STORAGE_NAME) || '';
-    const effectiveMode = (savedGroqKey.trim() || savedGeminiKey.trim()) ? 'personal' : savedApiMode;
+    const rawApiMode = localStorage.getItem('lzhcard_api_mode');
+    const effectiveMode = (rawApiMode === 'shared' || rawApiMode === 'personal')
+        ? rawApiMode
+        : ((savedGroqKey.trim() || savedGeminiKey.trim()) ? 'personal' : 'shared');
     if (radShared) radShared.checked = (effectiveMode === 'shared');
     if (radPersonal) radPersonal.checked = (effectiveMode === 'personal');
-    if (groqInput) groqInput.value = savedGroqKey;
-    if (apiKeyInput) apiKeyInput.value = savedGeminiKey;
+    if (groqInput) groqInput.value = effectiveMode === 'personal' ? savedGroqKey : '';
+    if (apiKeyInput) apiKeyInput.value = effectiveMode === 'personal' ? savedGeminiKey : '';
     switchApiMode(effectiveMode);
 
     const customNativeInput = document.getElementById('customNativeInput');
@@ -583,13 +586,18 @@ function handlePhoneticPosChange(mode) {
 }
 
 /**
- * 🎛️ 切換 Groq / Gemini API 金鑰模式 UI 狀態 (保持輸入框可見方便隨時填寫 Priority 1 個人 Key)
+ * 🎛️ 切換 Groq / Gemini API 金鑰模式 UI 狀態（選擇雲端共用時隱藏個人 Key 欄位以免誤會）
  */
 function switchApiMode(mode) {
+    const isPersonal = (mode === 'personal');
     const box = document.getElementById('personalKeyInputBox');
+    const sharedNotice = document.getElementById('sharedKeyModeNotice');
     if (box) {
-        box.classList.remove('hidden');
-        box.classList.toggle('opacity-75', mode === 'shared');
+        box.classList.toggle('hidden', !isPersonal);
+        box.classList.remove('opacity-75');
+    }
+    if (sharedNotice) {
+        sharedNotice.classList.toggle('hidden', isPersonal);
     }
 }
 
@@ -603,30 +611,37 @@ function handleSaveApiKey() {
     const groqKey = groqInput ? groqInput.value.trim() : '';
     const geminiKey = geminiInput ? geminiInput.value.trim() : '';
 
-    if (selectedMode === 'personal' && !groqKey && !geminiKey) {
-        if (typeof showToast === 'function') showToast(t('toastEnterApiKey') || '請輸入個人 Groq 或 Gemini API Key！', 'warning');
-        return;
-    }
-
-    if (groqKey) {
-        localStorage.setItem('lzhcard_groq_key_v1', groqKey);
+    if (selectedMode === 'personal') {
+        if (!groqKey && !geminiKey) {
+            if (typeof showToast === 'function') showToast(t('toastEnterApiKey') || '請輸入個人 Groq 或 Gemini API Key！', 'warning');
+            return;
+        }
+        if (groqKey) {
+            localStorage.setItem('lzhcard_groq_key_v1', groqKey);
+        } else {
+            localStorage.removeItem('lzhcard_groq_key_v1');
+        }
+        if (geminiKey) {
+            localStorage.setItem(API_KEY_STORAGE_NAME, geminiKey);
+        } else {
+            localStorage.removeItem(API_KEY_STORAGE_NAME);
+        }
     } else {
+        // 使用者選擇雲端公用 API：停用並清除個人金鑰以免誤判為「已啟用個人 API」
         localStorage.removeItem('lzhcard_groq_key_v1');
-    }
-
-    if (geminiKey) {
-        localStorage.setItem(API_KEY_STORAGE_NAME, geminiKey);
-    } else {
         localStorage.removeItem(API_KEY_STORAGE_NAME);
+        if (groqInput) groqInput.value = '';
+        if (geminiInput) geminiInput.value = '';
     }
 
-    const finalMode = (groqKey || geminiKey) ? 'personal' : 'shared';
+    const finalMode = selectedMode === 'personal' ? 'personal' : 'shared';
     localStorage.setItem('lzhcard_api_mode', finalMode);
 
     const radShared = document.getElementById('apiModeShared');
     const radPersonal = document.getElementById('apiModePersonal');
     if (radShared) radShared.checked = (finalMode === 'shared');
     if (radPersonal) radPersonal.checked = (finalMode === 'personal');
+    switchApiMode(finalMode);
 
     if (typeof updateApiKeyStatusUI === 'function') {
         updateApiKeyStatusUI();
@@ -647,8 +662,18 @@ function handleSaveApiKey() {
         }
     }
 
+    if (typeof saveStorage === 'function') {
+        saveStorage();
+    }
+
     if (typeof closeModal === 'function') closeModal('keyModal');
-    if (typeof showToast === 'function') showToast(t('toastKeySaved') || 'API Key 已儲存於本機！', 'success');
+    if (typeof showToast === 'function') {
+        if (finalMode === 'personal') {
+            showToast(t('toastKeySaved') || '🔑 個人 API Key 已儲存於本機（不扣系統配額）！', 'success');
+        } else {
+            showToast(t('toastSharedApiSaved') || '☁️ 已切換為雲端共用方案 API（依會員方案額度運行）！', 'success');
+        }
+    }
 }
 
 /* ==========================================================================

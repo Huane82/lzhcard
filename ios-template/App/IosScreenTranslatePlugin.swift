@@ -33,7 +33,7 @@ public class IosScreenTranslatePlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInP
     private let darwinNotificationName = "com.lzhcard.app.pip.subtitle.updated" as CFString
     private let pipWidthPx = 680
     private let pipHeightPx = 192
-    private let defaultInitialText = "LZHCard 螢幕翻譯就緒，請點選開始廣播"
+    private let defaultInitialText = "LZHCard 預覽浮窗（可拖曳移動），點選開始廣播後切換畫面"
 
     private lazy var resolvedAppGroupId: String? = resolveAccessibleAppGroupId()
     private lazy var sharedContainerBridgeFileUrl: URL? = resolveSharedBridgeFileUrl()
@@ -42,13 +42,18 @@ public class IosScreenTranslatePlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInP
     private var sampleLayer: AVSampleBufferDisplayLayer?
     private var pipHostView: UIView?
     private var pipPreviewBorderLayer: CAShapeLayer?
+    private var pipHostCloseButton: UIButton?
+    private var pipHostCustomOrigin: CGPoint?
+    private var pipPanStartOrigin: CGPoint = .zero
     private var pipPossibleObservation: NSKeyValueObservation?
     private var pipPollFallbackTimer: Timer?
+    private var pipHeartbeatTimer: Timer?
     private var pipStartDeadlineAt: Date?
     private var isAwaitingPipStart = false
     private var shouldTriggerPickerAfterPip = false
     private var hasTriggeredBroadcastPicker = false
     private var pickerFallbackTimer: DispatchWorkItem?
+    private var audioInterruptionObserver: NSObjectProtocol?
 
     private var silentAudioPlayer: AVAudioPlayer?
     private var pollTimer: Timer?
@@ -72,16 +77,16 @@ public class IosScreenTranslatePlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInP
         "authToken": "",
         "regionMode": "auto",
         "region": [
-            "x": 0.12,
-            "y": 0.75,
-            "width": 0.76,
-            "height": 0.18
+            "x": 0.05,
+            "y": 0.50,
+            "width": 0.90,
+            "height": 0.42
         ],
         "cropRect": [
-            "x": 0.12,
-            "y": 0.75,
-            "width": 0.76,
-            "height": 0.18
+            "x": 0.05,
+            "y": 0.50,
+            "width": 0.90,
+            "height": 0.42
         ]
     ]
 
@@ -91,6 +96,12 @@ public class IosScreenTranslatePlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInP
         pickerFallbackTimer = nil
         pollTimer?.invalidate()
         pollTimer = nil
+        pipHeartbeatTimer?.invalidate()
+        pipHeartbeatTimer = nil
+        if let obs = audioInterruptionObserver {
+            NotificationCenter.default.removeObserver(obs)
+            audioInterruptionObserver = nil
+        }
         unregisterDarwinObserver()
         stopLoopbackServer()
     }
@@ -209,9 +220,12 @@ public class IosScreenTranslatePlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInP
 
             guard let port = NWEndpoint.Port(rawValue: self.loopbackPort) else { return }
             let params = NWParameters.tcp
+            if let ipOpts = params.defaultProtocolStack.internetProtocol as? NWProtocolIP.Options {
+                ipOpts.version = .v4
+            }
             params.allowLocalEndpointReuse = true
             params.requiredLocalEndpoint = NWEndpoint.hostPort(
-                host: NWEndpoint.Host(self.loopbackHost),
+                host: NWEndpoint.Host.ipv4(.loopback),
                 port: port
             )
 
@@ -530,10 +544,10 @@ public class IosScreenTranslatePlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInP
         ]
         let rectSource = call.getObject("cropRect") ?? call.getObject("region")
         if let region = rectSource {
-            let rx = (region["x"] as? NSNumber)?.doubleValue ?? (region["x"] as? Double) ?? 0.12
-            let ry = (region["y"] as? NSNumber)?.doubleValue ?? (region["y"] as? Double) ?? 0.75
-            let rw = (region["width"] as? NSNumber)?.doubleValue ?? (region["width"] as? Double) ?? 0.76
-            let rh = (region["height"] as? NSNumber)?.doubleValue ?? (region["height"] as? Double) ?? 0.18
+            let rx = (region["x"] as? NSNumber)?.doubleValue ?? (region["x"] as? Double) ?? 0.05
+            let ry = (region["y"] as? NSNumber)?.doubleValue ?? (region["y"] as? Double) ?? 0.50
+            let rw = (region["width"] as? NSNumber)?.doubleValue ?? (region["width"] as? Double) ?? 0.90
+            let rh = (region["height"] as? NSNumber)?.doubleValue ?? (region["height"] as? Double) ?? 0.42
             defaults.set(rx, forKey: "lzh_region_x")
             defaults.set(ry, forKey: "lzh_region_y")
             defaults.set(rw, forKey: "lzh_region_w")
@@ -662,13 +676,13 @@ public class IosScreenTranslatePlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInP
                 self.requestStartPictureInPictureWhenPossible()
                 pipStarted = true
 
-                // Wait briefly for PiP transition before presenting system Broadcast picker sheet
+                // Allow sufficient time for AVPictureInPictureController to detach cleanly before system Broadcast picker appears
                 self.pickerFallbackTimer?.cancel()
                 let work = DispatchWorkItem { [weak self] in
                     self?.triggerPickerIfPending()
                 }
                 self.pickerFallbackTimer = work
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.65, execute: work)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.15, execute: work)
             } else {
                 self.hasTriggeredBroadcastPicker = true
                 self.shouldTriggerPickerAfterPip = false
@@ -756,6 +770,27 @@ public class IosScreenTranslatePlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInP
             // Continue gracefully
         }
 
+        if audioInterruptionObserver == nil {
+            audioInterruptionObserver = NotificationCenter.default.addObserver(
+                forName: AVAudioSession.interruptionNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] notification in
+                guard let self = self,
+                      let info = notification.userInfo,
+                      let typeVal = info[AVAudioSessionInterruptionTypeKey] as? UInt,
+                      let type = AVAudioSession.InterruptionType(rawValue: typeVal) else {
+                    return
+                }
+                if type == .ended {
+                    try? AVAudioSession.sharedInstance().setActive(true)
+                    if let player = self.silentAudioPlayer, !player.isPlaying {
+                        player.play()
+                    }
+                }
+            }
+        }
+
         if silentAudioPlayer == nil, let wavData = makeSilentWavData() {
             do {
                 let player = try AVAudioPlayer(data: wavData)
@@ -778,12 +813,46 @@ public class IosScreenTranslatePlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInP
         let maxW = max(240.0, bounds.width - max(32.0, safeInsets.left + safeInsets.right + 24.0))
         let previewW = min(332.0, maxW)
         let previewH: CGFloat = 96.0
-        let x = floor((bounds.width - previewW) / 2.0)
+        let minX = max(8.0, safeInsets.left + 8.0)
+        let maxX = max(minX, bounds.width - max(8.0, safeInsets.right + 8.0) - previewW)
+        let minY = max(safeInsets.top, 44.0) + 12.0
         let bottomClearance = max(safeInsets.bottom, 20.0) + 16.0
-        let minTop = max(safeInsets.top, 44.0) + 12.0
-        let desiredY = bounds.height - bottomClearance - previewH
-        let y = max(minTop, desiredY)
-        return CGRect(x: x, y: y, width: previewW, height: previewH)
+        let maxY = max(minY, bounds.height - bottomClearance - previewH)
+
+        if let custom = pipHostCustomOrigin {
+            let clampedX = min(maxX, max(minX, custom.x))
+            let clampedY = min(maxY, max(minY, custom.y))
+            return CGRect(x: clampedX, y: clampedY, width: previewW, height: previewH)
+        }
+
+        let defaultX = floor((bounds.width - previewW) / 2.0)
+        let defaultY = max(minY, min(maxY, floor(minY + 12.0)))
+        return CGRect(x: defaultX, y: defaultY, width: previewW, height: previewH)
+    }
+
+    @objc private func handlePipHostPan(_ gesture: UIPanGestureRecognizer) {
+        guard let host = pipHostView, let rootView = host.superview else { return }
+        switch gesture.state {
+        case .began:
+            pipPanStartOrigin = host.frame.origin
+        case .changed:
+            let translation = gesture.translation(in: rootView)
+            let safeInsets = rootView.safeAreaInsets
+            let minX = max(8.0, safeInsets.left + 8.0)
+            let maxX = max(minX, rootView.bounds.width - max(8.0, safeInsets.right + 8.0) - host.bounds.width)
+            let minY = max(safeInsets.top, 44.0) + 8.0
+            let maxY = max(minY, rootView.bounds.height - max(safeInsets.bottom, 16.0) - host.bounds.height - 8.0)
+            let nx = min(maxX, max(minX, pipPanStartOrigin.x + translation.x))
+            let ny = min(maxY, max(minY, pipPanStartOrigin.y + translation.y))
+            host.frame.origin = CGPoint(x: nx, y: ny)
+            pipHostCustomOrigin = host.frame.origin
+        default:
+            pipHostCustomOrigin = host.frame.origin
+        }
+    }
+
+    @objc private func handleInlinePipCloseTapped() {
+        teardownPip()
     }
 
     private func setupPipControllerIfNeeded(initialText: String) {
@@ -794,19 +863,33 @@ public class IosScreenTranslatePlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInP
             let host = UIView(frame: frame)
             host.isHidden = false
             host.alpha = 1.0
-            host.isUserInteractionEnabled = false
+            host.isUserInteractionEnabled = true
             host.backgroundColor = UIColor(red: 0.06, green: 0.09, blue: 0.16, alpha: 0.96)
             host.layer.cornerRadius = 18.0
             host.layer.masksToBounds = true
-            host.autoresizingMask = [.flexibleLeftMargin, .flexibleRightMargin, .flexibleTopMargin]
+            host.autoresizingMask = [.flexibleLeftMargin, .flexibleRightMargin, .flexibleBottomMargin]
             rootView.addSubview(host)
             rootView.bringSubviewToFront(host)
             pipHostView = host
+
+            let pan = UIPanGestureRecognizer(target: self, action: #selector(handlePipHostPan(_:)))
+            host.addGestureRecognizer(pan)
 
             let layer = AVSampleBufferDisplayLayer()
             layer.frame = host.bounds
             layer.videoGravity = .resizeAspect
             layer.backgroundColor = UIColor(red: 0.06, green: 0.09, blue: 0.16, alpha: 0.96).cgColor
+            var timebase: CMTimebase?
+            CMTimebaseCreateWithSourceClock(
+                allocator: kCFAllocatorDefault,
+                sourceClock: CMClockGetHostTimeClock(),
+                timebaseOut: &timebase
+            )
+            if let tb = timebase {
+                CMTimebaseSetTime(tb, time: CMClockGetTime(CMClockGetHostTimeClock()))
+                CMTimebaseSetRate(tb, rate: 1.0)
+                layer.controlTimebase = tb
+            }
             host.layer.addSublayer(layer)
             sampleLayer = layer
 
@@ -819,20 +902,35 @@ public class IosScreenTranslatePlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInP
             dashed.lineDashPattern = [6, 4]
             host.layer.addSublayer(dashed)
             pipPreviewBorderLayer = dashed
+
+            let closeBtn = UIButton(type: .system)
+            closeBtn.frame = CGRect(x: host.bounds.width - 32.0, y: 6.0, width: 26.0, height: 26.0)
+            closeBtn.setTitle("✕", for: .normal)
+            closeBtn.titleLabel?.font = UIFont.systemFont(ofSize: 12, weight: .bold)
+            closeBtn.setTitleColor(.white, for: .normal)
+            closeBtn.backgroundColor = UIColor.white.withAlphaComponent(0.16)
+            closeBtn.layer.cornerRadius = 13.0
+            closeBtn.autoresizingMask = [.flexibleLeftMargin, .flexibleBottomMargin]
+            closeBtn.addTarget(self, action: #selector(handleInlinePipCloseTapped), for: .touchUpInside)
+            host.addSubview(closeBtn)
+            pipHostCloseButton = closeBtn
         } else if let host = pipHostView {
             host.frame = computeVisiblePreviewFrame(in: rootView)
             host.isHidden = false
             host.alpha = 1.0
+            host.isUserInteractionEnabled = true
             rootView.bringSubviewToFront(host)
             sampleLayer?.frame = host.bounds
             if let dashed = pipPreviewBorderLayer {
                 dashed.frame = host.bounds
                 dashed.path = UIBezierPath(roundedRect: host.bounds.insetBy(dx: 2.0, dy: 2.0), cornerRadius: 16.0).cgPath
             }
+            pipHostCloseButton?.isHidden = false
         }
 
         // Enqueue an initial frame synchronously before creating/starting AVPictureInPictureController
         renderSubtitleTextToPip(initialText)
+        startPipHeartbeatTimer()
 
         if pipController == nil, let layer = sampleLayer {
             let contentSource = AVPictureInPictureController.ContentSource(
@@ -846,6 +944,14 @@ public class IosScreenTranslatePlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInP
                 pip.requiresLinearPlayback = true
             }
             pipController = pip
+        }
+    }
+
+    private func startPipHeartbeatTimer() {
+        pipHeartbeatTimer?.invalidate()
+        pipHeartbeatTimer = Timer.scheduledTimer(withTimeInterval: 0.85, repeats: true) { [weak self] _ in
+            guard let self = self, !self.lastRenderedSubtitle.isEmpty else { return }
+            self.renderSubtitleTextToPip(self.lastRenderedSubtitle)
         }
     }
 
@@ -932,12 +1038,16 @@ public class IosScreenTranslatePlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInP
         shouldTriggerPickerAfterPip = false
         pollTimer?.invalidate()
         pollTimer = nil
+        pipHeartbeatTimer?.invalidate()
+        pipHeartbeatTimer = nil
         unregisterDarwinObserver()
         stopLoopbackServer()
         if let pip = pipController, pip.isPictureInPictureActive {
             pip.stopPictureInPicture()
         }
         pipController = nil
+        pipHostCloseButton?.removeFromSuperview()
+        pipHostCloseButton = nil
         pipPreviewBorderLayer?.removeFromSuperlayer()
         pipPreviewBorderLayer = nil
         sampleLayer?.removeFromSuperlayer()
@@ -1127,7 +1237,7 @@ public class IosScreenTranslatePlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInP
         }
 
         guard let url = URL(string: "\(workerUrl)/ai/fast-refine") else {
-            isTranslatingOcr = false
+            translateViaFreeTier1Fallback(sourceText, sourceLang: sourceLang)
             return
         }
         var req = URLRequest(url: url)
@@ -1149,6 +1259,45 @@ public class IosScreenTranslatePlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInP
                let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                let tr = json["translation"] as? String {
                 translated = tr.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            if !translated.isEmpty {
+                DispatchQueue.main.async {
+                    self?.isTranslatingOcr = false
+                    self?.sharedDefaults.set(translated, forKey: "lzh_latest_pip_subtitle")
+                    self?.renderSubtitleTextToPip(translated)
+                }
+            } else {
+                self?.translateViaFreeTier1Fallback(sourceText, sourceLang: sourceLang)
+            }
+        }.resume()
+    }
+
+    private func translateViaFreeTier1Fallback(_ sourceText: String, sourceLang: String) {
+        let sl = sourceLang.isEmpty ? "auto" : sourceLang
+        var comps = URLComponents(string: "https://translate.googleapis.com/translate_a/single")
+        comps?.queryItems = [
+            URLQueryItem(name: "client", value: "gtx"),
+            URLQueryItem(name: "sl", value: sl),
+            URLQueryItem(name: "tl", value: "zh-TW"),
+            URLQueryItem(name: "dt", value: "t"),
+            URLQueryItem(name: "q", value: sourceText)
+        ]
+        guard let url = comps?.url else {
+            DispatchQueue.main.async { [weak self] in self?.isTranslatingOcr = false }
+            return
+        }
+        URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
+            var translated = ""
+            if let data = data,
+               let arr = try? JSONSerialization.jsonObject(with: data) as? [Any],
+               let segments = arr.first as? [Any] {
+                var joined = ""
+                for seg in segments {
+                    if let parts = seg as? [Any], let chunk = parts.first as? String {
+                        joined += chunk
+                    }
+                }
+                translated = joined.trimmingCharacters(in: .whitespacesAndNewlines)
             }
             DispatchQueue.main.async {
                 self?.isTranslatingOcr = false
@@ -1172,7 +1321,6 @@ public class IosScreenTranslatePlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInP
         if layer.status == .failed {
             layer.flush()
         }
-        layer.flushAndRemoveImage()
         layer.enqueue(buffer)
     }
 
@@ -1260,7 +1408,7 @@ public class IosScreenTranslatePlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInP
 
         var timing = CMSampleTimingInfo(
             duration: CMTime(value: 1, timescale: 30),
-            presentationTimeStamp: CMTime(seconds: CACurrentMediaTime(), preferredTimescale: 1000),
+            presentationTimeStamp: CMClockGetTime(CMClockGetHostTimeClock()),
             decodeTimeStamp: .invalid
         )
         var sampleBuffer: CMSampleBuffer?
@@ -1271,6 +1419,16 @@ public class IosScreenTranslatePlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInP
             sampleTiming: &timing,
             sampleBufferOut: &sampleBuffer
         )
+        if sbStatus == noErr, let sb = sampleBuffer,
+           let attachments = CMSampleBufferGetSampleAttachmentsArray(sb, createIfNecessary: true) {
+            let dict = unsafeBitCast(CFArrayGetValueAtIndex(attachments, 0), to: CFMutableDictionary.self)
+            CFDictionarySetValue(
+                dict,
+                Unmanaged.passUnretained(kCMSampleAttachmentKey_DisplayImmediately).toOpaque(),
+                Unmanaged.passUnretained(kCFBooleanTrue).toOpaque()
+            )
+            return sb
+        }
         return sbStatus == noErr ? sampleBuffer : nil
     }
 

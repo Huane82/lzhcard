@@ -243,6 +243,9 @@ function saveOnboardingSetupAndContinue() {
 
     if (apiMode === 'personal' && apiKey) {
         localStorage.setItem('flashcard_gemini_key_v1', apiKey);
+    } else if (apiMode === 'shared') {
+        localStorage.removeItem('lzhcard_groq_key_v1');
+        localStorage.removeItem('flashcard_gemini_key_v1');
     }
 
     localStorage.setItem('lzhcard_onboarding_completed', 'true');

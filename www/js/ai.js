@@ -50,8 +50,17 @@ const GROQ_CHAT_MODELS = [
 ];
 
 function getApiMode() {
-    if (getValidGroqKey() || getValidApiKey()) return 'personal';
-    return localStorage.getItem('lzhcard_api_mode') || 'shared';
+    const rawMode = localStorage.getItem('lzhcard_api_mode');
+    if (rawMode === 'shared') return 'shared';
+    if (rawMode === 'personal') {
+        return (isStoredKeyValid(localStorage.getItem(GROQ_KEY_STORAGE_NAME)) || isStoredKeyValid(localStorage.getItem(GEMINI_KEY_STORAGE_NAME)))
+            ? 'personal'
+            : 'shared';
+    }
+    if (isStoredKeyValid(localStorage.getItem(GROQ_KEY_STORAGE_NAME)) || isStoredKeyValid(localStorage.getItem(GEMINI_KEY_STORAGE_NAME))) {
+        return 'personal';
+    }
+    return 'shared';
 }
 
 function safeT(key, params, fallbackStr) {
@@ -77,6 +86,7 @@ function isStoredKeyValid(rawKey) {
 }
 
 function getValidGroqKey() {
+    if (localStorage.getItem('lzhcard_api_mode') === 'shared') return null;
     const rawKey = localStorage.getItem(GROQ_KEY_STORAGE_NAME);
     if (!isStoredKeyValid(rawKey)) {
         if (rawKey !== null) localStorage.removeItem(GROQ_KEY_STORAGE_NAME);
@@ -86,6 +96,7 @@ function getValidGroqKey() {
 }
 
 function getValidApiKey() {
+    if (localStorage.getItem('lzhcard_api_mode') === 'shared') return null;
     const rawKey = localStorage.getItem(GEMINI_KEY_STORAGE_NAME);
     if (!isStoredKeyValid(rawKey)) {
         if (rawKey !== null) localStorage.removeItem(GEMINI_KEY_STORAGE_NAME);
@@ -95,6 +106,7 @@ function getValidApiKey() {
 }
 
 function hasAnyPersonalKey() {
+    if (localStorage.getItem('lzhcard_api_mode') === 'shared') return false;
     return Boolean(getValidGroqKey() || getValidApiKey());
 }
 

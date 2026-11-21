@@ -24,6 +24,11 @@
 	<false/>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
 	<key>NSCameraUsageDescription</key>
 	<string>LZHCard 需要使用相機權限以拍攝教材照片進行文字辨識與即時翻譯製卡。</string>
 	<key>NSMicrophoneUsageDescription</key>

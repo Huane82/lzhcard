@@ -318,13 +318,22 @@
     }
 
     /**
-     * 優先檢查本地端是否填有個人 Groq 或 Gemini Key（雙軌即時無上限通道）
+     * 優先檢查本地端是否填有個人 Groq 或 Gemini Key（且未切換至雲端共用 API 模式）
      */
     function isPersonalByokActive() {
+        try {
+            if (localStorage.getItem('lzhcard_api_mode') === 'shared') return false;
+        } catch (e) {}
         return Boolean(getCleanLocalStorageKey(GROQ_KEY_STORAGE) || getCleanLocalStorageKey(GEMINI_KEY_STORAGE));
     }
 
     function getPersonalKeysStatus() {
+        const isShared = (() => {
+            try { return localStorage.getItem('lzhcard_api_mode') === 'shared'; } catch (e) { return false; }
+        })();
+        if (isShared) {
+            return { hasGroq: false, hasGemini: false, active: false };
+        }
         return {
             hasGroq: Boolean(getCleanLocalStorageKey(GROQ_KEY_STORAGE)),
             hasGemini: Boolean(getCleanLocalStorageKey(GEMINI_KEY_STORAGE)),

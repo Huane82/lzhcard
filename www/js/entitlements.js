@@ -26,6 +26,7 @@
 
     function hasValidByok() {
         try {
+            if (localStorage.getItem('lzhcard_api_mode') === 'shared') return false;
             const groq = localStorage.getItem(GROQ_KEY_STORAGE);
             const gem = localStorage.getItem(GEMINI_KEY_STORAGE);
             return isStoredKeyValid(groq) || isStoredKeyValid(gem);
