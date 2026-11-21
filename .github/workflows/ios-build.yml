@@ -194,6 +194,16 @@ jobs:
           project_path = 'ios/App/App.xcodeproj'
           project = Xcodeproj::Project.open(project_path)
           target = project.targets.find { |t| t.name == 'App' }
+          app_marketing_version = target.build_configurations.map { |c| c.build_settings['MARKETING_VERSION'].to_s.strip }.find { |v| !v.empty? && !v.include?('$(') } ||
+                                  project.build_configurations.map { |c| c.build_settings['MARKETING_VERSION'].to_s.strip }.find { |v| !v.empty? && !v.include?('$(') } ||
+                                  '1.0.0'
+          app_project_version = target.build_configurations.map { |c| c.build_settings['CURRENT_PROJECT_VERSION'].to_s.strip }.find { |v| !v.empty? && !v.include?('$(') } ||
+                                project.build_configurations.map { |c| c.build_settings['CURRENT_PROJECT_VERSION'].to_s.strip }.find { |v| !v.empty? && !v.include?('$(') } ||
+                                '1'
+          target.build_configurations.each do |cfg|
+            cfg.build_settings['MARKETING_VERSION'] = app_marketing_version if cfg.build_settings['MARKETING_VERSION'].to_s.strip.empty?
+            cfg.build_settings['CURRENT_PROJECT_VERSION'] = app_project_version if cfg.build_settings['CURRENT_PROJECT_VERSION'].to_s.strip.empty?
+          end
           app_group = project.main_group.find_subpath('App', true)
 
           if File.exist?('ios/App/App/GoogleService-Info.plist')
@@ -269,6 +279,8 @@ jobs:
               cfg.build_settings['PRODUCT_NAME'] = ext_name
               cfg.build_settings['PRODUCT_MODULE_NAME'] = ext_name
               cfg.build_settings['WRAPPER_EXTENSION'] = 'appex'
+              cfg.build_settings['MARKETING_VERSION'] = app_marketing_version
+              cfg.build_settings['CURRENT_PROJECT_VERSION'] = app_project_version
               cfg.build_settings['PRODUCT_BUNDLE_IDENTIFIER'] = ENV['BROADCAST_BUNDLE_ID'] || 'com.lzhcard.app.BroadcastUpload'
               cfg.build_settings['INFOPLIST_FILE'] = 'BroadcastUpload/Info.plist'
               cfg.build_settings['CODE_SIGN_ENTITLEMENTS'] = 'BroadcastUpload/BroadcastUpload.entitlements'
@@ -450,6 +462,30 @@ jobs:
             -archivePath build/LZHCard.xcarchive \
             clean archive
 
+          ARCHIVE_APP_PLIST="build/LZHCard.xcarchive/Products/Applications/App.app/Info.plist"
+          ARCHIVE_EXT_PLIST="build/LZHCard.xcarchive/Products/Applications/App.app/PlugIns/BroadcastUpload.appex/Info.plist"
+          APP_SHORT_VER=$(plutil -extract CFBundleShortVersionString raw -o - "$ARCHIVE_APP_PLIST")
+          APP_BUNDLE_VER=$(plutil -extract CFBundleVersion raw -o - "$ARCHIVE_APP_PLIST")
+          if [ -z "$APP_SHORT_VER" ] || [ -z "$APP_BUNDLE_VER" ]; then
+            echo "::error::App.app/Info.plist 缺少 CFBundleShortVersionString 或 CFBundleVersion。"
+            exit 1
+          fi
+          if [ "${HAS_BROADCAST_PROFILE:-false}" = "true" ]; then
+            if [ ! -f "$ARCHIVE_EXT_PLIST" ]; then
+              echo "::error::BroadcastUpload.appex/Info.plist 未出現在 xcarchive 中。"
+              exit 1
+            fi
+            plutil -lint "$ARCHIVE_EXT_PLIST"
+            EXT_SHORT_VER=$(plutil -extract CFBundleShortVersionString raw -o - "$ARCHIVE_EXT_PLIST" 2>/dev/null || true)
+            EXT_BUNDLE_VER=$(plutil -extract CFBundleVersion raw -o - "$ARCHIVE_EXT_PLIST" 2>/dev/null || true)
+            echo "Archive App.app version: $APP_SHORT_VER ($APP_BUNDLE_VER)"
+            echo "Archive BroadcastUpload.appex version: $EXT_SHORT_VER ($EXT_BUNDLE_VER)"
+            if [ -z "$EXT_SHORT_VER" ] || [ -z "$EXT_BUNDLE_VER" ] || [ "$EXT_SHORT_VER" != "$APP_SHORT_VER" ] || [ "$EXT_BUNDLE_VER" != "$APP_BUNDLE_VER" ]; then
+              echo "::error::BroadcastUpload.appex/Info.plist 版本欄位為空或與主 App 不一致！"
+              exit 1
+            fi
+          fi
+
           xcodebuild -exportArchive \
             -archivePath build/LZHCard.xcarchive \
             -exportOptionsPlist build/signing/ExportOptions.plist \
@@ -458,6 +494,25 @@ jobs:
           IPA_FOUND=$(ls build/ipa/*.ipa | head -n 1)
           if [ -n "$IPA_FOUND" ] && [ "$IPA_FOUND" != "build/ipa/LZHCard.ipa" ]; then
             cp "$IPA_FOUND" build/ipa/LZHCard.ipa
+          fi
+
+          if [ "${HAS_BROADCAST_PROFILE:-false}" = "true" ]; then
+            TMP_VERIFY_DIR=$(mktemp -d)
+            unzip -q -o build/ipa/LZHCard.ipa "Payload/*.app/Info.plist" "Payload/*.app/PlugIns/BroadcastUpload.appex/Info.plist" -d "$TMP_VERIFY_DIR"
+            IPA_APP_PLIST=$(find "$TMP_VERIFY_DIR/Payload" -maxdepth 2 -name "Info.plist" | head -n 1)
+            IPA_EXT_PLIST=$(find "$TMP_VERIFY_DIR/Payload" -path "*/PlugIns/BroadcastUpload.appex/Info.plist" | head -n 1)
+            plutil -lint "$IPA_EXT_PLIST"
+            IPA_APP_SHORT=$(plutil -extract CFBundleShortVersionString raw -o - "$IPA_APP_PLIST")
+            IPA_APP_BUILD=$(plutil -extract CFBundleVersion raw -o - "$IPA_APP_PLIST")
+            IPA_EXT_SHORT=$(plutil -extract CFBundleShortVersionString raw -o - "$IPA_EXT_PLIST" 2>/dev/null || true)
+            IPA_EXT_BUILD=$(plutil -extract CFBundleVersion raw -o - "$IPA_EXT_PLIST" 2>/dev/null || true)
+            rm -rf "$TMP_VERIFY_DIR"
+            echo "Exported IPA App version: $IPA_APP_SHORT ($IPA_APP_BUILD)"
+            echo "Exported IPA BroadcastUpload.appex version: $IPA_EXT_SHORT ($IPA_EXT_BUILD)"
+            if [ -z "$IPA_EXT_SHORT" ] || [ -z "$IPA_EXT_BUILD" ] || [ "$IPA_EXT_SHORT" != "$IPA_APP_SHORT" ] || [ "$IPA_EXT_BUILD" != "$IPA_APP_BUILD" ]; then
+              echo "::error::匯出 IPA 內 BroadcastUpload.appex/Info.plist 版本欄位驗證失敗！"
+              exit 1
+            fi
           fi
           ls -lh build/ipa/
 
