@@ -50,7 +50,7 @@ function showIosGuideModal() {
         display: flex;
         flex-direction: column;
         align-items: flex-end;
-        padding: calc(env(safe-area-inset-top, 0px) + 16px) 20px calc(env(safe-area-inset-bottom, 0px) + 16px);
+        padding: calc(max(env(safe-area-inset-top, 0px), var(--lzh-safe-top, 0px)) + 16px) 20px calc(max(env(safe-area-inset-bottom, 0px), var(--lzh-safe-bottom, 0px)) + 16px);
         box-sizing: border-box;
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
         color: #ffffff;

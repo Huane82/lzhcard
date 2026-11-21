@@ -119,9 +119,9 @@ function updateUndoButtonUI() {
     const hasHistory = ratingUndoStack.length > 0;
     btn.disabled = !hasHistory;
     if (hasHistory) {
-        btn.className = "px-3 py-1.5 rounded-lg bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/40 dark:hover:bg-amber-900/60 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800 font-bold flex items-center space-x-1 transition cursor-pointer";
+        btn.className = "min-h-[40px] sm:min-h-[44px] px-3 sm:px-3.5 py-2 rounded-lg bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/40 dark:hover:bg-amber-900/60 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800 font-bold inline-flex items-center gap-1.5 transition cursor-pointer shrink-0";
     } else {
-        btn.className = "px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-400 border border-slate-200 dark:border-slate-700 font-bold flex items-center space-x-1 transition opacity-50 cursor-not-allowed";
+        btn.className = "min-h-[40px] sm:min-h-[44px] px-3 sm:px-3.5 py-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-400 border border-slate-200 dark:border-slate-700 font-bold inline-flex items-center gap-1.5 transition opacity-50 cursor-not-allowed shrink-0";
     }
 }
 

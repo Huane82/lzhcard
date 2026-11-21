@@ -10,6 +10,8 @@ import Translation
 
 private struct TranslationRuntimeConfig {
     var engine: String = "apple_offline"
+    var provider: String = "apple_offline"
+    var model: String = "apple_translation"
     var sourceLang: String = "en"
     var targetLang: String = "zh-Hant"
     var apiKey: String = ""
@@ -134,6 +136,8 @@ class SampleHandler: RPBroadcastSampleHandler {
     private func applyConfigDictionary(_ dict: [String: Any]) {
         var next = cachedConfig
         if let eng = dict["engine"] as? String, !eng.isEmpty { next.engine = eng }
+        if let prov = dict["provider"] as? String, !prov.isEmpty { next.provider = prov }
+        if let mdl = dict["model"] as? String, !mdl.isEmpty { next.model = mdl }
         if let src = dict["sourceLang"] as? String, !src.isEmpty { next.sourceLang = src }
         if let dst = dict["targetLang"] as? String, !dst.isEmpty { next.targetLang = dst }
         if let key = dict["apiKey"] as? String { next.apiKey = key.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -142,7 +146,8 @@ class SampleHandler: RPBroadcastSampleHandler {
         }
         if let tok = dict["authToken"] as? String { next.authToken = tok.trimmingCharacters(in: .whitespacesAndNewlines) }
         if let rm = dict["regionMode"] as? String, !rm.isEmpty { next.regionMode = rm }
-        if let reg = dict["region"] as? [String: Any] {
+        let reg = (dict["cropRect"] as? [String: Any]) ?? (dict["region"] as? [String: Any])
+        if let reg = reg {
             let rw = (reg["width"] as? NSNumber)?.doubleValue ?? (reg["width"] as? Double) ?? 0
             let rh = (reg["height"] as? NSNumber)?.doubleValue ?? (reg["height"] as? Double) ?? 0
             if rw > 0.05 && rh > 0.05 {
@@ -164,6 +169,8 @@ class SampleHandler: RPBroadcastSampleHandler {
         let defaults = sharedDefaults
         var dict: [String: Any] = [:]
         if let eng = defaults.string(forKey: "lzh_translate_engine") { dict["engine"] = eng }
+        if let prov = defaults.string(forKey: "lzh_translate_provider") { dict["provider"] = prov }
+        if let mdl = defaults.string(forKey: "lzh_translate_model") { dict["model"] = mdl }
         if let src = defaults.string(forKey: "lzh_source_lang") { dict["sourceLang"] = src }
         if let dst = defaults.string(forKey: "lzh_target_lang") { dict["targetLang"] = dst }
         if let key = defaults.string(forKey: "lzh_custom_api_key") { dict["apiKey"] = key }
@@ -173,12 +180,14 @@ class SampleHandler: RPBroadcastSampleHandler {
         let rw = defaults.double(forKey: "lzh_region_w")
         let rh = defaults.double(forKey: "lzh_region_h")
         if rw > 0.05 && rh > 0.05 {
-            dict["region"] = [
+            let rect: [String: Double] = [
                 "x": defaults.double(forKey: "lzh_region_x"),
                 "y": defaults.double(forKey: "lzh_region_y"),
                 "width": rw,
                 "height": rh
             ]
+            dict["region"] = rect
+            dict["cropRect"] = rect
         }
         applyConfigDictionary(dict)
     }
@@ -204,7 +213,23 @@ class SampleHandler: RPBroadcastSampleHandler {
         }.resume()
     }
 
-    private func pushSubtitleToMainApp(_ subtitle: String, ocrSourceText: String? = nil) {
+    private func sendLoopbackSubtitleRequest(_ payloadData: Data, retriesLeft: Int) {
+        guard let url = URL(string: "\(loopbackBaseUrl)/subtitle") else { return }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = payloadData
+        loopbackSession.dataTask(with: req) { [weak self] _, response, error in
+            let httpOk = (response as? HTTPURLResponse)?.statusCode == 200
+            if (!httpOk || error != nil), retriesLeft > 0 {
+                self?.visionQueue.asyncAfter(deadline: .now() + 0.25) {
+                    self?.sendLoopbackSubtitleRequest(payloadData, retriesLeft: retriesLeft - 1)
+                }
+            }
+        }.resume()
+    }
+
+    private func pushSubtitleToMainApp(_ subtitle: String, ocrSourceText: String? = nil, retryOnFailure: Bool = false) {
         let clean = subtitle.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !clean.isEmpty else { return }
         lastPushedSubtitle = clean
@@ -231,17 +256,14 @@ class SampleHandler: RPBroadcastSampleHandler {
         postDarwinSubtitleNotification()
 
         // Channel B: Localhost HTTP Loopback (works even when Sideloadly strips App Group entitlements)
-        guard let url = URL(string: "\(loopbackBaseUrl)/subtitle") else { return }
-        var req = URLRequest(url: url)
-        req.httpMethod = "POST"
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         let payload: [String: Any] = [
             "text": clean,
             "sourceText": ocrSourceText ?? "",
             "ts": Date().timeIntervalSince1970
         ]
-        req.httpBody = try? JSONSerialization.data(withJSONObject: payload, options: [])
-        loopbackSession.dataTask(with: req) { _, _, _ in }.resume()
+        if let bodyData = try? JSONSerialization.data(withJSONObject: payload, options: []) {
+            sendLoopbackSubtitleRequest(bodyData, retriesLeft: retryOnFailure ? 2 : 0)
+        }
     }
 
     // MARK: - RPBroadcastSampleHandler Lifecycle
@@ -258,7 +280,7 @@ class SampleHandler: RPBroadcastSampleHandler {
         writeSharedBridgeState(merging: ["broadcastActive": true])
 
         refreshConfigViaLoopback()
-        pushSubtitleToMainApp("LZHCard 廣播已連線，正在偵測字幕...")
+        pushSubtitleToMainApp("LZHCard 廣播已連線，正在偵測字幕...", retryOnFailure: true)
     }
 
     override func broadcastPaused() {
@@ -267,7 +289,7 @@ class SampleHandler: RPBroadcastSampleHandler {
 
     override func broadcastResumed() {
         refreshConfigViaLoopback()
-        pushSubtitleToMainApp("螢幕翻譯已恢復，持續偵測字幕...")
+        pushSubtitleToMainApp("螢幕翻譯已恢復，持續偵測字幕...", retryOnFailure: true)
     }
 
     override func broadcastFinished() {
@@ -389,7 +411,7 @@ class SampleHandler: RPBroadcastSampleHandler {
                 if !cleanTranslated.isEmpty {
                     self.pushSubtitleToMainApp(cleanTranslated, ocrSourceText: recognizedText)
                 } else {
-                    // If translation unavailable offline without downloaded pack, relay recognized text via Channel A & loopback fallback
+                    // Fallback relay via Channel A + Loopback so host app can translate if needed
                     self.pushSubtitleToMainApp(recognizedText, ocrSourceText: recognizedText)
                 }
             }
@@ -442,8 +464,55 @@ class SampleHandler: RPBroadcastSampleHandler {
 
     private func translateViaCloudApi(_ sourceText: String, config: TranslationRuntimeConfig, completion: @escaping (String?) -> Void) {
         let customKey = config.apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        if customKey.hasPrefix("AIza") {
-            let endpoint = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=\(customKey)"
+        let provider = config.provider.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let model = config.model.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let subtitlePrompt = """
+        你是一位即時雙語字幕譯者，請將以下 OCR 擷取文字翻譯成自然道地的繁體中文：
+        1. 自動忽略句首或句尾殘留的 OCR 亂碼、孤立符號或雜訊，只針對語意連貫的句子進行翻譯。
+        2. 若整段內容皆為無意義雜訊或無法辨識，請僅回傳空字串。
+        3. 遇到口語慣用語或俚語時，請依語境自然意譯，切勿死板逐字直譯。
+        4. 僅輸出最終繁體中文譯文，勿加引號或解釋。
+
+        原文：
+        \(sourceText)
+        """
+
+        if customKey.hasPrefix("gsk_") || (provider == "groq" && !customKey.isEmpty) {
+            let groqModel = model.isEmpty ? "llama-3.1-8b-instant" : model
+            guard let url = URL(string: "https://api.groq.com/openai/v1/chat/completions") else {
+                completion(nil)
+                return
+            }
+            var req = URLRequest(url: url)
+            req.httpMethod = "POST"
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            req.setValue("Bearer \(customKey)", forHTTPHeaderField: "Authorization")
+            let body: [String: Any] = [
+                "model": groqModel,
+                "temperature": 0.2,
+                "messages": [
+                    ["role": "user", "content": subtitlePrompt]
+                ]
+            ]
+            req.httpBody = try? JSONSerialization.data(withJSONObject: body)
+            cloudSession.dataTask(with: req) { data, _, _ in
+                var translated = ""
+                if let data = data,
+                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   let choices = json["choices"] as? [[String: Any]],
+                   let msg = choices.first?["message"] as? [String: Any],
+                   let text = msg["content"] as? String {
+                    translated = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                }
+                completion(translated.isEmpty ? nil : translated)
+            }.resume()
+            return
+        }
+
+        if customKey.hasPrefix("AIza") || (provider == "gemini" && !customKey.isEmpty) {
+            let gemModel = (model.isEmpty || !model.lowercased().contains("gemini")) ? "gemini-2.0-flash" : model
+            let endpoint = "https://generativelanguage.googleapis.com/v1beta/models/\(gemModel):generateContent?key=\(customKey)"
             guard let url = URL(string: endpoint) else {
                 completion(nil)
                 return
@@ -451,17 +520,7 @@ class SampleHandler: RPBroadcastSampleHandler {
             var req = URLRequest(url: url)
             req.httpMethod = "POST"
             req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            let prompt = """
-            你是一位即時雙語字幕譯者，請將以下 OCR 擷取文字翻譯成自然道地的繁體中文：
-            1. 自動忽略句首或句尾殘留的 OCR 亂碼、孤立符號或雜訊，只針對語意連貫的句子進行翻譯。
-            2. 若整段內容皆為無意義雜訊或無法辨識，請僅回傳空字串。
-            3. 遇到口語慣用語或俚語時，請依語境自然意譯，切勿死板逐字直譯。
-            4. 僅輸出最終繁體中文譯文，勿加引號或解釋。
-
-            原文：
-            \(sourceText)
-            """
-            let body: [String: Any] = ["contents": [["parts": [["text": prompt]]]]]
+            let body: [String: Any] = ["contents": [["parts": [["text": subtitlePrompt]]]]]
             req.httpBody = try? JSONSerialization.data(withJSONObject: body)
             cloudSession.dataTask(with: req) { data, _, _ in
                 var translated = ""

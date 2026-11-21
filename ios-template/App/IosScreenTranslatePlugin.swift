@@ -33,6 +33,7 @@ public class IosScreenTranslatePlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInP
     private let darwinNotificationName = "com.lzhcard.app.pip.subtitle.updated" as CFString
     private let pipWidthPx = 680
     private let pipHeightPx = 192
+    private let defaultInitialText = "LZHCard 螢幕翻譯就緒，請點選開始廣播"
 
     private lazy var resolvedAppGroupId: String? = resolveAccessibleAppGroupId()
     private lazy var sharedContainerBridgeFileUrl: URL? = resolveSharedBridgeFileUrl()
@@ -40,6 +41,15 @@ public class IosScreenTranslatePlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInP
     private var pipController: AVPictureInPictureController?
     private var sampleLayer: AVSampleBufferDisplayLayer?
     private var pipHostView: UIView?
+    private var pipPreviewBorderLayer: CAShapeLayer?
+    private var pipPossibleObservation: NSKeyValueObservation?
+    private var pipPollFallbackTimer: Timer?
+    private var pipStartDeadlineAt: Date?
+    private var isAwaitingPipStart = false
+    private var shouldTriggerPickerAfterPip = false
+    private var hasTriggeredBroadcastPicker = false
+    private var pickerFallbackTimer: DispatchWorkItem?
+
     private var silentAudioPlayer: AVAudioPlayer?
     private var pollTimer: Timer?
     private var lastHandledOcrSeq: Int = -1
@@ -53,6 +63,8 @@ public class IosScreenTranslatePlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInP
 
     private var runtimeConfig: [String: Any] = [
         "engine": "apple_offline",
+        "provider": "apple_offline",
+        "model": "apple_translation",
         "sourceLang": "en",
         "targetLang": "zh-Hant",
         "apiKey": "",
@@ -64,10 +76,21 @@ public class IosScreenTranslatePlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInP
             "y": 0.75,
             "width": 0.76,
             "height": 0.18
+        ],
+        "cropRect": [
+            "x": 0.12,
+            "y": 0.75,
+            "width": 0.76,
+            "height": 0.18
         ]
     ]
 
     deinit {
+        cancelPendingPipStartObservers()
+        pickerFallbackTimer?.cancel()
+        pickerFallbackTimer = nil
+        pollTimer?.invalidate()
+        pollTimer = nil
         unregisterDarwinObserver()
         stopLoopbackServer()
     }
@@ -172,7 +195,17 @@ public class IosScreenTranslatePlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInP
     private func startLoopbackServerIfNeeded() {
         ipcQueue.async { [weak self] in
             guard let self = self else { return }
-            if self.loopbackListener != nil { return }
+            if let existing = self.loopbackListener {
+                switch existing.state {
+                case .ready, .setup, .waiting:
+                    return
+                case .failed, .cancelled:
+                    existing.cancel()
+                    self.loopbackListener = nil
+                @unknown default:
+                    return
+                }
+            }
 
             guard let port = NWEndpoint.Port(rawValue: self.loopbackPort) else { return }
             let params = NWParameters.tcp
@@ -187,8 +220,16 @@ public class IosScreenTranslatePlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInP
                 listener.stateUpdateHandler = { [weak self] state in
                     if case .failed = state {
                         self?.ipcQueue.async {
-                            self?.loopbackListener?.cancel()
-                            self?.loopbackListener = nil
+                            if self?.loopbackListener === listener {
+                                listener.cancel()
+                                self?.loopbackListener = nil
+                            }
+                        }
+                    } else if case .cancelled = state {
+                        self?.ipcQueue.async {
+                            if self?.loopbackListener === listener {
+                                self?.loopbackListener = nil
+                            }
                         }
                     }
                 }
@@ -346,6 +387,12 @@ public class IosScreenTranslatePlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInP
         if let eng = defaults.string(forKey: "lzh_translate_engine"), !eng.isEmpty {
             cfg["engine"] = eng
         }
+        if let prov = defaults.string(forKey: "lzh_translate_provider"), !prov.isEmpty {
+            cfg["provider"] = prov
+        }
+        if let mdl = defaults.string(forKey: "lzh_translate_model"), !mdl.isEmpty {
+            cfg["model"] = mdl
+        }
         if let src = defaults.string(forKey: "lzh_source_lang"), !src.isEmpty {
             cfg["sourceLang"] = src
         }
@@ -367,12 +414,14 @@ public class IosScreenTranslatePlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInP
         let rw = defaults.double(forKey: "lzh_region_w")
         let rh = defaults.double(forKey: "lzh_region_h")
         if rw > 0.05 && rh > 0.05 {
-            cfg["region"] = [
+            let reg: [String: Double] = [
                 "x": defaults.double(forKey: "lzh_region_x"),
                 "y": defaults.double(forKey: "lzh_region_y"),
                 "width": rw,
                 "height": rh
             ]
+            cfg["region"] = reg
+            cfg["cropRect"] = reg
         }
         return cfg
     }
@@ -453,6 +502,8 @@ public class IosScreenTranslatePlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInP
 
     @objc func saveConfig(_ call: CAPPluginCall) {
         let engine = call.getString("engine") ?? "apple_offline"
+        let provider = call.getString("provider") ?? (engine == "apple_offline" ? "apple_offline" : "worker")
+        let model = call.getString("model") ?? (engine == "apple_offline" ? "apple_translation" : "gemini-2.0-flash")
         let sourceLang = call.getString("sourceLang") ?? "en"
         let targetLang = call.getString("targetLang") ?? "zh-Hant"
         let apiKey = call.getString("apiKey") ?? ""
@@ -462,6 +513,8 @@ public class IosScreenTranslatePlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInP
 
         let defaults = sharedDefaults
         defaults.set(engine, forKey: "lzh_translate_engine")
+        defaults.set(provider, forKey: "lzh_translate_provider")
+        defaults.set(model, forKey: "lzh_translate_model")
         defaults.set(sourceLang, forKey: "lzh_source_lang")
         defaults.set(targetLang, forKey: "lzh_target_lang")
         defaults.set(apiKey, forKey: "lzh_custom_api_key")
@@ -475,11 +528,12 @@ public class IosScreenTranslatePlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInP
             "width": defaults.double(forKey: "lzh_region_w"),
             "height": defaults.double(forKey: "lzh_region_h")
         ]
-        if let region = call.getObject("region") {
-            let rx = region["x"] as? Double ?? 0.12
-            let ry = region["y"] as? Double ?? 0.75
-            let rw = region["width"] as? Double ?? 0.76
-            let rh = region["height"] as? Double ?? 0.18
+        let rectSource = call.getObject("cropRect") ?? call.getObject("region")
+        if let region = rectSource {
+            let rx = (region["x"] as? NSNumber)?.doubleValue ?? (region["x"] as? Double) ?? 0.12
+            let ry = (region["y"] as? NSNumber)?.doubleValue ?? (region["y"] as? Double) ?? 0.75
+            let rw = (region["width"] as? NSNumber)?.doubleValue ?? (region["width"] as? Double) ?? 0.76
+            let rh = (region["height"] as? NSNumber)?.doubleValue ?? (region["height"] as? Double) ?? 0.18
             defaults.set(rx, forKey: "lzh_region_x")
             defaults.set(ry, forKey: "lzh_region_y")
             defaults.set(rw, forKey: "lzh_region_w")
@@ -490,13 +544,16 @@ public class IosScreenTranslatePlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInP
 
         let updatedCfg: [String: Any] = [
             "engine": engine,
+            "provider": provider,
+            "model": model,
             "sourceLang": sourceLang,
             "targetLang": targetLang,
             "apiKey": apiKey,
             "workerBaseUrl": workerBaseUrl,
             "authToken": authToken,
             "regionMode": regionMode,
-            "region": regDict
+            "region": regDict,
+            "cropRect": regDict
         ]
         ipcQueue.async { [weak self] in
             self?.runtimeConfig = updatedCfg
@@ -565,8 +622,20 @@ public class IosScreenTranslatePlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInP
         return triggered
     }
 
+    private func triggerPickerIfPending() {
+        pickerFallbackTimer?.cancel()
+        pickerFallbackTimer = nil
+        guard shouldTriggerPickerAfterPip, !hasTriggeredBroadcastPicker else { return }
+        hasTriggeredBroadcastPicker = true
+        shouldTriggerPickerAfterPip = false
+        guard let rootView = bridge?.viewController?.view else { return }
+        triggerSystemBroadcastPicker(in: rootView)
+    }
+
     @objc func startScreenTranslate(_ call: CAPPluginCall) {
-        let initialText = call.getString("initialText") ?? "LZHCard 螢幕翻譯準備就緒"
+        let initialText = (call.getString("initialText") ?? defaultInitialText).trimmingCharacters(in: .whitespacesAndNewlines)
+        let effectiveInitial = initialText.isEmpty ? defaultInitialText : initialText
+
         DispatchQueue.main.async { [weak self] in
             guard let self = self, let rootView = self.bridge?.viewController?.view else {
                 call.reject("Root view unavailable")
@@ -575,29 +644,40 @@ public class IosScreenTranslatePlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInP
 
             self.startLoopbackServerIfNeeded()
             self.registerDarwinObserverIfNeeded()
+            self.shouldTriggerPickerAfterPip = true
+            self.hasTriggeredBroadcastPicker = false
 
             var pipStarted = false
             if AVPictureInPictureController.isPictureInPictureSupported() {
                 self.setupAudioSessionAndKeepAlive()
-                self.setupPipControllerIfNeeded()
-                self.sharedDefaults.set(initialText, forKey: "lzh_latest_pip_subtitle")
+                self.setupPipControllerIfNeeded(initialText: effectiveInitial)
+                self.sharedDefaults.set(effectiveInitial, forKey: "lzh_latest_pip_subtitle")
                 self.sharedDefaults.synchronize()
                 self.writeSharedBridgeState(merging: [
-                    "subtitle": initialText,
+                    "subtitle": effectiveInitial,
                     "subtitleUpdatedAt": Date().timeIntervalSince1970
                 ])
-                self.renderSubtitleTextToPip(initialText)
+                self.renderSubtitleTextToPip(effectiveInitial)
                 self.startPollingSharedSubtitle()
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                    self.pipController?.startPictureInPicture()
-                }
+                self.requestStartPictureInPictureWhenPossible()
                 pipStarted = true
+
+                // Wait briefly for PiP transition before presenting system Broadcast picker sheet
+                self.pickerFallbackTimer?.cancel()
+                let work = DispatchWorkItem { [weak self] in
+                    self?.triggerPickerIfPending()
+                }
+                self.pickerFallbackTimer = work
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.65, execute: work)
+            } else {
+                self.hasTriggeredBroadcastPicker = true
+                self.shouldTriggerPickerAfterPip = false
+                self.triggerSystemBroadcastPicker(in: rootView)
             }
 
-            let pickerTriggered = self.triggerSystemBroadcastPicker(in: rootView)
             call.resolve([
                 "started": pipStarted,
-                "triggered": pickerTriggered,
+                "triggered": true,
                 "pipSupported": AVPictureInPictureController.isPictureInPictureSupported()
             ])
         }
@@ -617,7 +697,9 @@ public class IosScreenTranslatePlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInP
     }
 
     @objc func startPipSubtitle(_ call: CAPPluginCall) {
-        let initialText = call.getString("initialText") ?? "LZHCard 螢幕翻譯準備就緒"
+        let initialText = (call.getString("initialText") ?? defaultInitialText).trimmingCharacters(in: .whitespacesAndNewlines)
+        let effectiveInitial = initialText.isEmpty ? defaultInitialText : initialText
+
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             guard AVPictureInPictureController.isPictureInPictureSupported() else {
@@ -627,20 +709,18 @@ public class IosScreenTranslatePlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInP
 
             self.startLoopbackServerIfNeeded()
             self.registerDarwinObserverIfNeeded()
+            self.shouldTriggerPickerAfterPip = false
             self.setupAudioSessionAndKeepAlive()
-            self.setupPipControllerIfNeeded()
-            self.sharedDefaults.set(initialText, forKey: "lzh_latest_pip_subtitle")
+            self.setupPipControllerIfNeeded(initialText: effectiveInitial)
+            self.sharedDefaults.set(effectiveInitial, forKey: "lzh_latest_pip_subtitle")
             self.sharedDefaults.synchronize()
             self.writeSharedBridgeState(merging: [
-                "subtitle": initialText,
+                "subtitle": effectiveInitial,
                 "subtitleUpdatedAt": Date().timeIntervalSince1970
             ])
-            self.renderSubtitleTextToPip(initialText)
+            self.renderSubtitleTextToPip(effectiveInitial)
             self.startPollingSharedSubtitle()
-
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                self.pipController?.startPictureInPicture()
-            }
+            self.requestStartPictureInPictureWhenPossible()
             call.resolve(["started": true])
         }
     }
@@ -687,26 +767,72 @@ public class IosScreenTranslatePlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInP
             } catch {
                 silentAudioPlayer = nil
             }
+        } else if let player = silentAudioPlayer, !player.isPlaying {
+            player.play()
         }
     }
 
-    private func setupPipControllerIfNeeded() {
+    private func computeVisiblePreviewFrame(in rootView: UIView) -> CGRect {
+        let bounds = rootView.bounds
+        let safeInsets = rootView.safeAreaInsets
+        let maxW = max(240.0, bounds.width - max(32.0, safeInsets.left + safeInsets.right + 24.0))
+        let previewW = min(332.0, maxW)
+        let previewH: CGFloat = 96.0
+        let x = floor((bounds.width - previewW) / 2.0)
+        let bottomClearance = max(safeInsets.bottom, 20.0) + 16.0
+        let minTop = max(safeInsets.top, 44.0) + 12.0
+        let desiredY = bounds.height - bottomClearance - previewH
+        let y = max(minTop, desiredY)
+        return CGRect(x: x, y: y, width: previewW, height: previewH)
+    }
+
+    private func setupPipControllerIfNeeded(initialText: String) {
         guard let rootView = bridge?.viewController?.view else { return }
 
         if pipHostView == nil {
-            let host = UIView(frame: CGRect(x: -12, y: -12, width: 340, height: 96))
-            host.alpha = 0.015
+            let frame = computeVisiblePreviewFrame(in: rootView)
+            let host = UIView(frame: frame)
+            host.isHidden = false
+            host.alpha = 1.0
             host.isUserInteractionEnabled = false
+            host.backgroundColor = UIColor(red: 0.06, green: 0.09, blue: 0.16, alpha: 0.96)
+            host.layer.cornerRadius = 18.0
+            host.layer.masksToBounds = true
+            host.autoresizingMask = [.flexibleLeftMargin, .flexibleRightMargin, .flexibleTopMargin]
             rootView.addSubview(host)
+            rootView.bringSubviewToFront(host)
             pipHostView = host
 
             let layer = AVSampleBufferDisplayLayer()
             layer.frame = host.bounds
             layer.videoGravity = .resizeAspect
-            layer.backgroundColor = UIColor(red: 0.06, green: 0.09, blue: 0.16, alpha: 0.92).cgColor
+            layer.backgroundColor = UIColor(red: 0.06, green: 0.09, blue: 0.16, alpha: 0.96).cgColor
             host.layer.addSublayer(layer)
             sampleLayer = layer
+
+            let dashed = CAShapeLayer()
+            dashed.frame = host.bounds
+            dashed.path = UIBezierPath(roundedRect: host.bounds.insetBy(dx: 2.0, dy: 2.0), cornerRadius: 16.0).cgPath
+            dashed.fillColor = UIColor.clear.cgColor
+            dashed.strokeColor = UIColor(red: 0.20, green: 0.83, blue: 0.60, alpha: 0.72).cgColor
+            dashed.lineWidth = 1.5
+            dashed.lineDashPattern = [6, 4]
+            host.layer.addSublayer(dashed)
+            pipPreviewBorderLayer = dashed
+        } else if let host = pipHostView {
+            host.frame = computeVisiblePreviewFrame(in: rootView)
+            host.isHidden = false
+            host.alpha = 1.0
+            rootView.bringSubviewToFront(host)
+            sampleLayer?.frame = host.bounds
+            if let dashed = pipPreviewBorderLayer {
+                dashed.frame = host.bounds
+                dashed.path = UIBezierPath(roundedRect: host.bounds.insetBy(dx: 2.0, dy: 2.0), cornerRadius: 16.0).cgPath
+            }
         }
+
+        // Enqueue an initial frame synchronously before creating/starting AVPictureInPictureController
+        renderSubtitleTextToPip(initialText)
 
         if pipController == nil, let layer = sampleLayer {
             let contentSource = AVPictureInPictureController.ContentSource(
@@ -723,7 +849,87 @@ public class IosScreenTranslatePlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInP
         }
     }
 
+    private func cancelPendingPipStartObservers() {
+        pipPossibleObservation?.invalidate()
+        pipPossibleObservation = nil
+        pipPollFallbackTimer?.invalidate()
+        pipPollFallbackTimer = nil
+        pipStartDeadlineAt = nil
+        isAwaitingPipStart = false
+    }
+
+    private func requestStartPictureInPictureWhenPossible() {
+        cancelPendingPipStartObservers()
+        guard let pip = pipController else { return }
+        if pip.isPictureInPictureActive {
+            triggerPickerIfPending()
+            return
+        }
+
+        if let host = pipHostView {
+            host.isHidden = false
+            host.alpha = 1.0
+            host.superview?.bringSubviewToFront(host)
+        }
+
+        if pip.isPictureInPicturePossible {
+            pip.startPictureInPicture()
+            return
+        }
+
+        isAwaitingPipStart = true
+        pipStartDeadlineAt = Date().addingTimeInterval(1.5)
+
+        pipPossibleObservation = pip.observe(\.isPictureInPicturePossible, options: [.initial, .new]) { [weak self] controller, _ in
+            DispatchQueue.main.async {
+                guard let self = self, self.isAwaitingPipStart else { return }
+                if controller.isPictureInPicturePossible {
+                    self.cancelPendingPipStartObservers()
+                    if !controller.isPictureInPictureActive {
+                        controller.startPictureInPicture()
+                    }
+                }
+            }
+        }
+
+        pipPollFallbackTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+            guard let self = self else { return }
+            guard self.isAwaitingPipStart, let pip = self.pipController else {
+                self.cancelPendingPipStartObservers()
+                return
+            }
+
+            if pip.isPictureInPicturePossible {
+                self.cancelPendingPipStartObservers()
+                if !pip.isPictureInPictureActive {
+                    pip.startPictureInPicture()
+                }
+                return
+            }
+
+            if !self.lastRenderedSubtitle.isEmpty {
+                self.renderSubtitleTextToPip(self.lastRenderedSubtitle)
+            }
+
+            if let deadline = self.pipStartDeadlineAt, Date() >= deadline {
+                self.cancelPendingPipStartObservers()
+                if pip.isPictureInPicturePossible && !pip.isPictureInPictureActive {
+                    pip.startPictureInPicture()
+                } else {
+                    self.triggerPickerIfPending()
+                    self.notifyListeners("pipError", data: [
+                        "message": "子母畫面仍在準備中，請確認已允許畫中畫權限或再次點擊啟動"
+                    ])
+                }
+            }
+        }
+    }
+
     private func teardownPip() {
+        cancelPendingPipStartObservers()
+        pickerFallbackTimer?.cancel()
+        pickerFallbackTimer = nil
+        shouldTriggerPickerAfterPip = false
         pollTimer?.invalidate()
         pollTimer = nil
         unregisterDarwinObserver()
@@ -732,6 +938,8 @@ public class IosScreenTranslatePlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInP
             pip.stopPictureInPicture()
         }
         pipController = nil
+        pipPreviewBorderLayer?.removeFromSuperlayer()
+        pipPreviewBorderLayer = nil
         sampleLayer?.removeFromSuperlayer()
         sampleLayer = nil
         pipHostView?.removeFromSuperview()
@@ -739,6 +947,7 @@ public class IosScreenTranslatePlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInP
         silentAudioPlayer?.stop()
         silentAudioPlayer = nil
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        notifyListeners("pipStateChanged", data: ["active": false])
     }
 
     private func startPollingSharedSubtitle() {
@@ -833,26 +1042,68 @@ public class IosScreenTranslatePlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInP
         let cfg = currentConfigDictionary()
         let workerUrl = ((cfg["workerBaseUrl"] as? String) ?? "https://lzhcard.tomlin980415.workers.dev").trimmingCharacters(in: .whitespacesAndNewlines)
         let customKey = ((cfg["apiKey"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let provider = ((cfg["provider"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let model = ((cfg["model"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let authToken = ((cfg["authToken"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let sourceLang = (cfg["sourceLang"] as? String) ?? "auto"
 
-        if customKey.hasPrefix("AIza") {
-            let endpoint = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=\(customKey)"
+        let subtitlePrompt = """
+        你是一位即時雙語字幕譯者，請將以下 OCR 擷取文字翻譯成自然道地的繁體中文：
+        1. 自動忽略句首或句尾殘留的 OCR 亂碼、孤立符號或雜訊（如 `| ar Ss = 5` 等），只針對語意連貫的句子進行翻譯。
+        2. 若整段內容皆為無意義雜訊或無法辨識，請僅回傳空字串。
+        3. 遇到口語慣用語或俚語時，請依語境自然意譯，切勿死板逐字直譯（例如 `"new whip"` 應譯為「新車／座駕」）。
+        4. 僅輸出最終繁體中文譯文，勿加引號或解釋。
+
+        原文：
+        \(sourceText)
+        """
+
+        if customKey.hasPrefix("gsk_") || (provider == "groq" && !customKey.isEmpty) {
+            let groqModel = model.isEmpty ? "llama-3.1-8b-instant" : model
+            guard let url = URL(string: "https://api.groq.com/openai/v1/chat/completions") else {
+                isTranslatingOcr = false
+                return
+            }
+            var req = URLRequest(url: url)
+            req.httpMethod = "POST"
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            req.setValue("Bearer \(customKey)", forHTTPHeaderField: "Authorization")
+            let body: [String: Any] = [
+                "model": groqModel,
+                "temperature": 0.2,
+                "messages": [
+                    ["role": "user", "content": subtitlePrompt]
+                ]
+            ]
+            req.httpBody = try? JSONSerialization.data(withJSONObject: body)
+            URLSession.shared.dataTask(with: req) { [weak self] data, _, _ in
+                var translated = ""
+                if let data = data,
+                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   let choices = json["choices"] as? [[String: Any]],
+                   let msg = choices.first?["message"] as? [String: Any],
+                   let text = msg["content"] as? String {
+                    translated = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                }
+                DispatchQueue.main.async {
+                    self?.isTranslatingOcr = false
+                    if !translated.isEmpty {
+                        self?.sharedDefaults.set(translated, forKey: "lzh_latest_pip_subtitle")
+                        self?.renderSubtitleTextToPip(translated)
+                    }
+                }
+            }.resume()
+            return
+        }
+
+        if customKey.hasPrefix("AIza") || (provider == "gemini" && !customKey.isEmpty) {
+            let gemModel = (model.isEmpty || !model.lowercased().contains("gemini")) ? "gemini-2.0-flash" : model
+            let endpoint = "https://generativelanguage.googleapis.com/v1beta/models/\(gemModel):generateContent?key=\(customKey)"
             guard let url = URL(string: endpoint) else { isTranslatingOcr = false; return }
             var req = URLRequest(url: url)
             req.httpMethod = "POST"
             req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            let prompt = """
-            你是一位即時雙語字幕譯者，請將以下 OCR 擷取文字翻譯成自然道地的繁體中文：
-            1. 自動忽略句首或句尾殘留的 OCR 亂碼、孤立符號或雜訊（如 `| ar Ss = 5` 等），只針對語意連貫的句子進行翻譯。
-            2. 若整段內容皆為無意義雜訊或無法辨識，請僅回傳空字串。
-            3. 遇到口語慣用語或俚語時，請依語境自然意譯，切勿死板逐字直譯（例如 `"new whip"` 應譯為「新車／座駕」）。
-            4. 僅輸出最終繁體中文譯文，勿加引號或解釋。
-
-            原文：
-            \(sourceText)
-            """
-            let body: [String: Any] = ["contents": [["parts": [["text": prompt]]]]]
+            let body: [String: Any] = ["contents": [["parts": [["text": subtitlePrompt]]]]]
             req.httpBody = try? JSONSerialization.data(withJSONObject: body)
             URLSession.shared.dataTask(with: req) { [weak self] data, _, _ in
                 var translated = ""
@@ -1055,18 +1306,34 @@ public class IosScreenTranslatePlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInP
 
     // MARK: - AVPictureInPictureControllerDelegate & PlaybackDelegate
 
-    public func pictureInPictureControllerDidStopPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
-        pollTimer?.invalidate()
-        pollTimer = nil
-        stopLoopbackServer()
-        notifyListeners("pipStateChanged", data: ["active": false])
+    public func pictureInPictureControllerWillStartPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
+        if let host = pipHostView {
+            host.alpha = 0.0
+        }
     }
 
     public func pictureInPictureControllerDidStartPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
+        if let host = pipHostView {
+            host.alpha = 0.0
+        }
+        triggerPickerIfPending()
         notifyListeners("pipStateChanged", data: ["active": true])
     }
 
+    public func pictureInPictureControllerDidStopPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
+        if let host = pipHostView {
+            host.isHidden = false
+            host.alpha = 1.0
+        }
+        notifyListeners("pipStateChanged", data: ["active": false])
+    }
+
     public func pictureInPictureController(_ pictureInPictureController: AVPictureInPictureController, failedToStartPictureInPictureWithError error: Error) {
+        if let host = pipHostView {
+            host.isHidden = false
+            host.alpha = 1.0
+        }
+        triggerPickerIfPending()
         notifyListeners("pipError", data: ["message": error.localizedDescription])
     }
 

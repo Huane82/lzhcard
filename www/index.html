@@ -17,6 +17,43 @@
     
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <script>
+    (function initLzhSafeAreaVars() {
+        function updateSafeAreaVars() {
+            var root = document.documentElement;
+            if (!root || root.getAttribute('data-widget-mode') === 'desktop') return;
+            var ua = navigator.userAgent || '';
+            var isCapIos = Boolean(window.Capacitor && typeof window.Capacitor.getPlatform === 'function' && String(window.Capacitor.getPlatform() || '').toLowerCase() === 'ios');
+            var isIosDevice = isCapIos || /iPhone|iPad|iPod/i.test(ua) || (navigator.platform === 'MacIntel' && (navigator.maxTouchPoints || 0) > 1);
+            var envTop = 0;
+            var envBottom = 0;
+            if (document.body) {
+                var probe = document.createElement('div');
+                probe.style.cssText = 'position:fixed;visibility:hidden;pointer-events:none;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);';
+                document.body.appendChild(probe);
+                var cs = window.getComputedStyle(probe);
+                envTop = parseFloat(cs.paddingTop) || 0;
+                envBottom = parseFloat(cs.paddingBottom) || 0;
+                probe.remove();
+            }
+            var isPortrait = (window.innerHeight || 0) >= (window.innerWidth || 0);
+            var maxScreenDim = Math.max(window.screen ? window.screen.width : 0, window.screen ? window.screen.height : 0);
+            var isNotchedIphone = /iPhone/i.test(ua) && maxScreenDim >= 812;
+            var fallbackTop = (isIosDevice && envTop < 1 && isPortrait && isNotchedIphone) ? 54 : 0;
+            var fallbackBottom = (isIosDevice && envBottom < 1 && isNotchedIphone) ? (isPortrait ? 24 : 16) : 0;
+            root.style.setProperty('--lzh-safe-top', fallbackTop + 'px');
+            root.style.setProperty('--lzh-safe-bottom', fallbackBottom + 'px');
+        }
+        updateSafeAreaVars();
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', updateSafeAreaVars);
+        }
+        window.addEventListener('resize', updateSafeAreaVars);
+        window.addEventListener('orientationchange', function () {
+            setTimeout(updateSafeAreaVars, 80);
+        });
+    })();
+    </script>
     <title>LZHCard</title>
     <meta name="description" content="具備 FSRS 現代認知記憶演算法、考前臨時熟悉演算法、Gemini AI 萬能解析、雲端同步與社群字庫商店的升級版 Anki 單字學習系統。" />
     <meta property="og:title" content="LZHCard" />
@@ -279,7 +316,7 @@
 
 
     <!-- 🎯 步驟 2：新手高亮導覽 Tour Overlay (z-[70]) -->
-    <div id="onboardingTourOverlay" class="hidden fixed inset-0 z-[70] pointer-events-none transition-all duration-300" style="padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px);">
+    <div id="onboardingTourOverlay" class="hidden fixed inset-0 z-[70] pointer-events-none transition-all duration-300" style="padding-top: var(--lzh-effective-top); padding-bottom: var(--lzh-effective-bottom);">
         <!-- 背景半透明黑色遮罩（互動步驟時切換為 pointer-events-none + 聚光燈鏤空） -->
         <div id="tourBackdrop" class="absolute inset-0 bg-slate-900/75 pointer-events-auto transition-opacity duration-200"></div>
 
@@ -287,7 +324,7 @@
         <div id="tourHighlightBox" class="absolute transition-all duration-300 rounded-xl ring-4 ring-brand-500 ring-offset-2 ring-offset-slate-900 shadow-2xl pointer-events-none"></div>
 
         <!-- 導覽說明浮動卡片 (Tooltip Popover) -->
-        <div id="tourPopover" class="pointer-events-auto absolute w-80 max-w-[calc(100vw-24px)] max-h-[calc(100vh-32px-env(safe-area-inset-top,0px)-env(safe-area-inset-bottom,0px))] overflow-y-auto bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 p-5 rounded-2xl shadow-2xl border border-slate-100 dark:border-slate-700 transition-all duration-300 space-y-3 z-[71]">
+        <div id="tourPopover" class="pointer-events-auto absolute w-80 max-w-[calc(100vw-24px)] max-h-[calc(100vh-32px-var(--lzh-effective-top)-var(--lzh-effective-bottom))] overflow-y-auto bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 p-5 rounded-2xl shadow-2xl border border-slate-100 dark:border-slate-700 transition-all duration-300 space-y-3 z-[71]">
             <div class="flex justify-between items-center gap-2">
                 <span id="tourStepBadge" class="px-2.5 py-0.5 bg-brand-100 dark:bg-brand-900/50 text-brand-700 dark:text-brand-300 rounded-full font-bold text-[10px]">
                     1 / 8
@@ -489,28 +526,28 @@
 
         <!-- 區塊 1：專注卡片輪播模式 -->
         <section id="sec-flashcard" class="hidden space-y-5">
-            <div class="flex items-center justify-between flex-wrap gap-2 text-xs text-slate-500 dark:text-slate-400 font-medium">
+            <div id="flashcardTopBar" class="flex items-center justify-between flex-wrap gap-2 text-xs text-slate-500 dark:text-slate-400 font-medium">
                 <div class="flex items-center flex-wrap gap-2">
-                    <button type="button" onclick="exitFocusMode()" class="min-h-[44px] px-3.5 py-2 rounded-lg bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 font-bold inline-flex items-center gap-1.5 transition">
+                    <button type="button" onclick="exitFocusMode()" class="min-h-[40px] sm:min-h-[44px] px-3 sm:px-3.5 py-2 rounded-lg bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 font-bold inline-flex items-center gap-1.5 transition shrink-0">
                         <i class="fa-solid fa-arrow-left"></i>
                         <span data-i18n="btnExit">退出模式</span>
                     </button>
                     <!-- ⚡ 快速填入按鈕 -->
-                    <button type="button" onclick="openModal('quickAddModal')" class="min-h-[44px] px-3.5 py-2 rounded-lg bg-brand-50 hover:bg-brand-100 dark:bg-brand-900/40 dark:hover:bg-brand-900/60 text-brand-600 dark:text-brand-300 font-bold inline-flex items-center gap-1.5 transition border border-brand-200 dark:border-brand-700">
+                    <button type="button" onclick="openModal('quickAddModal')" class="min-h-[40px] sm:min-h-[44px] px-3 sm:px-3.5 py-2 rounded-lg bg-brand-50 hover:bg-brand-100 dark:bg-brand-900/40 dark:hover:bg-brand-900/60 text-brand-600 dark:text-brand-300 font-bold inline-flex items-center gap-1.5 transition border border-brand-200 dark:border-brand-700 shrink-0">
                         <i class="fa-solid fa-bolt"></i>
                         <span data-i18n="btnQuickAdd">快速填入</span>
                     </button>
                     <!-- ↩️ 還原上一張按鈕 -->
-                    <button type="button" id="undoCardBtn" onclick="if(typeof handleUndoLastCard==='function') handleUndoLastCard();" data-i18n-title="tipUndoCard" title="還原上一張評分" class="min-h-[44px] px-3.5 py-2 rounded-lg bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/40 dark:hover:bg-amber-900/60 text-amber-700 dark:text-amber-300 font-bold inline-flex items-center gap-1.5 transition border border-amber-200 dark:border-amber-800">
+                    <button type="button" id="undoCardBtn" onclick="if(typeof handleUndoLastCard==='function') handleUndoLastCard();" data-i18n-title="tipUndoCard" title="還原上一張評分" class="min-h-[40px] sm:min-h-[44px] px-3 sm:px-3.5 py-2 rounded-lg bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/40 dark:hover:bg-amber-900/60 text-amber-700 dark:text-amber-300 font-bold inline-flex items-center gap-1.5 transition border border-amber-200 dark:border-amber-800 shrink-0">
                         <i class="fa-solid fa-rotate-left"></i>
                         <span data-i18n="btnUndoCard">還原</span>
                     </button>
                 </div>
-                <div class="flex items-center gap-2">
-                    <button type="button" id="fsrsSessionBadge" onclick="toggleFreePracticeMode()" data-i18n-title="tipToggleFreePractice" title="點擊切換排程 / 自由加練模式" class="min-h-[44px] px-3 py-1.5 rounded-full text-[11px] font-bold bg-brand-50 hover:bg-brand-100 text-brand-600 dark:bg-brand-950/60 dark:text-brand-300 border border-brand-200 dark:border-brand-800 transition cursor-pointer inline-flex items-center">
+                <div class="flex items-center gap-2 flex-wrap">
+                    <button type="button" id="fsrsSessionBadge" onclick="toggleFreePracticeMode()" data-i18n-title="tipToggleFreePractice" title="點擊切換排程 / 自由加練模式" class="min-h-[40px] sm:min-h-[44px] px-3 py-1.5 rounded-full text-[11px] font-bold bg-brand-50 hover:bg-brand-100 text-brand-600 dark:bg-brand-950/60 dark:text-brand-300 border border-brand-200 dark:border-brand-800 transition cursor-pointer inline-flex items-center shrink-0">
                         <span data-i18n="fsrsScheduleBadge">FSRS 排程</span>
                     </button>
-                    <div><span data-i18n="stockCount">當前庫存:</span> <span id="cardCountDisplay" class="font-bold text-slate-700 dark:text-slate-200">0</span></div>
+                    <div class="whitespace-nowrap"><span data-i18n="stockCount">當前庫存:</span> <span id="cardCountDisplay" class="font-bold text-slate-700 dark:text-slate-200">0</span></div>
                 </div>
             </div>
 
@@ -518,7 +555,7 @@
             <div id="flashcardGameHud" class="max-w-lg mx-auto"></div>
 
             <!-- 3D 卡片 -->
-            <div class="perspective-1000 w-full max-w-lg mx-auto h-[380px] cursor-pointer group" onclick="flipCard()">
+            <div class="perspective-1000 w-full max-w-lg mx-auto min-h-[300px] h-[clamp(300px,46dvh,380px)] sm:h-[380px] cursor-pointer group" onclick="flipCard()">
                 <div id="flashcard" class="relative w-full h-full transform-style-3d card-flip-duration shadow-xl rounded-2xl border border-slate-200/80 dark:border-slate-700 bg-white dark:bg-slate-800">
                     <div class="absolute inset-0 backface-hidden rounded-2xl p-8 flex flex-col justify-between bg-gradient-to-br from-white to-slate-50 dark:from-slate-800 dark:to-slate-900">
                         <div class="flex items-center justify-between gap-2">
@@ -623,19 +660,19 @@
 
         <!-- 區塊 2：專注測驗模式 -->
         <section id="sec-quiz" class="hidden space-y-5">
-            <div class="flex items-center justify-between gap-2 flex-wrap">
-                <div class="flex items-center gap-2">
-                    <button type="button" onclick="exitFocusMode()" class="min-h-[44px] px-3.5 py-2 rounded-lg bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 font-bold text-xs inline-flex items-center gap-1.5 transition">
+            <div id="quizTopBar" class="flex items-center justify-between gap-2 flex-wrap">
+                <div class="flex items-center gap-2 flex-wrap">
+                    <button type="button" onclick="exitFocusMode()" class="min-h-[40px] sm:min-h-[44px] px-3 sm:px-3.5 py-2 rounded-lg bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 font-bold text-xs inline-flex items-center gap-1.5 transition shrink-0">
                         <i class="fa-solid fa-arrow-left"></i>
                         <span data-i18n="btnExit">退出模式</span>
                     </button>
                     <!-- ⚡ 快速記生字按鈕 -->
-                    <button type="button" onclick="openModal('quickAddModal')" class="min-h-[44px] px-3.5 py-2 rounded-lg bg-brand-50 hover:bg-brand-100 dark:bg-brand-900/40 dark:hover:bg-brand-900/60 text-brand-600 dark:text-brand-300 font-bold text-xs inline-flex items-center gap-1.5 transition border border-brand-200 dark:border-brand-700">
+                    <button type="button" onclick="openModal('quickAddModal')" class="min-h-[40px] sm:min-h-[44px] px-3 sm:px-3.5 py-2 rounded-lg bg-brand-50 hover:bg-brand-100 dark:bg-brand-900/40 dark:hover:bg-brand-900/60 text-brand-600 dark:text-brand-300 font-bold text-xs inline-flex items-center gap-1.5 transition border border-brand-200 dark:border-brand-700 shrink-0">
                         <i class="fa-solid fa-bolt"></i>
                         <span data-i18n="btnQuickAdd">快速記生字</span>
                     </button>
                 </div>
-                <div class="text-xs text-slate-400 font-medium"><span data-i18n="accuracyRate">精熟率:</span> <span id="quizScore" class="font-bold text-slate-700 dark:text-slate-200">0/0</span></div>
+                <div class="text-xs text-slate-400 font-medium whitespace-nowrap"><span data-i18n="accuracyRate">精熟率:</span> <span id="quizScore" class="font-bold text-slate-700 dark:text-slate-200">0/0</span></div>
             </div>
 
             <!-- 📍 測驗目標語言切換 -->
@@ -1080,7 +1117,7 @@
     </nav>
 
     <!-- 彈窗 1: 新增/編輯單字 Modal -->
-    <div id="cardModal" class="hidden fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+    <div id="cardModal" class="hidden fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 lzh-safe-modal">
         <div class="bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-2xl max-w-lg w-full p-6 space-y-5 shadow-2xl border border-slate-100 dark:border-slate-700 max-h-[90vh] overflow-y-auto">
             <div class="flex items-center justify-between border-b border-slate-100 dark:border-slate-700 pb-3">
                 <h3 id="cardModalTitle" class="text-lg font-bold" data-i18n="modalCardTitle">新增/編輯單字卡</h3>
@@ -1183,7 +1220,7 @@
     </div>
 
     <!-- 彈窗 2: 批量貼上與 AI 智慧解析 Modal -->
-    <div id="batchModal" class="hidden fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+    <div id="batchModal" class="hidden fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 lzh-safe-modal">
         <div class="bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-2xl max-w-3xl w-full p-6 space-y-5 shadow-2xl border border-slate-100 dark:border-slate-700 max-h-[92vh] flex flex-col">
             <div class="flex items-center justify-between border-b border-slate-100 dark:border-slate-700 pb-3 flex-shrink-0">
                 <div class="flex items-center space-x-2">
@@ -1280,7 +1317,7 @@
     </div>
 
     <!-- 彈窗 3: Groq & Gemini API Key Modal (雙軌優先順序 + 本機儲存) -->
-    <div id="keyModal" class="hidden fixed inset-0 z-[65] bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+    <div id="keyModal" class="hidden fixed inset-0 z-[65] bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 lzh-safe-modal">
         <div class="bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl border border-slate-100 dark:border-slate-700 max-h-[92vh] overflow-y-auto">
             <div class="flex items-center justify-between border-b border-slate-100 dark:border-slate-700 pb-3">
                 <div class="flex items-center space-x-2">
@@ -1343,7 +1380,7 @@
     </div>
 
     <!-- 彈窗 4: 字庫 JSON 備份與還原 Modal -->
-    <div id="backupModal" class="hidden fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+    <div id="backupModal" class="hidden fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 lzh-safe-modal">
         <div class="bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-2xl max-w-md w-full p-6 space-y-5 shadow-2xl border border-slate-100 dark:border-slate-700">
             <div class="flex items-center justify-between border-b border-slate-100 dark:border-slate-700 pb-3">
                 <div class="flex items-center space-x-2">
@@ -1379,7 +1416,7 @@
     </div>
 
     <!-- 彈窗 5: 智能多維度字庫拆分 Modal -->
-    <div id="splitModal" class="hidden fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+    <div id="splitModal" class="hidden fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 lzh-safe-modal">
         <div class="bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-2xl max-w-lg w-full p-6 space-y-4 shadow-2xl border border-slate-100 dark:border-slate-700 max-h-[90vh] overflow-y-auto">
             <div class="flex items-center justify-between border-b border-slate-100 dark:border-slate-700 pb-3">
                 <div class="flex items-center space-x-2 text-purple-700 dark:text-purple-300 font-bold">
@@ -1449,7 +1486,7 @@
     </div>
 
     <!-- 彈窗 6: ⚡ 快速記生字 Modal -->
-    <div id="quickAddModal" class="hidden fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+    <div id="quickAddModal" class="hidden fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 lzh-safe-modal">
         <div class="bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-2xl max-w-sm w-full p-5 space-y-4 shadow-2xl border border-slate-100 dark:border-slate-700">
             <div class="flex items-center justify-between border-b border-slate-100 dark:border-slate-700 pb-2.5">
                 <div class="flex items-center space-x-2 text-brand-600 dark:text-brand-400 font-bold text-sm">
@@ -1485,7 +1522,7 @@
     </div>
 
     <!-- 彈窗 7: 📤 發布字庫 Modal -->
-    <div id="publishModal" class="hidden fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+    <div id="publishModal" class="hidden fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 lzh-safe-modal">
         <div class="bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl border border-slate-100 dark:border-slate-700">
             <div class="flex justify-between items-center border-b border-slate-100 dark:border-slate-700 pb-3">
                 <h3 class="font-bold text-base text-slate-900 dark:text-white" data-i18n="modalPublishTitle">🚀 發布我的字庫至商店</h3>
@@ -1532,7 +1569,7 @@
     </div>
 
     <!-- 彈窗 8: 👤 作者作品集 Modal -->
-    <div id="authorModal" class="hidden fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+    <div id="authorModal" class="hidden fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 lzh-safe-modal">
         <div class="bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-4 border border-slate-100 dark:border-slate-700 max-h-[85vh] flex flex-col">
             <div class="flex justify-between items-center border-b border-slate-100 dark:border-slate-700 pb-3">
                 <div class="flex items-center space-x-3">
@@ -1550,7 +1587,7 @@
     </div>
 
     <!-- 浮動提示 Toast -->
-    <div id="toast-container" class="fixed top-5 right-5 z-[80] flex flex-col space-y-2 pointer-events-none"></div>
+    <div id="toast-container" class="fixed right-3 z-[80] flex flex-col space-y-2 pointer-events-none"></div>
 
     <!-- 💬 右側聊天室抽屜 (Drawer) -->
     <div id="chatDrawer" class="hidden fixed inset-0 z-50 overflow-hidden">
@@ -1700,7 +1737,7 @@
     </div>
 
     <!-- 🗑️ 聊天室刪除對話二次確認 Modal (z-[75]) -->
-    <div id="chatDeleteConfirmModal" class="hidden fixed inset-0 z-[75] bg-slate-950/65 backdrop-blur-xs flex items-center justify-center p-4" role="dialog" aria-modal="true" onclick="if(event.target===this && typeof closeChatDeleteConfirmModal==='function') closeChatDeleteConfirmModal()">
+    <div id="chatDeleteConfirmModal" class="hidden fixed inset-0 z-[75] bg-slate-950/65 backdrop-blur-xs flex items-center justify-center p-4 lzh-safe-modal" role="dialog" aria-modal="true" onclick="if(event.target===this && typeof closeChatDeleteConfirmModal==='function') closeChatDeleteConfirmModal()">
         <div class="bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-2xl max-w-sm w-full p-5 space-y-4 shadow-2xl border border-slate-200 dark:border-slate-700">
             <div class="flex items-center gap-3">
                 <div class="w-10 h-10 rounded-full bg-rose-100 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 flex items-center justify-center shrink-0">
@@ -1720,7 +1757,7 @@
     </div>
 
     <!-- 👥 僅限好友之群組／組隊邀請 Modal (z-[75]) -->
-    <div id="teamInviteFriendsModal" class="hidden fixed inset-0 z-[75] bg-slate-950/65 backdrop-blur-xs flex items-center justify-center p-4" role="dialog" aria-modal="true" onclick="if(event.target===this && typeof closeFriendOnlyInviteModal==='function') closeFriendOnlyInviteModal()">
+    <div id="teamInviteFriendsModal" class="hidden fixed inset-0 z-[75] bg-slate-950/65 backdrop-blur-xs flex items-center justify-center p-4 lzh-safe-modal" role="dialog" aria-modal="true" onclick="if(event.target===this && typeof closeFriendOnlyInviteModal==='function') closeFriendOnlyInviteModal()">
         <div class="bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-2xl max-w-md w-full p-5 space-y-4 shadow-2xl border border-slate-200 dark:border-slate-700 max-h-[82vh] flex flex-col">
             <div class="flex items-center justify-between border-b border-slate-100 dark:border-slate-700 pb-3 shrink-0">
                 <div class="min-w-0">
@@ -2240,14 +2277,14 @@
     </div>
 
     <!-- 🪪 跨模組玩家公開面板 Modal (z-[60]，確保可覆蓋於聊天室與商店之上) -->
-    <div id="playerProfileModal" class="hidden fixed inset-0 z-[60] bg-slate-900/65 backdrop-blur-xs flex items-center justify-center p-4" onclick="if(event.target===this) closeModal('playerProfileModal')">
+    <div id="playerProfileModal" class="hidden fixed inset-0 z-[60] bg-slate-900/65 backdrop-blur-xs flex items-center justify-center p-4 lzh-safe-modal" onclick="if(event.target===this) closeModal('playerProfileModal')">
         <div class="bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-2xl max-w-lg w-full shadow-2xl border border-slate-100 dark:border-slate-700 max-h-[88vh] overflow-y-auto">
             <div id="playerProfileBody"></div>
         </div>
     </div>
 
     <!-- 🧨 永久註銷帳號二次輸入確認 Modal (z-[70]，覆蓋設定抽屜與所有面板) -->
-    <div id="deleteAccountModal" class="hidden fixed inset-0 z-[70] bg-slate-950/75 backdrop-blur-xs flex items-center justify-center p-4" role="dialog" aria-modal="true" onclick="if(event.target===this && typeof closeDeleteAccountModal==='function') closeDeleteAccountModal()">
+    <div id="deleteAccountModal" class="hidden fixed inset-0 z-[70] bg-slate-950/75 backdrop-blur-xs flex items-center justify-center p-4 lzh-safe-modal" role="dialog" aria-modal="true" onclick="if(event.target===this && typeof closeDeleteAccountModal==='function') closeDeleteAccountModal()">
         <div class="bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl border border-rose-200 dark:border-rose-900">
             <div class="flex items-start justify-between gap-3">
                 <div class="flex items-center gap-2.5">
@@ -2474,7 +2511,7 @@
     </div>
 
     <!-- 🛍️ 彈窗 9: 商店字庫內容預覽 Modal -->
-    <div id="storePreviewModal" class="hidden fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+    <div id="storePreviewModal" class="hidden fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 lzh-safe-modal">
         <div class="bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-2xl max-w-2xl w-full p-6 space-y-4 shadow-2xl border border-slate-100 dark:border-slate-700 max-h-[85vh] flex flex-col">
             <div class="flex justify-between items-center border-b border-slate-100 dark:border-slate-700 pb-3 flex-shrink-0 gap-3">
                 <div class="min-w-0">
@@ -2503,14 +2540,14 @@
     </div>
 
     <!-- 🎮 彈窗 10: 單人競技場 / 60秒街機 / 深淵魔王 / 每日寶箱 Modal (z-[62]) -->
-    <div id="gameArenaModal" class="hidden fixed inset-0 z-[62] bg-slate-900/70 backdrop-blur-xs flex items-center justify-center p-4">
+    <div id="gameArenaModal" class="hidden fixed inset-0 z-[62] bg-slate-900/70 backdrop-blur-xs flex items-center justify-center p-4 lzh-safe-modal">
         <div class="bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-2xl max-w-lg w-full p-5 sm:p-6 shadow-2xl border border-slate-200 dark:border-slate-700 max-h-[90vh] overflow-y-auto">
             <div id="gameArenaBody"></div>
         </div>
     </div>
 
     <!-- ⚔️ 彈窗 11: 即時連線 1v1 拔河排位 / 幽靈競速 / 四人共鬥打王 Modal (z-[62]) -->
-    <div id="multiplayerModal" class="hidden fixed inset-0 z-[62] bg-slate-900/70 backdrop-blur-xs flex items-center justify-center p-4">
+    <div id="multiplayerModal" class="hidden fixed inset-0 z-[62] bg-slate-900/70 backdrop-blur-xs flex items-center justify-center p-4 lzh-safe-modal">
         <div class="bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-2xl max-w-xl w-full p-5 sm:p-6 space-y-4 shadow-2xl border border-slate-200 dark:border-slate-700 max-h-[90vh] flex flex-col">
             <div class="flex items-center justify-between border-b border-slate-100 dark:border-slate-700 pb-3 flex-shrink-0">
                 <h3 id="multiplayerModalTitle" class="text-base font-extrabold text-slate-900 dark:text-white flex items-center">
@@ -2525,7 +2562,7 @@
     </div>
 
     <!-- 🛡️ 全域自訂確認視窗 Modal (取代原生 confirm(), z-[85]) -->
-    <div id="lzhConfirmModal" class="hidden fixed inset-0 z-[85] bg-slate-950/70 backdrop-blur-xs items-center justify-center p-4" role="alertdialog" aria-modal="true" aria-labelledby="lzhConfirmTitle" aria-describedby="lzhConfirmMessage">
+    <div id="lzhConfirmModal" class="hidden fixed inset-0 z-[85] bg-slate-950/70 backdrop-blur-xs items-center justify-center p-4 lzh-safe-modal" role="alertdialog" aria-modal="true" aria-labelledby="lzhConfirmTitle" aria-describedby="lzhConfirmMessage">
         <div class="bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-2xl max-w-md w-full p-5 shadow-2xl border border-slate-200 dark:border-slate-700 space-y-4">
             <div class="flex items-start gap-3">
                 <div class="w-10 h-10 rounded-xl bg-amber-100 dark:bg-amber-950/60 text-amber-600 dark:text-amber-300 flex items-center justify-center shrink-0">

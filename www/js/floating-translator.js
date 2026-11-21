@@ -39,6 +39,35 @@
         return hasGroq || hasLocalGeminiKey();
     }
 
+    let cachedEnvInsets = null;
+    function getEffectiveSafeInsets() {
+        try {
+            if (document.documentElement && document.documentElement.getAttribute('data-widget-mode') === 'desktop') {
+                return { top: 0, bottom: 0 };
+            }
+            if (!cachedEnvInsets) {
+                const probe = document.createElement('div');
+                probe.style.cssText = 'position:fixed;top:0;left:0;width:0;height:0;visibility:hidden;pointer-events:none;padding-top:var(--lzh-effective-top, env(safe-area-inset-top, 0px));padding-bottom:var(--lzh-effective-bottom, env(safe-area-inset-bottom, 0px));';
+                const host = document.body || document.documentElement;
+                if (host) {
+                    host.appendChild(probe);
+                    const cs = getComputedStyle(probe);
+                    cachedEnvInsets = {
+                        top: Math.max(0, Math.round(parseFloat(cs.paddingTop) || 0)),
+                        bottom: Math.max(0, Math.round(parseFloat(cs.paddingBottom) || 0))
+                    };
+                    probe.remove();
+                }
+            }
+            if (cachedEnvInsets) return cachedEnvInsets;
+        } catch (e) {}
+        return { top: 0, bottom: 0 };
+    }
+    if (typeof global.addEventListener === 'function') {
+        global.addEventListener('resize', () => { cachedEnvInsets = null; });
+        global.addEventListener('orientationchange', () => { cachedEnvInsets = null; });
+    }
+
     const DEFAULT_NATIVE_LANG = 'zh-TW';
     const SUPPORTED_NATIVE_LANGS = {
         'zh-TW': { code: 'zh-TW', label: '繁體中文', short: '繁中', speechLang: 'zh-TW', aiName: 'Traditional Chinese (繁體中文)' },
@@ -1275,10 +1304,13 @@
     function positionBubbleNearRect(bubbleEl, anchorRect, preferAbove = false) {
         const vw = global.innerWidth || document.documentElement.clientWidth || 375;
         const vh = global.innerHeight || document.documentElement.clientHeight || 667;
+        const insets = getEffectiveSafeInsets();
+        const minTop = Math.max(12, insets.top + 8);
+        const bottomSafe = Math.max(12, insets.bottom + 8);
         const bw = Math.min(288, vw - 24);
 
         let left = vw / 2 - bw / 2;
-        let top = vh * 0.25;
+        let top = Math.max(minTop, vh * 0.25);
 
         if (anchorRect) {
             const centerX = anchorRect.left + (anchorRect.width || 0) / 2;
@@ -1286,14 +1318,14 @@
             const estimatedHeight = bubbleEl.offsetHeight || 156;
             if (preferAbove) {
                 top = anchorRect.top - estimatedHeight - 10;
-                if (top < 56) top = anchorRect.bottom + 10;
+                if (top < minTop) top = anchorRect.bottom + 10;
             } else {
                 top = anchorRect.bottom + 10;
-                if (top + estimatedHeight > vh - 16) {
-                    top = Math.max(56, anchorRect.top - estimatedHeight - 10);
+                if (top + estimatedHeight > vh - bottomSafe) {
+                    top = Math.max(minTop, anchorRect.top - estimatedHeight - 10);
                 }
             }
-            top = clamp(top, 56, Math.max(56, vh - estimatedHeight - 12));
+            top = clamp(top, minTop, Math.max(minTop, vh - estimatedHeight - bottomSafe));
         }
 
         bubbleEl.style.width = `${bw}px`;
@@ -1404,7 +1436,7 @@
             selectionBarEl = document.createElement('div');
             selectionBarEl.id = 'ftSelectionFloatingBar';
             selectionBarEl.className = 'hidden fixed z-[55] left-1/2 -translate-x-1/2 w-[min(94vw,520px)] bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-2xl border border-emerald-300 dark:border-emerald-700 shadow-2xl p-3 space-y-2';
-            selectionBarEl.style.bottom = 'calc(5rem + env(safe-area-inset-bottom, 0px))';
+            selectionBarEl.style.bottom = 'calc(5rem + var(--lzh-effective-bottom, env(safe-area-inset-bottom, 0px)))';
             document.body.appendChild(selectionBarEl);
         }
 
@@ -1894,8 +1926,8 @@
         const modal = document.createElement('div');
         modal.id = 'ftPhotoFullscreenModal';
         modal.className = 'hidden fixed inset-0 z-[72] bg-slate-950/95 text-white flex flex-col select-none';
-        modal.style.paddingTop = 'calc(env(safe-area-inset-top, 0px) + 12px)';
-        modal.style.paddingBottom = 'calc(env(safe-area-inset-bottom, 0px) + 12px)';
+        modal.style.paddingTop = 'calc(var(--lzh-effective-top, env(safe-area-inset-top, 0px)) + 12px)';
+        modal.style.paddingBottom = 'calc(var(--lzh-effective-bottom, env(safe-area-inset-bottom, 0px)) + 12px)';
         modal.style.paddingLeft = 'env(safe-area-inset-left, 0px)';
         modal.style.paddingRight = 'env(safe-area-inset-right, 0px)';
         document.body.appendChild(modal);
@@ -2727,7 +2759,7 @@
                 display: flex;
                 flex-direction: column;
                 gap: 10px;
-                padding: calc(env(safe-area-inset-top, 0px) + 12px) calc(env(safe-area-inset-right, 0px) + 12px) calc(env(safe-area-inset-bottom, 0px) + 12px) calc(env(safe-area-inset-left, 0px) + 12px);
+                padding: calc(var(--lzh-effective-top, env(safe-area-inset-top, 0px)) + 12px) calc(env(safe-area-inset-right, 0px) + 12px) calc(var(--lzh-effective-bottom, env(safe-area-inset-bottom, 0px)) + 12px) calc(env(safe-area-inset-left, 0px) + 12px);
                 color: #f8fafc;
             }
             .ft-crop-modal.hidden { display: none !important; }
@@ -4315,18 +4347,20 @@
         if (!subtitleOverlayEl) return;
         const vw = global.innerWidth || document.documentElement.clientWidth || 375;
         const vh = global.innerHeight || document.documentElement.clientHeight || 667;
+        const insets = getEffectiveSafeInsets();
+        const minTop = Math.max(48, insets.top + 8);
         const w = Math.min(640, vw - 24);
         subtitleOverlayEl.style.width = `${w}px`;
         if (Number.isFinite(subtitleOverlayPos.leftPx) && Number.isFinite(subtitleOverlayPos.topPx)) {
             const maxL = Math.max(12, vw - w - 12);
-            const maxT = Math.max(48, vh - 110);
+            const maxT = Math.max(minTop, vh - 110 - insets.bottom);
             subtitleOverlayEl.style.left = `${clamp(subtitleOverlayPos.leftPx, 12, maxL)}px`;
-            subtitleOverlayEl.style.top = `${clamp(subtitleOverlayPos.topPx, 48, maxT)}px`;
+            subtitleOverlayEl.style.top = `${clamp(subtitleOverlayPos.topPx, minTop, maxT)}px`;
             subtitleOverlayEl.style.bottom = 'auto';
             subtitleOverlayEl.style.transform = 'none';
         } else {
             subtitleOverlayEl.style.left = `${Math.round((vw - w) / 2)}px`;
-            subtitleOverlayEl.style.top = `${Math.max(56, vh - 170)}px`;
+            subtitleOverlayEl.style.top = `${Math.max(minTop, vh - 170 - insets.bottom)}px`;
             subtitleOverlayEl.style.bottom = 'auto';
             subtitleOverlayEl.style.transform = 'none';
         }
@@ -4358,10 +4392,13 @@
             if (!dragging) return;
             const vw = global.innerWidth || 375;
             const vh = global.innerHeight || 667;
+            const insets = getEffectiveSafeInsets();
+            const minTop = Math.max(36, insets.top + 8);
+            const bottomPad = Math.max(8, insets.bottom + 8);
             const w = el.offsetWidth || 320;
             const h = el.offsetHeight || 88;
             const nl = clamp(sl + (e.clientX - sx), 8, Math.max(8, vw - w - 8));
-            const nt = clamp(st + (e.clientY - sy), 36, Math.max(36, vh - h - 8));
+            const nt = clamp(st + (e.clientY - sy), minTop, Math.max(minTop, vh - h - bottomPad));
             el.style.left = `${nl}px`;
             el.style.top = `${nt}px`;
             subtitleOverlayPos.leftPx = Math.round(nl);
@@ -4678,9 +4715,12 @@
         ballEl.classList.remove('hidden');
         const vw = global.innerWidth || document.documentElement.clientWidth || 375;
         const vh = global.innerHeight || document.documentElement.clientHeight || 667;
+        const insets = getEffectiveSafeInsets();
         const ballSize = 52;
         const margin = 12;
-        const safeTop = clamp(posState.topPx !== null ? posState.topPx : Math.round(vh * 0.68), 68, Math.max(80, vh - ballSize - 24));
+        const minTop = Math.max(68, insets.top + 10);
+        const maxBottomMargin = Math.max(24, insets.bottom + 16);
+        const safeTop = clamp(posState.topPx !== null ? posState.topPx : Math.round(vh * 0.68), minTop, Math.max(minTop, vh - ballSize - maxBottomMargin));
         posState.topPx = safeTop;
         const leftPx = posState.dockSide === 'left' ? margin : Math.max(margin, vw - ballSize - margin);
 
@@ -4716,21 +4756,23 @@
         }
         const vw = global.innerWidth || document.documentElement.clientWidth || 375;
         const vh = global.innerHeight || document.documentElement.clientHeight || 667;
+        const insets = getEffectiveSafeInsets();
 
         const isTabletImageExpanded = Boolean(isImageModeActive && vw >= 600);
         if (isTabletImageExpanded) {
+            const safeAvailH = Math.max(260, vh - insets.top - insets.bottom);
             const tabW = Math.round(vw * 0.82);
-            const tabH = Math.round(vh * 0.80);
+            const tabH = Math.round(safeAvailH * 0.82);
             panelHostEl.style.width = `${tabW}px`;
             panelHostEl.style.height = `${tabH}px`;
             panelHostEl.style.maxHeight = `${tabH}px`;
             panelHostEl.style.left = `${Math.max(0, Math.round((vw - tabW) / 2))}px`;
-            panelHostEl.style.top = `${Math.max(0, Math.round((vh - tabH) / 2))}px`;
+            panelHostEl.style.top = `${Math.max(insets.top + 8, Math.round(insets.top + (safeAvailH - tabH) / 2))}px`;
             panelHostEl.style.right = 'auto';
             panelHostEl.style.bottom = 'auto';
             return;
         }
-        panelHostEl.style.maxHeight = '';
+        panelHostEl.style.maxHeight = `calc(100vh - var(--lzh-effective-top, 0px) - var(--lzh-effective-bottom, 0px) - 24px)`;
 
         const panelW = vw < 450 ? Math.min(410, Math.max(272, vw - 20)) : 410;
         panelHostEl.style.width = `${panelW}px`;
@@ -4738,14 +4780,15 @@
         panelHostEl.style.bottom = 'auto';
 
         const measuredW = panelHostEl.offsetWidth || panelW;
-        const measuredH = panelHostEl.offsetHeight || Math.min(540, vh - 32);
+        const measuredH = panelHostEl.offsetHeight || Math.min(540, Math.max(240, vh - insets.top - insets.bottom - 32));
         const marginX = vw < 450 ? 10 : 12;
-        const minTop = 12;
+        const minTop = Math.max(12, insets.top + 8);
+        const bottomMargin = Math.max(12, insets.bottom + 8);
         const maxLeft = Math.max(marginX, vw - measuredW - marginX);
-        const maxTop = Math.max(minTop, vh - measuredH - 12);
+        const maxTop = Math.max(minTop, vh - measuredH - bottomMargin);
 
         const defaultLeft = posState.dockSide === 'left' ? marginX : Math.max(marginX, vw - measuredW - marginX);
-        const defaultTop = clamp((posState.topPx || Math.round(vh * 0.65)) - Math.round(measuredH * 0.6), 56, maxTop);
+        const defaultTop = clamp((posState.topPx || Math.round(vh * 0.65)) - Math.round(measuredH * 0.6), Math.max(56, minTop), maxTop);
         const targetLeft = clamp(posState.panelLeftPx !== null ? posState.panelLeftPx : defaultLeft, marginX, maxLeft);
         const targetTop = clamp(posState.panelTopPx !== null ? posState.panelTopPx : defaultTop, minTop, maxTop);
 
@@ -4967,8 +5010,11 @@
 
             const vw = global.innerWidth || 375;
             const vh = global.innerHeight || 667;
+            const insets = getEffectiveSafeInsets();
+            const minTop = Math.max(58, insets.top + 8);
+            const maxTop = Math.max(minTop, vh - 68 - insets.bottom);
             const nextLeft = clamp(startLeft + dx, 6, vw - 58);
-            const nextTop = clamp(startTop + dy, 58, vh - 68);
+            const nextTop = clamp(startTop + dy, minTop, maxTop);
             ballEl.style.left = `${nextLeft}px`;
             ballEl.style.top = `${nextTop}px`;
         });
@@ -5091,10 +5137,13 @@
                 }
                 const vw = global.innerWidth || document.documentElement.clientWidth || 1024;
                 const vh = global.innerHeight || document.documentElement.clientHeight || 768;
+                const insets = getEffectiveSafeInsets();
+                const minTop = Math.max(12, insets.top + 8);
+                const bottomPad = Math.max(12, insets.bottom + 8);
                 const panelW = panelHostEl.offsetWidth || 320;
                 const panelH = panelHostEl.offsetHeight || 360;
                 const nextL = clamp(sL + (e.clientX - sX), 8, Math.max(8, vw - panelW - 8));
-                const nextT = clamp(sT + (e.clientY - sY), 12, Math.max(12, vh - panelH - 12));
+                const nextT = clamp(sT + (e.clientY - sY), minTop, Math.max(minTop, vh - panelH - bottomPad));
                 panelHostEl.style.left = `${nextL}px`;
                 panelHostEl.style.top = `${nextT}px`;
                 posState.panelLeftPx = Math.round(nextL);
@@ -6592,16 +6641,30 @@
         const plugin = getIosNativeScreenPlugin();
         if (!plugin || typeof plugin.saveConfig !== 'function') return false;
         const authToken = await getFirebaseIdTokenSafe();
-        const fallbackGeminiKey = (iosScreenConfig.customApiKey || localStorage.getItem('flashcard_gemini_key_v1') || '').trim();
+        const groqKey = (localStorage.getItem('lzhcard_groq_key_v1') || '').trim();
+        const geminiKey = (localStorage.getItem('flashcard_gemini_key_v1') || '').trim();
+        const effectiveKey = (iosScreenConfig.customApiKey || groqKey || geminiKey || '').trim();
+        let resolvedProvider = 'worker';
+        let resolvedModel = 'gemini-2.0-flash';
+        if (effectiveKey.startsWith('gsk_')) {
+            resolvedProvider = 'groq';
+            resolvedModel = 'llama-3.1-8b-instant';
+        } else if (effectiveKey.startsWith('AIza')) {
+            resolvedProvider = 'gemini';
+            resolvedModel = 'gemini-2.0-flash';
+        }
         await plugin.saveConfig({
             engine: iosScreenConfig.engine,
             sourceLang: iosScreenConfig.sourceLang || 'en',
             targetLang: 'zh-Hant',
-            apiKey: fallbackGeminiKey,
+            provider: resolvedProvider,
+            model: resolvedModel,
+            apiKey: effectiveKey,
             workerBaseUrl: SHARED_WORKER_BASE,
             authToken,
             regionMode: iosScreenConfig.regionMode || 'auto',
-            region: iosScreenConfig.region
+            region: iosScreenConfig.region,
+            cropRect: iosScreenConfig.region
         });
         return true;
     }
@@ -6611,7 +6674,7 @@
         iosScreenModalEl = document.createElement('div');
         iosScreenModalEl.id = 'ftIosScreenTranslateModal';
         iosScreenModalEl.className = 'hidden fixed inset-0 z-[85] bg-slate-950/70 backdrop-blur-xs flex items-end sm:items-center justify-center lzh-safe-modal';
-        iosScreenModalEl.style.padding = 'calc(env(safe-area-inset-top, 0px) + 12px) calc(env(safe-area-inset-right, 0px) + 12px) calc(env(safe-area-inset-bottom, 0px) + 12px) calc(env(safe-area-inset-left, 0px) + 12px)';
+        iosScreenModalEl.style.padding = 'calc(var(--lzh-effective-top, env(safe-area-inset-top, 0px)) + 12px) calc(env(safe-area-inset-right, 0px) + 12px) calc(var(--lzh-effective-bottom, env(safe-area-inset-bottom, 0px)) + 12px) calc(env(safe-area-inset-left, 0px) + 12px)';
         iosScreenModalEl.onclick = (e) => {
             if (e.target === iosScreenModalEl) closeIosScreenTranslateModal();
         };
@@ -6772,13 +6835,14 @@
                         </div>
                     ` : `
                         <div class="space-y-3">
-                            <div class="p-3 rounded-2xl bg-slate-900 text-white border border-slate-700 space-y-2">
-                                <div class="text-[10.5px] font-bold text-slate-400 flex items-center justify-between">
-                                    <span>子母畫面字幕浮窗預覽（340×96 pt · 純中文字幕）</span>
-                                    <span class="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300">${iosPipActive ? 'LIVE' : 'READY'}</span>
+                            <div class="p-3.5 rounded-2xl bg-slate-950 text-white border-2 border-dashed border-emerald-400/75 shadow-inner space-y-2.5">
+                                <div class="text-[10.5px] font-bold text-slate-300 flex items-center justify-between gap-2">
+                                    <span>即時字幕預覽框（真實可見原生 PiP 容器）</span>
+                                    <span class="px-2 py-0.5 rounded-full text-[10px] font-extrabold ${iosPipActive ? 'bg-emerald-500/25 text-emerald-300 border border-emerald-400/40' : 'bg-indigo-500/25 text-indigo-200 border border-indigo-400/40'}">${iosPipActive ? 'PiP 運作中' : '就緒可抽出'}</span>
                                 </div>
-                                <div class="py-3 px-4 rounded-xl bg-slate-950/90 border border-white/15 text-center text-sm font-extrabold">
-                                    這裡會即時顯示極簡繁體中文翻譯結果
+                                <div class="py-3.5 px-4 rounded-xl bg-slate-900/95 border border-white/10 text-center space-y-1">
+                                    <div class="text-sm font-black text-white">${iosPipActive ? '子母畫面已浮動置頂顯示中' : 'LZHCard 螢幕翻譯就緒，請點選開始廣播'}</div>
+                                    <div class="text-[11px] font-semibold text-emerald-300/90">廣播啟動後將自動以純繁體中文字幕覆寫更新</div>
                                 </div>
                             </div>
 
@@ -7037,7 +7101,7 @@
                     return;
                 }
                 try {
-                    const initText = 'LZHCard 螢幕翻譯就緒 · 請點選開始廣播';
+                    const initText = 'LZHCard 螢幕翻譯就緒，請點選開始廣播';
                     if (typeof plugin.startScreenTranslate === 'function') {
                         await plugin.startScreenTranslate({ initialText: initText });
                     } else {

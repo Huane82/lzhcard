@@ -614,8 +614,22 @@
 
         const winW = window.innerWidth || 375;
         const winH = window.innerHeight || 667;
-        const safeMarginTop = 16;
-        const safeMarginBottom = 20;
+        let effTop = 0;
+        let effBottom = 0;
+        try {
+            const rootStyle = window.getComputedStyle(document.documentElement);
+            const rawTop = parseFloat(rootStyle.getPropertyValue('--lzh-safe-top')) || 0;
+            const rawBottom = parseFloat(rootStyle.getPropertyValue('--lzh-safe-bottom')) || 0;
+            const probe = document.createElement('div');
+            probe.style.cssText = 'position:fixed;top:0;left:0;width:0;height:0;visibility:hidden;pointer-events:none;padding-top:var(--lzh-effective-top, env(safe-area-inset-top, 0px));padding-bottom:var(--lzh-effective-bottom, env(safe-area-inset-bottom, 0px));';
+            document.body.appendChild(probe);
+            const ps = window.getComputedStyle(probe);
+            effTop = Math.max(rawTop, parseFloat(ps.paddingTop) || 0);
+            effBottom = Math.max(rawBottom, parseFloat(ps.paddingBottom) || 0);
+            probe.remove();
+        } catch (e) {}
+        const safeMarginTop = Math.max(16, Math.round(effTop + 12));
+        const safeMarginBottom = Math.max(20, Math.round(effBottom + 14));
 
         if (step.openSettings && step.targetId && typeof global.expandSettingsAccordionForElement === 'function') {
             const rawTarget = document.getElementById(step.targetId);

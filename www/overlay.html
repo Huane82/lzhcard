@@ -4,8 +4,49 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>LZHCard 跨 App 三語懸浮翻譯 & 聊天</title>
+  <script>
+    (function initOverlaySafeAreaVars() {
+      function updateOverlaySafeVars() {
+        var root = document.documentElement;
+        if (!root) return;
+        var ua = navigator.userAgent || '';
+        var isCapIos = Boolean(window.Capacitor && typeof window.Capacitor.getPlatform === 'function' && String(window.Capacitor.getPlatform() || '').toLowerCase() === 'ios');
+        var isIosDevice = isCapIos || /iPhone|iPad|iPod/i.test(ua) || (navigator.platform === 'MacIntel' && (navigator.maxTouchPoints || 0) > 1);
+        var envTop = 0;
+        var envBottom = 0;
+        if (document.body) {
+          var probe = document.createElement('div');
+          probe.style.cssText = 'position:fixed;visibility:hidden;pointer-events:none;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);';
+          document.body.appendChild(probe);
+          var cs = window.getComputedStyle(probe);
+          envTop = parseFloat(cs.paddingTop) || 0;
+          envBottom = parseFloat(cs.paddingBottom) || 0;
+          probe.remove();
+        }
+        var isPortrait = (window.innerHeight || 0) >= (window.innerWidth || 0);
+        var maxScreenDim = Math.max(window.screen ? window.screen.width : 0, window.screen ? window.screen.height : 0);
+        var isNotchedIphone = /iPhone/i.test(ua) && maxScreenDim >= 812;
+        var fallbackTop = (isIosDevice && envTop < 1 && isPortrait && isNotchedIphone) ? 54 : 0;
+        var fallbackBottom = (isIosDevice && envBottom < 1 && isNotchedIphone) ? (isPortrait ? 24 : 16) : 0;
+        root.style.setProperty('--lzh-safe-top', fallbackTop + 'px');
+        root.style.setProperty('--lzh-safe-bottom', fallbackBottom + 'px');
+      }
+      updateOverlaySafeVars();
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', updateOverlaySafeVars);
+      }
+      window.addEventListener('resize', updateOverlaySafeVars);
+      window.addEventListener('orientationchange', function () {
+        setTimeout(updateOverlaySafeVars, 80);
+      });
+    })();
+  </script>
   <style>
     :root {
+      --lzh-safe-top: 0px;
+      --lzh-safe-bottom: 0px;
+      --lzh-effective-top: max(env(safe-area-inset-top, 0px), var(--lzh-safe-top, 0px));
+      --lzh-effective-bottom: max(env(safe-area-inset-bottom, 0px), var(--lzh-safe-bottom, 0px));
       --bg: #ffffff;
       --surface: #f8fafc;
       --surface-2: #f1f5f9;
@@ -85,8 +126,8 @@
       max-height: none !important;
       inset: 0 !important;
       border-radius: 0 !important;
-      padding-top: calc(env(safe-area-inset-top, 0px) + 12px);
-      padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 12px);
+      padding-top: calc(var(--lzh-effective-top) + 12px);
+      padding-bottom: calc(var(--lzh-effective-bottom) + 12px);
     }
     .panel.ft-fullscreen .body {
       max-height: calc(100vh - 116px);
@@ -621,7 +662,7 @@
       align-items: center;
       justify-content: space-between;
       gap: 8px;
-      padding: calc(env(safe-area-inset-top, 0px) + 12px) 12px 10px;
+      padding: calc(var(--lzh-effective-top) + 12px) 12px 10px;
       background: rgba(15, 23, 42, 0.94);
       border-bottom: 1px solid rgba(148, 163, 184, 0.25);
       flex-shrink: 0;
@@ -678,7 +719,7 @@
       border-color: #6366f1;
     }
     .freeze-footer {
-      padding: 10px 12px calc(env(safe-area-inset-bottom, 0px) + 12px);
+      padding: 10px 12px calc(var(--lzh-effective-bottom) + 12px);
       background: rgba(15, 23, 42, 0.94);
       border-top: 1px solid rgba(16, 185, 129, 0.35);
       display: flex;
@@ -699,7 +740,7 @@
       color: #f8fafc;
       display: flex;
       flex-direction: column;
-      padding: calc(env(safe-area-inset-top, 0px) + 12px) 12px calc(env(safe-area-inset-bottom, 0px) + 12px);
+      padding: calc(var(--lzh-effective-top) + 12px) 12px calc(var(--lzh-effective-bottom) + 12px);
       gap: 8px;
     }
     .ov-crop-toolbar {
