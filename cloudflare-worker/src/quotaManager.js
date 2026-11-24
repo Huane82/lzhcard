@@ -70,10 +70,172 @@ export function extractBearerToken(request) {
   return authHeader.slice(7).trim();
 }
 
+const FIREBASE_X509_CERTS_URL = "https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com";
+const firebaseCertCache = {
+  expiresAtMs: 0,
+  keysByKid: new Map()
+};
+
+function base64UrlToUint8Array(b64u) {
+  const clean = String(b64u || "").replace(/-/g, "+").replace(/_/g, "/");
+  const padLen = (4 - (clean.length % 4)) % 4;
+  const padded = clean + "=".repeat(padLen);
+  const bin = atob(padded);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) {
+    out[i] = bin.charCodeAt(i);
+  }
+  return out;
+}
+
+function decodeJwtJsonPart(b64u) {
+  const bytes = base64UrlToUint8Array(b64u);
+  const text = new TextDecoder().decode(bytes);
+  return JSON.parse(text);
+}
+
+function readDerTlv(buf, offset) {
+  if (offset >= buf.length) throw new Error("DER overflow");
+  const tag = buf[offset];
+  let pos = offset + 1;
+  let len = buf[pos++];
+  if (len === undefined) throw new Error("DER truncated");
+  if (len & 0x80) {
+    const count = len & 0x7f;
+    if (count === 0 || count > 4 || pos + count > buf.length) {
+      throw new Error("Invalid DER length");
+    }
+    len = 0;
+    for (let i = 0; i < count; i++) {
+      len = (len << 8) | buf[pos++];
+    }
+  }
+  const end = pos + len;
+  if (end > buf.length) throw new Error("DER length out of bounds");
+  return { tag, start: offset, valueStart: pos, end };
+}
+
+function extractSpkiFromX509Pem(pem) {
+  const b64 = String(pem || "")
+    .replace(/-----[^-]+-----/g, "")
+    .replace(/\s+/g, "");
+  const bin = atob(b64);
+  const buf = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) {
+    buf[i] = bin.charCodeAt(i);
+  }
+  const cert = readDerTlv(buf, 0);
+  const tbs = readDerTlv(buf, cert.valueStart);
+  let p = tbs.valueStart;
+  const first = readDerTlv(buf, p);
+  if (first.tag === 0xa0) {
+    p = first.end;
+  }
+  for (let i = 0; i < 5; i++) {
+    const el = readDerTlv(buf, p);
+    p = el.end;
+  }
+  const spki = readDerTlv(buf, p);
+  return buf.slice(spki.start, spki.end);
+}
+
+async function getFirebasePublicKey(kid, forceRefresh = false) {
+  if (!kid) return null;
+  const nowMs = Date.now();
+  if (!forceRefresh && firebaseCertCache.expiresAtMs > nowMs && firebaseCertCache.keysByKid.has(kid)) {
+    return firebaseCertCache.keysByKid.get(kid);
+  }
+
+  const res = await fetch(FIREBASE_X509_CERTS_URL);
+  if (!res.ok) return null;
+  const certsMap = await res.json();
+  if (!certsMap || typeof certsMap !== "object") return null;
+
+  let maxAgeSec = 3600;
+  const cc = res.headers.get("cache-control") || "";
+  const m = cc.match(/max-age=(\d+)/i);
+  if (m) {
+    const parsed = Number(m[1]);
+    if (Number.isFinite(parsed) && parsed > 0) maxAgeSec = parsed;
+  }
+
+  const nextKeys = new Map();
+  for (const [certKid, pem] of Object.entries(certsMap)) {
+    try {
+      const spki = extractSpkiFromX509Pem(pem);
+      const cryptoKey = await crypto.subtle.importKey(
+        "spki",
+        spki,
+        { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+        false,
+        ["verify"]
+      );
+      nextKeys.set(certKid, cryptoKey);
+    } catch (e) {}
+  }
+
+  firebaseCertCache.keysByKid = nextKeys;
+  firebaseCertCache.expiresAtMs = nowMs + maxAgeSec * 1000;
+  return nextKeys.get(kid) || null;
+}
+
 export async function verifyFirebaseToken(idToken) {
   if (!idToken) return null;
+  const cleanToken = String(idToken).trim();
+  const parts = cleanToken.split(".");
+
+  if (parts.length === 3) {
+    try {
+      const header = decodeJwtJsonPart(parts[0]);
+      const payload = decodeJwtJsonPart(parts[1]);
+      const expectedIss = `https://securetoken.google.com/${FIREBASE_PROJECT_ID}`;
+
+      if (payload && payload.iss === expectedIss) {
+        const nowSec = Math.floor(Date.now() / 1000);
+        const uid = typeof payload.sub === "string" ? payload.sub.trim() : "";
+        const exp = Number(payload.exp) || 0;
+        const iat = Number(payload.iat) || 0;
+        const authTime = Number(payload.auth_time) || 0;
+
+        if (
+          header?.alg !== "RS256" ||
+          !header?.kid ||
+          payload.aud !== FIREBASE_PROJECT_ID ||
+          !uid ||
+          uid.length > 128 ||
+          exp <= nowSec - 60 ||
+          iat > nowSec + 300 ||
+          (authTime > 0 && authTime > nowSec + 300)
+        ) {
+          return null;
+        }
+
+        let publicKey = await getFirebasePublicKey(header.kid, false);
+        if (!publicKey) {
+          publicKey = await getFirebasePublicKey(header.kid, true);
+        }
+        if (!publicKey) return null;
+
+        const sigBytes = base64UrlToUint8Array(parts[2]);
+        const signingInput = new TextEncoder().encode(`${parts[0]}.${parts[1]}`);
+        const validSig = await crypto.subtle.verify(
+          "RSASSA-PKCS1-v1_5",
+          publicKey,
+          sigBytes,
+          signingInput
+        );
+        if (!validSig) return null;
+
+        return { uid, email: typeof payload.email === "string" ? payload.email : "" };
+      }
+    } catch (e) {
+      return null;
+    }
+  }
+
+  // Fallback for Google OAuth2 ID tokens or mocked non-Firebase tokens
   try {
-    const res = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(idToken)}`);
+    const res = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(cleanToken)}`);
     if (!res.ok) return null;
     const data = await res.json();
     const uid = String(data.user_id || data.sub || "").trim();

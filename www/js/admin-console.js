@@ -25,9 +25,14 @@
     ];
 
     let activeTab = 'players'; // 'players' | 'appeals' | 'season'
+    let allPlayersList = [];
     let playersList = [];
+    let playerSearchQuery = '';
+    let playerSortBy = 'rankPoints';
+    let playersLoadError = '';
     let selectedPlayer = null;
     let appealsList = [];
+    let appealsLoadError = '';
     let seasonState = {
         seasonNumber: 1,
         lastResetAt: 0,
@@ -69,32 +74,44 @@
         return Boolean(u && (u.role === 'admin' || u.isAdmin === true));
     }
 
-    async function getFirebaseToken() {
+    async function getFirebaseToken(forceRefresh = false) {
         try {
             if (typeof firebase !== 'undefined' && firebase.auth && firebase.auth().currentUser) {
-                return await firebase.auth().currentUser.getIdToken();
+                return await firebase.auth().currentUser.getIdToken(forceRefresh);
             }
         } catch (e) {}
         return '';
     }
 
     async function adminApiFetch(path, options = {}) {
-        const token = await getFirebaseToken();
+        let token = await getFirebaseToken(false);
         if (!token) {
             throw new Error('請先登入管理員帳號');
         }
-        const headers = {
-            ...(options.headers || {}),
-            Authorization: `Bearer ${token}`
+
+        const executeRequest = async (authToken) => {
+            const headers = {
+                ...(options.headers || {}),
+                Authorization: `Bearer ${authToken}`
+            };
+            if (options.body && !headers['Content-Type']) {
+                headers['Content-Type'] = 'application/json';
+            }
+            return await fetch(`${getWorkerBase()}${path}`, {
+                method: options.method || 'GET',
+                headers,
+                body: options.body ? JSON.stringify(options.body) : undefined
+            });
         };
-        if (options.body && !headers['Content-Type']) {
-            headers['Content-Type'] = 'application/json';
+
+        let res = await executeRequest(token);
+        if (res.status === 401) {
+            const refreshed = await getFirebaseToken(true);
+            if (refreshed && refreshed !== token) {
+                res = await executeRequest(refreshed);
+            }
         }
-        const res = await fetch(`${getWorkerBase()}${path}`, {
-            method: options.method || 'GET',
-            headers,
-            body: options.body ? JSON.stringify(options.body) : undefined
-        });
+
         let data = {};
         try {
             data = await res.json();
@@ -153,12 +170,18 @@
         const modal = document.getElementById('adminConsoleModal');
         if (!modal) return false;
 
+        activeTab = 'players';
+        selectedPlayer = null;
+        playerSearchQuery = '';
+        playerSortBy = 'rankPoints';
+        playersLoadError = '';
+
         modal.classList.remove('hidden');
         modal.classList.add('flex');
 
         renderAdminTabs();
         await Promise.all([
-            fetchPlayersList(),
+            fetchPlayersList({ resetFilter: true }),
             fetchSeasonState()
         ]);
         renderAdminBody();
@@ -178,7 +201,12 @@
         selectedPlayer = null;
         renderAdminTabs();
         if (activeTab === 'players') {
-            fetchPlayersList().then(renderAdminBody);
+            if (allPlayersList.length === 0) {
+                fetchPlayersList().then(renderAdminBody);
+            } else {
+                applyClientFilterAndSort();
+                renderAdminBody();
+            }
         } else if (activeTab === 'appeals') {
             fetchAppealsList().then(renderAdminBody);
         } else {
@@ -203,22 +231,79 @@
         });
     }
 
-    async function fetchPlayersList() {
-        const q = (document.getElementById('adminPlayerSearchInput')?.value || '').trim();
-        const sort = (document.getElementById('adminPlayerSortSelect')?.value || 'rankPoints').trim();
+    function applyClientFilterAndSort() {
+        const q = String(playerSearchQuery || '').trim().toLowerCase();
+        const sortBy = String(playerSortBy || 'rankPoints').trim();
+
+        let filtered = allPlayersList.slice();
+        if (q) {
+            filtered = filtered.filter((p) => {
+                return (
+                    String(p.uid || '').toLowerCase().includes(q) ||
+                    String(p.email || '').toLowerCase().includes(q) ||
+                    String(p.nickname || '').toLowerCase().includes(q) ||
+                    String(p.nicknameLower || '').toLowerCase().includes(q)
+                );
+            });
+        }
+
+        filtered.sort((a, b) => {
+            const pa = a.progression || { level: 1, xp: 0, rankPoints: 0 };
+            const pb = b.progression || { level: 1, xp: 0, rankPoints: 0 };
+            if (sortBy === 'level') {
+                return ((pb.level || 1) - (pa.level || 1)) || ((pb.xp || 0) - (pa.xp || 0));
+            }
+            if (sortBy === 'coins') {
+                return (Number(b.coins) || 0) - (Number(a.coins) || 0);
+            }
+            if (sortBy === 'banned') {
+                return Number(Boolean(b.ban && b.ban.isBanned)) - Number(Boolean(a.ban && a.ban.isBanned));
+            }
+            if (sortBy === 'lastActive') {
+                return (Number(b.lastActiveAt) || 0) - (Number(a.lastActiveAt) || 0);
+            }
+            return ((pb.rankPoints || 0) - (pa.rankPoints || 0)) || ((pb.level || 1) - (pa.level || 1));
+        });
+
+        playersList = filtered;
+        if (selectedPlayer) {
+            selectedPlayer = allPlayersList.find((p) => p.uid === selectedPlayer.uid) || null;
+        }
+    }
+
+    function updatePlayersRowsDomOnly() {
+        const rowsBox = document.getElementById('adminPlayersRowsContainer');
+        const countEl = document.getElementById('adminPlayersCountLabel');
+        if (!rowsBox) {
+            renderAdminBody();
+            return;
+        }
+        if (countEl) {
+            const totalText = allPlayersList.length !== playersList.length
+                ? `顯示 ${playersList.length} / ${allPlayersList.length} 位玩家（點擊玩家即可修改數值與封鎖控制）`
+                : `共 ${playersList.length} 位玩家（點擊玩家即可修改數值與封鎖控制）`;
+            countEl.textContent = totalText;
+        }
+        rowsBox.innerHTML = buildPlayerRowsMarkup();
+        bindPlayerRowClicks();
+    }
+
+    async function fetchPlayersList({ resetFilter = false } = {}) {
+        if (resetFilter) {
+            playerSearchQuery = '';
+        }
         isLoadingPlayers = true;
+        playersLoadError = '';
         renderAdminBody();
         try {
             const params = new URLSearchParams();
-            if (q) params.set('q', q);
-            if (sort) params.set('sort', sort);
+            params.set('sort', playerSortBy || 'rankPoints');
             const data = await adminApiFetch(`/admin/players?${params.toString()}`);
-            playersList = Array.isArray(data.players) ? data.players : [];
-            if (selectedPlayer) {
-                selectedPlayer = playersList.find((p) => p.uid === selectedPlayer.uid) || null;
-            }
+            allPlayersList = Array.isArray(data.players) ? data.players : [];
+            applyClientFilterAndSort();
         } catch (err) {
-            toast(err.message || '載入玩家列表失敗', 'error');
+            playersLoadError = err.message || '載入玩家列表失敗';
+            toast(playersLoadError, 'error');
         } finally {
             isLoadingPlayers = false;
             renderAdminBody();
@@ -227,12 +312,14 @@
 
     async function fetchAppealsList() {
         isLoadingAppeals = true;
+        appealsLoadError = '';
         renderAdminBody();
         try {
             const data = await adminApiFetch('/admin/appeals');
             appealsList = Array.isArray(data.appeals) ? data.appeals : [];
         } catch (err) {
-            toast(err.message || '載入申訴紀錄失敗', 'error');
+            appealsLoadError = err.message || '載入申訴紀錄失敗';
+            toast(appealsLoadError, 'error');
         } finally {
             isLoadingAppeals = false;
             renderAdminBody();
@@ -274,44 +361,59 @@
         bindSeasonEvents();
     }
 
-    function renderPlayersListHtml() {
-        const searchVal = document.getElementById('adminPlayerSearchInput')?.value || '';
-        const sortVal = document.getElementById('adminPlayerSortSelect')?.value || 'rankPoints';
+    function buildPlayerRowsMarkup() {
+        if (isLoadingPlayers && allPlayersList.length === 0) {
+            return `<div class="py-10 text-center text-xs text-slate-400"><i class="fa-solid fa-circle-notch fa-spin mr-1.5"></i>正在讀取全站玩家資料...</div>`;
+        }
+        if (playersLoadError && allPlayersList.length === 0) {
+            return `
+                <div class="p-6 rounded-2xl bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800 text-center space-y-2.5">
+                    <div class="text-xs font-extrabold text-rose-600 dark:text-rose-300">⚠️ 無法取得玩家資料：${escapeHtml(playersLoadError)}</div>
+                    <button type="button" id="adminPlayersRetryBtn" class="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-extrabold cursor-pointer">🔄 重新載入玩家列表</button>
+                </div>
+            `;
+        }
+        if (playersList.length === 0) {
+            return `<div class="py-10 text-center text-xs text-slate-400">${allPlayersList.length > 0 ? '找不到符合搜尋關鍵字的玩家' : '目前尚無玩家資料'}</div>`;
+        }
+        return playersList.map((p) => {
+            const isBanned = Boolean(p.ban && p.ban.isBanned);
+            const tier = (p.membership && p.membership.tier) || 'free';
+            const prog = p.progression || { level: 1, xp: 0, rankPoints: 0, rankTier: '青銅 III' };
+            return `
+                <button type="button" data-admin-select-uid="${escapeHtml(p.uid)}"
+                    class="w-full p-3 rounded-2xl bg-slate-50 dark:bg-slate-900/70 hover:bg-rose-50/60 dark:hover:bg-slate-800 border ${isBanned ? 'border-rose-400 dark:border-rose-700' : 'border-slate-200 dark:border-slate-700'} text-left transition flex items-center justify-between gap-3 cursor-pointer">
+                    <div class="min-w-0 space-y-1">
+                        <div class="flex items-center gap-1.5 flex-wrap">
+                            <span class="text-xs font-extrabold text-slate-900 dark:text-white truncate">${escapeHtml(p.nickname || '學習者')}</span>
+                            ${p.isAdmin ? '<span class="px-1.5 py-0.5 rounded-md text-[10px] font-black bg-rose-600 text-white">ADMIN</span>' : ''}
+                            ${isBanned ? '<span class="px-1.5 py-0.5 rounded-md text-[10px] font-black bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300 border border-rose-300 dark:border-rose-700">🚫 已封鎖</span>' : ''}
+                            ${tier !== 'free' ? `<span class="px-1.5 py-0.5 rounded-md text-[10px] font-extrabold bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 uppercase">${escapeHtml(tier)}</span>` : ''}
+                        </div>
+                        <div class="text-[11px] text-slate-500 dark:text-slate-400 font-mono truncate">${escapeHtml(p.email || p.uid)}</div>
+                        <div class="text-[11px] text-slate-600 dark:text-slate-300 font-semibold">
+                            🪙 ${Number(p.coins || 0).toLocaleString()} · Lv.${prog.level} (${prog.xp} XP) · 🏆 ${escapeHtml(prog.rankTier)} (${prog.rankPoints} 分)
+                        </div>
+                    </div>
+                    <i class="fa-solid fa-chevron-right text-slate-400 shrink-0 text-xs"></i>
+                </button>
+            `;
+        }).join('');
+    }
 
-        const rowsHtml = isLoadingPlayers && playersList.length === 0
-            ? `<div class="py-10 text-center text-xs text-slate-400"><i class="fa-solid fa-circle-notch fa-spin mr-1.5"></i>正在讀取全站玩家資料...</div>`
-            : (playersList.length === 0
-                ? `<div class="py-10 text-center text-xs text-slate-400">查無符合條件的玩家資料</div>`
-                : playersList.map((p) => {
-                    const isBanned = Boolean(p.ban && p.ban.isBanned);
-                    const tier = (p.membership && p.membership.tier) || 'free';
-                    const prog = p.progression || { level: 1, xp: 0, rankPoints: 0, rankTier: '青銅 III' };
-                    return `
-                        <button type="button" data-admin-select-uid="${escapeHtml(p.uid)}"
-                            class="w-full p-3 rounded-2xl bg-slate-50 dark:bg-slate-900/70 hover:bg-rose-50/60 dark:hover:bg-slate-800 border ${isBanned ? 'border-rose-400 dark:border-rose-700' : 'border-slate-200 dark:border-slate-700'} text-left transition flex items-center justify-between gap-3 cursor-pointer">
-                            <div class="min-w-0 space-y-1">
-                                <div class="flex items-center gap-1.5 flex-wrap">
-                                    <span class="text-xs font-extrabold text-slate-900 dark:text-white truncate">${escapeHtml(p.nickname || '學習者')}</span>
-                                    ${p.isAdmin ? '<span class="px-1.5 py-0.5 rounded-md text-[10px] font-black bg-rose-600 text-white">ADMIN</span>' : ''}
-                                    ${isBanned ? '<span class="px-1.5 py-0.5 rounded-md text-[10px] font-black bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300 border border-rose-300 dark:border-rose-700">🚫 已封鎖</span>' : ''}
-                                    ${tier !== 'free' ? `<span class="px-1.5 py-0.5 rounded-md text-[10px] font-extrabold bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 uppercase">${escapeHtml(tier)}</span>` : ''}
-                                </div>
-                                <div class="text-[11px] text-slate-500 dark:text-slate-400 font-mono truncate">${escapeHtml(p.email || p.uid)}</div>
-                                <div class="text-[11px] text-slate-600 dark:text-slate-300 font-semibold">
-                                    🪙 ${Number(p.coins || 0).toLocaleString()} · Lv.${prog.level} (${prog.xp} XP) · 🏆 ${escapeHtml(prog.rankTier)} (${prog.rankPoints} 分)
-                                </div>
-                            </div>
-                            <i class="fa-solid fa-chevron-right text-slate-400 shrink-0 text-xs"></i>
-                        </button>
-                    `;
-                }).join(''));
+    function renderPlayersListHtml() {
+        const searchVal = playerSearchQuery || '';
+        const sortVal = playerSortBy || 'rankPoints';
+        const totalText = allPlayersList.length !== playersList.length
+            ? `顯示 ${playersList.length} / ${allPlayersList.length} 位玩家（點擊玩家即可修改數值與封鎖控制）`
+            : `共 ${playersList.length} 位玩家（點擊玩家即可修改數值與封鎖控制）`;
 
         return `
             <div class="space-y-3">
                 <div class="flex flex-col sm:flex-row gap-2">
                     <div class="flex-1 flex items-center gap-1.5">
-                        <input type="text" id="adminPlayerSearchInput" value="${escapeHtml(searchVal)}" placeholder="搜尋玩家暱稱、Email 或 UID..." class="flex-1 min-w-0 px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs outline-none focus:ring-2 focus:ring-rose-500">
-                        <button type="button" id="adminPlayerSearchBtn" class="min-h-[38px] px-3 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-extrabold cursor-pointer shrink-0">搜尋</button>
+                        <input type="text" id="adminPlayerSearchInput" value="${escapeHtml(searchVal)}" placeholder="輸入暱稱、Email 或 UID 即時篩選..." class="flex-1 min-w-0 px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs outline-none focus:ring-2 focus:ring-rose-500">
+                        <button type="button" id="adminPlayerRefreshBtn" title="重新從伺服器載入" class="min-h-[38px] px-3 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-extrabold cursor-pointer shrink-0">🔄 更新</button>
                     </div>
                     <select id="adminPlayerSortSelect" class="px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-bold outline-none cursor-pointer">
                         <option value="rankPoints" ${sortVal === 'rankPoints' ? 'selected' : ''}>排序：排位積分高到低</option>
@@ -321,38 +423,57 @@
                         <option value="lastActive" ${sortVal === 'lastActive' ? 'selected' : ''}>排序：最近活躍時間</option>
                     </select>
                 </div>
-                <div class="text-[11px] font-bold text-slate-500 dark:text-slate-400">共 ${playersList.length} 位玩家（點擊玩家即可修改數值與封鎖控制）</div>
-                <div class="space-y-2">${rowsHtml}</div>
+                <div id="adminPlayersCountLabel" class="text-[11px] font-bold text-slate-500 dark:text-slate-400">${escapeHtml(totalText)}</div>
+                <div id="adminPlayersRowsContainer" class="space-y-2">${buildPlayerRowsMarkup()}</div>
             </div>
         `;
     }
 
-    function bindPlayersListEvents() {
-        const searchBtn = document.getElementById('adminPlayerSearchBtn');
-        const searchInp = document.getElementById('adminPlayerSearchInput');
-        const sortSel = document.getElementById('adminPlayerSortSelect');
-
-        if (searchBtn) {
-            searchBtn.onclick = () => fetchPlayersList();
-        }
-        if (searchInp) {
-            searchInp.onkeydown = (e) => {
-                if (e.key === 'Enter') {
-                    e.preventDefault();
-                    fetchPlayersList();
-                }
-            };
-        }
-        if (sortSel) {
-            sortSel.onchange = () => fetchPlayersList();
+    function bindPlayerRowClicks() {
+        const retryBtn = document.getElementById('adminPlayersRetryBtn');
+        if (retryBtn) {
+            retryBtn.onclick = () => fetchPlayersList();
         }
         document.querySelectorAll('[data-admin-select-uid]').forEach((btn) => {
             btn.onclick = () => {
                 const uid = btn.getAttribute('data-admin-select-uid');
-                selectedPlayer = playersList.find((p) => p.uid === uid) || null;
+                selectedPlayer = allPlayersList.find((p) => p.uid === uid) || playersList.find((p) => p.uid === uid) || null;
                 renderAdminBody();
             };
         });
+    }
+
+    function bindPlayersListEvents() {
+        const refreshBtn = document.getElementById('adminPlayerRefreshBtn');
+        const searchInp = document.getElementById('adminPlayerSearchInput');
+        const sortSel = document.getElementById('adminPlayerSortSelect');
+
+        if (refreshBtn) {
+            refreshBtn.onclick = () => fetchPlayersList();
+        }
+        if (searchInp) {
+            searchInp.oninput = () => {
+                playerSearchQuery = searchInp.value || '';
+                applyClientFilterAndSort();
+                updatePlayersRowsDomOnly();
+            };
+            searchInp.onkeydown = (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    playerSearchQuery = searchInp.value || '';
+                    applyClientFilterAndSort();
+                    updatePlayersRowsDomOnly();
+                }
+            };
+        }
+        if (sortSel) {
+            sortSel.onchange = () => {
+                playerSortBy = sortSel.value || 'rankPoints';
+                applyClientFilterAndSort();
+                updatePlayersRowsDomOnly();
+            };
+        }
+        bindPlayerRowClicks();
     }
 
     function renderPlayerEditorHtml(player) {
@@ -508,7 +629,8 @@
                     });
                     if (res.player) {
                         selectedPlayer = res.player;
-                        playersList = playersList.map((p) => (p.uid === res.player.uid ? res.player : p));
+                        allPlayersList = allPlayersList.map((p) => (p.uid === res.player.uid ? res.player : p));
+                        applyClientFilterAndSort();
                     }
                     toast('已重置該玩家今日與本月 AI 額度', 'success');
                     renderAdminBody();
@@ -557,7 +679,8 @@
                     });
                     if (res.player) {
                         selectedPlayer = res.player;
-                        playersList = playersList.map((p) => (p.uid === res.player.uid ? res.player : p));
+                        allPlayersList = allPlayersList.map((p) => (p.uid === res.player.uid ? res.player : p));
+                        applyClientFilterAndSort();
                     }
                     toast('已儲存玩家資料與外觀設定', 'success');
                     renderAdminBody();
@@ -593,7 +716,8 @@
                     });
                     if (res.player) {
                         selectedPlayer = res.player;
-                        playersList = playersList.map((p) => (p.uid === res.player.uid ? res.player : p));
+                        allPlayersList = allPlayersList.map((p) => (p.uid === res.player.uid ? res.player : p));
+                        applyClientFilterAndSort();
                     }
                     toast('已封鎖該玩家帳號', 'warning');
                     renderAdminBody();
@@ -616,7 +740,8 @@
                     });
                     if (res.player) {
                         selectedPlayer = res.player;
-                        playersList = playersList.map((p) => (p.uid === res.player.uid ? res.player : p));
+                        allPlayersList = allPlayersList.map((p) => (p.uid === res.player.uid ? res.player : p));
+                        applyClientFilterAndSort();
                     }
                     toast('已解除該玩家封鎖', 'success');
                     renderAdminBody();
@@ -632,6 +757,14 @@
     function renderAppealsHtml() {
         if (isLoadingAppeals && appealsList.length === 0) {
             return `<div class="py-10 text-center text-xs text-slate-400"><i class="fa-solid fa-circle-notch fa-spin mr-1.5"></i>正在讀取帳號申訴紀錄...</div>`;
+        }
+        if (appealsLoadError && appealsList.length === 0) {
+            return `
+                <div class="p-6 rounded-2xl bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800 text-center space-y-2.5">
+                    <div class="text-xs font-extrabold text-rose-600 dark:text-rose-300">⚠️ 無法取得申訴紀錄：${escapeHtml(appealsLoadError)}</div>
+                    <button type="button" id="adminAppealsRetryBtn" class="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-extrabold cursor-pointer">🔄 重新載入申訴紀錄</button>
+                </div>
+            `;
         }
         if (appealsList.length === 0) {
             return `<div class="py-10 text-center text-xs text-slate-400">目前沒有任何玩家封鎖申訴案件</div>`;
@@ -671,6 +804,10 @@
     }
 
     function bindAppealsEvents() {
+        const retryBtn = document.getElementById('adminAppealsRetryBtn');
+        if (retryBtn) {
+            retryBtn.onclick = () => fetchAppealsList();
+        }
         document.querySelectorAll('[data-appeal-action]').forEach((btn) => {
             btn.onclick = async () => {
                 const appealId = btn.getAttribute('data-appeal-id');

@@ -28,9 +28,17 @@ const ADMIN_ALLOWED_ORIGINS = new Set([
   "https://lzhcard.tomlin980415.workers.dev"
 ]);
 
+function isAllowedAdminOrigin(origin) {
+  if (!origin) return false;
+  if (ADMIN_ALLOWED_ORIGINS.has(origin)) return true;
+  if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin)) return true;
+  if (/^https:\/\/[a-z0-9-]+\.[a-z0-9-]+\.run\.app$/i.test(origin)) return true;
+  return false;
+}
+
 export function buildAdminCorsHeaders(request) {
   const origin = String(request.headers.get("Origin") || "").trim();
-  const allowedOrigin = ADMIN_ALLOWED_ORIGINS.has(origin)
+  const allowedOrigin = isAllowedAdminOrigin(origin)
     ? origin
     : "https://flashcards-5f514.web.app";
   return {
@@ -108,11 +116,27 @@ function sanitizeProgressionForRead(prog) {
   };
 }
 
-function formatPlayerSummary(doc, nowMs = Date.now()) {
+function parseTimestampMs(raw) {
+  if (typeof raw === "number" && Number.isFinite(raw)) return raw;
+  if (typeof raw === "string" && raw.trim()) {
+    const asNum = Number(raw);
+    if (Number.isFinite(asNum)) return asNum;
+    const parsed = Date.parse(raw);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return 0;
+}
+
+function formatPlayerSummary(doc, nowMs = Date.now(), pubFallback = null) {
   const uid = docIdFromName(doc.name);
   const data = decodeFirestoreDoc(doc);
+  const pubData = pubFallback || {};
   const ban = parseUserBanState(doc, nowMs);
-  const progression = sanitizeProgressionForRead(data.progression);
+  const progression = sanitizeProgressionForRead(
+    data.progression && typeof data.progression === "object"
+      ? data.progression
+      : (pubData.stats || {})
+  );
   const membership = data.membership && typeof data.membership === "object"
     ? {
         tier: String(data.membership.tier || "free"),
@@ -122,14 +146,18 @@ function formatPlayerSummary(doc, nowMs = Date.now()) {
       }
     : { tier: "free", expiresAt: 0, startedAt: 0, source: "" };
 
-  const cosmetics = data.cosmetics && typeof data.cosmetics === "object"
+  const cosSource = (data.cosmetics && typeof data.cosmetics === "object")
+    ? data.cosmetics
+    : (pubData.cosmetics && typeof pubData.cosmetics === "object" ? pubData.cosmetics : null);
+
+  const cosmetics = cosSource
     ? {
-        frame: String(data.cosmetics.frame || "default"),
-        banner: String(data.cosmetics.banner || "default"),
-        title: String(data.cosmetics.title || "newcomer"),
-        unlockedFrames: Array.isArray(data.cosmetics.unlockedFrames) ? data.cosmetics.unlockedFrames : [],
-        unlockedBanners: Array.isArray(data.cosmetics.unlockedBanners) ? data.cosmetics.unlockedBanners : [],
-        unlockedTitles: Array.isArray(data.cosmetics.unlockedTitles) ? data.cosmetics.unlockedTitles : []
+        frame: String(cosSource.frame || "default"),
+        banner: String(cosSource.banner || "default"),
+        title: String(cosSource.title || "newcomer"),
+        unlockedFrames: Array.isArray(cosSource.unlockedFrames) ? cosSource.unlockedFrames : [],
+        unlockedBanners: Array.isArray(cosSource.unlockedBanners) ? cosSource.unlockedBanners : [],
+        unlockedTitles: Array.isArray(cosSource.unlockedTitles) ? cosSource.unlockedTitles : []
       }
     : {
         frame: "default",
@@ -140,11 +168,18 @@ function formatPlayerSummary(doc, nowMs = Date.now()) {
         unlockedTitles: []
       };
 
+  const nickname = String(data.nickname || data.displayName || pubData.nickname || "學習者");
+  const lastActiveAt = Math.max(
+    parseTimestampMs(data.lastSyncedAt),
+    parseTimestampMs(data.updatedAt),
+    parseTimestampMs(pubData.updatedAt)
+  );
+
   return {
     uid,
     email: String(data.email || ""),
-    nickname: String(data.nickname || data.displayName || "學習者"),
-    nicknameLower: String(data.nicknameLower || "").trim(),
+    nickname,
+    nicknameLower: String(data.nicknameLower || nickname).trim().toLowerCase(),
     coins: Math.max(0, Math.floor(Number(data.coins) || 0)),
     role: String(data.role || "user"),
     isAdmin: Boolean(data.isAdmin || String(data.role || "").toLowerCase() === "admin"),
@@ -155,7 +190,7 @@ function formatPlayerSummary(doc, nowMs = Date.now()) {
     cosmetics,
     purchasedCosmetics: Array.isArray(data.purchasedCosmetics) ? data.purchasedCosmetics : [],
     ban,
-    lastActiveAt: Number(data.lastSyncedAt || data.updatedAt || 0) || 0
+    lastActiveAt
   };
 }
 
@@ -169,12 +204,38 @@ export async function handleAdminListPlayers(request, env) {
   const sortBy = String(url.searchParams.get("sort") || "rankPoints").trim();
   const nowMs = Date.now();
 
-  const docs = await firestoreListCollection("users", auth.fsAuth.Authorization, {
-    pageSize: 200,
-    maxPages: 15
-  });
+  const [userDocs, publicDocs] = await Promise.all([
+    firestoreListCollection("users", auth.fsAuth.Authorization, {
+      pageSize: 200,
+      maxPages: 15
+    }),
+    firestoreListCollection("publicProfiles", auth.fsAuth.Authorization, {
+      pageSize: 200,
+      maxPages: 15
+    }).catch(() => [])
+  ]);
 
-  let players = docs.map((d) => formatPlayerSummary(d, nowMs));
+  const pubByUid = new Map();
+  for (const pd of publicDocs) {
+    const pid = docIdFromName(pd.name);
+    if (pid) pubByUid.set(pid, decodeFirestoreDoc(pd));
+  }
+
+  const playersByUid = new Map();
+  for (const d of userDocs) {
+    const uid = docIdFromName(d.name);
+    if (!uid) continue;
+    playersByUid.set(uid, formatPlayerSummary(d, nowMs, pubByUid.get(uid)));
+  }
+
+  // 若有舊帳號僅存在於 publicProfiles 而尚未寫入 users，也一併列出
+  for (const pd of publicDocs) {
+    const pid = docIdFromName(pd.name);
+    if (!pid || playersByUid.has(pid)) continue;
+    playersByUid.set(pid, formatPlayerSummary({ name: pd.name, fields: {} }, nowMs, pubByUid.get(pid)));
+  }
+
+  let players = Array.from(playersByUid.values());
 
   if (q) {
     players = players.filter((p) => {
@@ -226,11 +287,19 @@ export async function handleAdminUpdatePlayer(request, env) {
 
   const userPath = `users/${encodeURIComponent(targetUid)}`;
   const userRes = await firestoreGetDoc(userPath, auth.fsAuth.Authorization);
+  let userData = userRes.exists ? decodeFirestoreDoc(userRes.doc) : null;
   if (!userRes.exists) {
-    return jsonOut({ ok: false, error: "找不到該玩家資料" }, 404, corsHeaders);
+    const pubFallbackRes = await firestoreGetDoc(`publicProfiles/${encodeURIComponent(targetUid)}`, auth.fsAuth.Authorization);
+    if (!pubFallbackRes.exists) {
+      return jsonOut({ ok: false, error: "找不到該玩家資料" }, 404, corsHeaders);
+    }
+    const pubData = decodeFirestoreDoc(pubFallbackRes.doc);
+    userData = {
+      nickname: pubData.nickname || "學習者",
+      progression: pubData.stats || {},
+      cosmetics: pubData.cosmetics || {}
+    };
   }
-
-  const userData = decodeFirestoreDoc(userRes.doc);
   const nowMs = Date.now();
   const patchPayload = {};
   const maskPaths = [];
@@ -391,7 +460,10 @@ export async function handleAdminBanPlayer(request, env) {
   const userPath = `users/${encodeURIComponent(targetUid)}`;
   const userRes = await firestoreGetDoc(userPath, auth.fsAuth.Authorization);
   if (!userRes.exists) {
-    return jsonOut({ ok: false, error: "找不到該玩家資料" }, 404, corsHeaders);
+    const pubFallbackRes = await firestoreGetDoc(`publicProfiles/${encodeURIComponent(targetUid)}`, auth.fsAuth.Authorization);
+    if (!pubFallbackRes.exists) {
+      return jsonOut({ ok: false, error: "找不到該玩家資料" }, 404, corsHeaders);
+    }
   }
 
   const nowMs = Date.now();
