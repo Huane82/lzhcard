@@ -1,0 +1,325 @@
+/* 🚫 全局禁用雙擊放大 (保留單指滑動與正常點擊) */
+html, body, button, a, input, select, textarea, label, div {
+    touch-action: manipulation;
+}
+
+/* 3D 翻轉卡片視覺樣式與動畫時間優化 (200ms) */
+.perspective-1000 {
+    perspective: 1000px;
+}
+
+.transform-style-3d {
+    transform-style: preserve-3d;
+}
+
+.backface-hidden {
+    backface-visibility: hidden;
+    -webkit-backface-visibility: hidden;
+}
+
+.rotate-y-180 {
+    transform: rotateY(180deg);
+}
+
+/* 動畫速度優化，過渡時間精準設定為 200ms (0.2s) */
+.card-flip-duration {
+    transition: transform 0.2s ease-in-out;
+}
+
+/* 🌙 夜間模式平滑過渡與動態背景設定 */
+body {
+    transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+.dark body {
+    background-color: #0f172a; /* Tailwind slate-900 */
+    color: #f8fafc; /* Tailwind slate-50 */
+}
+
+/* 夜間模式下主要容器與卡片的背景替換 */
+.dark #main-header, 
+.dark #bottom-nav, 
+.dark #sec-settings > div, 
+.dark #sec-list > div,
+.dark #sec-home button,
+.dark #quizContainer,
+.dark .modal-container {
+    background-color: #1e293b !important; /* Tailwind slate-800 */
+    border-color: #334155 !important; /* Tailwind slate-700 */
+    color: #f8fafc !important;
+}
+
+/* 夜間模式下的輸入框與選擇下拉選單 */
+.dark input[type="text"],
+.dark input[type="password"],
+.dark input[type="number"],
+.dark textarea,
+.dark select {
+    background-color: #0f172a !important;
+    border-color: #334155 !important;
+    color: #f1f5f9 !important;
+}
+
+/* 自訂滾動條 */
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+::-webkit-scrollbar-track {
+    background: #f1f5f9;
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #94a3b8;
+}
+
+/* 夜間模式滾動條 */
+.dark ::-webkit-scrollbar-track {
+    background: #0f172a;
+}
+
+.dark ::-webkit-scrollbar-thumb {
+    background: #334155;
+}
+
+.dark ::-webkit-scrollbar-thumb:hover {
+    background: #475569;
+}
+
+/* 🌟 修正下拉選單選項 (option) 的顏色與對比度 */
+select option {
+    background-color: #ffffff !important;
+    color: #0f172a !important;
+}
+
+.dark select option {
+    background-color: #1e293b !important;
+    color: #f8fafc !important;
+}
+
+/* 🌟 1. 全局移除強烈的原生藍色波浪線 / 聚焦外框 (Outline & Ring) */
+input:focus, 
+select:focus, 
+textarea:focus, 
+button:focus {
+    outline: none !important;
+    box-shadow: none !important;
+}
+
+/* 🌟 2. 徹底修復深色模式 (Dark Mode) 下拉選單 option 黑底黑字與預設背景問題 */
+select option {
+    background-color: #ffffff !important;
+    color: #0f172a !important;
+}
+
+.dark select option {
+    background-color: #1e293b !important;
+    color: #f8fafc !important;
+}
+
+/* 🌟 3. 修復測驗模式 (Quiz) 與卡片模式選項與輸入框文字顏色 */
+.dark #quizPromptBox,
+.dark #quizInput,
+.dark #quizFeedback {
+    color: #f8fafc !important;
+}
+
+/* 🌟 1. 徹底消除題目提示內的藍色波浪線 */
+#quizPromptBox u,
+#quizPromptBox em {
+    text-decoration: none !important;
+    text-decoration-line: none !important;
+    -webkit-text-decoration-line: none !important;
+}
+
+/* 🌟 2. 修正測驗題目提示框在亮色與深色模式下的文字對比度 */
+#quizPromptBox {
+    color: #0f172a;
+}
+
+.dark #quizPromptBox {
+    color: #f8fafc !important;
+    background-color: #0f172a !important;
+}
+
+/* 📖 共用文章點擊單字即時翻譯 Token 樣式（不影響閱讀排版流） */
+.reader-token {
+    display: inline;
+    cursor: pointer;
+    border-radius: 0.25rem;
+    padding: 0 1px;
+    transition: background-color 0.14s ease, color 0.14s ease;
+    border-bottom: 1px dotted rgba(99, 102, 241, 0.35);
+}
+
+.reader-token:hover,
+.reader-token:focus-visible {
+    background-color: rgba(99, 102, 241, 0.14);
+    color: #4f46e5;
+}
+
+.dark .reader-token:hover,
+.dark .reader-token:focus-visible {
+    background-color: rgba(56, 189, 248, 0.2);
+    color: #38bdf8;
+}
+
+.reader-token-active {
+    background-color: rgba(99, 102, 241, 0.22) !important;
+    color: #4338ca !important;
+    border-bottom-color: #6366f1;
+}
+
+.dark .reader-token-active {
+    background-color: rgba(56, 189, 248, 0.28) !important;
+    color: #7dd3fc !important;
+    border-bottom-color: #38bdf8;
+}
+/* 🌟 強制徹底隱藏卡片背面，防止翻頁時閃爍露答案 */
+#flashcard .backface-hidden {
+    backface-visibility: hidden !important;
+    -webkit-backface-visibility: hidden !important;
+    transform-style: preserve-3d;
+}
+
+/* 關閉動畫時採用的 Class */
+.no-transition {
+    transition: none !important;
+}
+
+/* 📱 Capacitor 原生安全區域適配 (iOS 動態島 / 瀏海 / Android 狀態列與底部指示條) */
+:root {
+    --safe-area-top: env(safe-area-inset-top, 0px);
+    --safe-area-bottom: env(safe-area-inset-bottom, 0px);
+    --safe-area-left: env(safe-area-inset-left, 0px);
+    --safe-area-right: env(safe-area-inset-right, 0px);
+}
+
+#main-header {
+    padding-top: var(--safe-area-top);
+}
+
+#bottom-nav {
+    padding-bottom: var(--safe-area-bottom);
+}
+
+.safe-area-drawer {
+    padding-top: var(--safe-area-top);
+    padding-bottom: var(--safe-area-bottom);
+}
+
+body {
+    padding-bottom: calc(4rem + var(--safe-area-bottom));
+}
+
+@media (min-width: 640px) {
+    body {
+        padding-bottom: calc(4rem + var(--safe-area-bottom));
+    }
+}
+
+/* 🌐 全域懸浮翻譯與三語點詞 / 選取 / 拍照熱區 / 即時字幕樣式 */
+.ft-clickable-word {
+    display: inline;
+    cursor: pointer;
+    border-radius: 0.25rem;
+    padding: 0 2px;
+    transition: background-color 0.14s ease, color 0.14s ease;
+    border-bottom: 1px dotted rgba(99, 102, 241, 0.45);
+}
+
+.ft-clickable-word:hover {
+    background-color: rgba(99, 102, 241, 0.16);
+    color: #4f46e5;
+}
+
+.dark .ft-clickable-word:hover {
+    background-color: rgba(56, 189, 248, 0.22);
+    color: #38bdf8;
+}
+
+.ft-selected-word-mark {
+    background-color: rgba(250, 204, 21, 0.45);
+    color: inherit;
+    border-radius: 0.25rem;
+    padding: 0 2px;
+    border-bottom: 2px solid #eab308;
+    cursor: pointer;
+    transition: background-color 0.15s ease;
+}
+
+.dark .ft-selected-word-mark {
+    background-color: rgba(234, 179, 8, 0.35);
+    color: #fef08a;
+    border-bottom-color: #facc15;
+}
+
+.ft-photo-hotspot {
+    position: absolute;
+    border: 1.5px solid rgba(59, 130, 246, 0.72);
+    background-color: rgba(59, 130, 246, 0.12);
+    border-radius: 0.25rem;
+    cursor: pointer;
+    padding: 0;
+    transition: background-color 0.14s ease, border-color 0.14s ease, box-shadow 0.14s ease;
+}
+
+.ft-photo-hotspot:hover {
+    border-color: #2563eb;
+    background-color: rgba(59, 130, 246, 0.26);
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.22);
+}
+
+.ft-photo-hotspot-active {
+    border-color: #6366f1 !important;
+    background-color: rgba(99, 102, 241, 0.3) !important;
+    box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.35) !important;
+}
+
+.ft-photo-hotspot-selected {
+    border-color: #10b981 !important;
+    background-color: rgba(16, 185, 129, 0.3) !important;
+    box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.32) !important;
+}
+
+.ft-photo-hotspot-selected::after {
+    content: "✓";
+    position: absolute;
+    top: -8px;
+    right: -8px;
+    width: 16px;
+    height: 16px;
+    border-radius: 9999px;
+    background-color: #10b981;
+    color: #ffffff;
+    font-size: 10px;
+    font-weight: 800;
+    line-height: 16px;
+    text-align: center;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+.ft-subtitle-bar {
+    background: rgba(15, 23, 42, 0.88);
+    color: #f8fafc;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border: 1px solid rgba(148, 163, 184, 0.3);
+    box-shadow: 0 12px 32px rgba(2, 6, 23, 0.45);
+}
+
+.ft-subtitle-bar .ft-clickable-word {
+    border-bottom-color: rgba(125, 211, 252, 0.45);
+}
+
+.ft-subtitle-bar .ft-clickable-word:hover {
+    background-color: rgba(56, 189, 248, 0.28);
+    color: #7dd3fc;
+}

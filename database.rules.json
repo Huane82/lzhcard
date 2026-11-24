@@ -1,0 +1,93 @@
+{
+  "rules": {
+    // 1. 使用者基本資料（維護權限角色）
+    "users": {
+      "$uid": {
+        ".read": "auth != null",
+        ".write": "$uid === auth.uid || root.child('users').child(auth.uid).child('role').val() === 'admin'"
+      }
+    },
+    
+    // 2. 在線狀態與隱私設定 (Presence)
+    "status": {
+      ".read": "auth != null",
+      "$uid": {
+        // 只能更新自己的在線狀態與隱身設定，管理員可例外覆寫
+        ".write": "$uid === auth.uid || root.child('users').child(auth.uid).child('role').val() === 'admin'"
+      }
+    },
+    
+    // 3. 聊天室與訊息安全過濾
+    "chats": {
+      "$chatId": {
+        // 只有該聊天室成員、公開頻道，或是管理員才能讀取/訂閱訊息
+        ".read": "auth != null && ($chatId === 'chat_group_public' || data.child('members/' + auth.uid).exists() || root.child('users/' + auth.uid + '/role').val() === 'admin')",
+        
+        // 只有成員、公開頻道、建立新頻道或管理員可以寫入與更新對話紀錄
+        ".write": "auth != null && ($chatId === 'chat_group_public' || !data.exists() || data.child('members/' + auth.uid).exists() || root.child('users/' + auth.uid + '/role').val() === 'admin')",
+        
+        "members": {
+          "$uid": {
+            ".write": "auth != null && ($uid === auth.uid || data.parent().child(auth.uid).exists() || root.child('users').child(auth.uid).child('role').val() === 'admin')"
+          }
+        },
+        "messages": {
+          "$msgId": {
+            // 發送訊息時，強制作業者 senderUid 必須等於本人真實 auth.uid，防止冒充他人發言
+            ".validate": "newData.hasChildren(['sender', 'senderUid', 'text', 'time']) && (newData.child('senderUid').val() === auth.uid || newData.child('sender').val() === '系統提示')"
+          }
+        }
+      }
+    },
+    
+    // 4. 系統公告（公開催覽，僅管理員可發布/刪除）
+    "announcements": {
+      ".read": true,
+      ".write": "auth != null && root.child('users/' + auth.uid + '/role').val() === 'admin'"
+    },
+    
+    // 5. 好友申請
+    "friendRequests": {
+      ".read": "auth != null",
+      ".write": "auth != null"
+    },
+    
+    // 6. 群組邀請
+    "groupInvites": {
+      ".read": "auth != null",
+      ".write": "auth != null"
+    },
+
+    // 7. 即時 1v1 拔河對戰室 (duels)
+    "duels": {
+      ".read": "auth != null",
+      "$roomCode": {
+        ".write": "auth != null && (!data.exists() || data.child('hostUid').val() === auth.uid || data.child('guestUid').val() === auth.uid || !data.child('guestUid').exists())"
+      }
+    },
+
+    // 8. 四人組隊打魔王副本 (raids)
+    "raids": {
+      ".read": "auth != null",
+      "$raidCode": {
+        ".write": "auth != null"
+      }
+    },
+
+    // 9. 排位即時配對佇列 (matchmakingQueue)
+    "matchmakingQueue": {
+      ".read": "auth != null",
+      "$uid": {
+        ".write": "$uid === auth.uid"
+      }
+    },
+
+    // 10. 10題幽靈影子紀錄快照 (ghostSnapshots)
+    "ghostSnapshots": {
+      ".read": "auth != null",
+      "$uid": {
+        ".write": "$uid === auth.uid"
+      }
+    }
+  }
+}

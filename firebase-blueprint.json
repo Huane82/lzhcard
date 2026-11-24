@@ -1,0 +1,185 @@
+{
+  "entities": {
+    "UserAccount": {
+      "title": "UserAccount",
+      "description": "Primary user document storing safe profile preferences alongside server-authoritative coins, membership, AI usage quotas, and purchase entitlements.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128 },
+        "email": { "type": "string", "maxLength": 256 },
+        "nickname": { "type": "string", "maxLength": 64 },
+        "photoURL": { "type": "string", "maxLength": 1024 },
+        "bio": { "type": "string", "maxLength": 500 },
+        "role": { "type": "string", "enum": ["user", "admin"] },
+        "isAdmin": { "type": "boolean" },
+        "coins": { "type": "number" },
+        "privacyHideStatus": { "type": "boolean" },
+        "friends": { "type": "array" },
+        "blockedUids": { "type": "array" },
+        "cosmetics": { "type": "object" },
+        "purchasedCosmetics": { "type": "array" },
+        "privacy": { "type": "object" },
+        "progression": { "type": "object" },
+        "chatPrefs": { "type": "object" },
+        "selectedCategories": { "type": "array" },
+        "membership": { "type": "object" },
+        "aiUsage": { "type": "object" },
+        "coinBoost": { "type": "object" },
+        "membershipHistory": { "type": "array" },
+        "purchasedDeckIds": { "type": "array" },
+        "purchasedDecks": { "type": "array" },
+        "cards": { "type": "array" },
+        "customCategories": { "type": "array" },
+        "categories": { "type": "array" },
+        "chunkedCards": { "type": "boolean" },
+        "deckChunkCount": { "type": "number" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "UserDeckChunk": {
+      "title": "UserDeckChunk",
+      "description": "Chunked flashcard storage subcollection under a user account.",
+      "type": "object",
+      "properties": {
+        "chunkIndex": { "type": "number" },
+        "cards": { "type": "array" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "PublicProfile": {
+      "title": "PublicProfile",
+      "description": "Publicly visible player showcase card without sensitive PII or billing fields.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128 },
+        "nickname": { "type": "string", "maxLength": 64 },
+        "avatar": { "type": "string", "maxLength": 1024 },
+        "bio": { "type": "string", "maxLength": 500 },
+        "role": { "type": "string", "enum": ["user", "admin"] },
+        "membership": { "type": "object" },
+        "cosmetics": { "type": "object" },
+        "isStatsPublic": { "type": "boolean" },
+        "stats": { "type": "object" },
+        "updatedAtMs": { "type": "number" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "nickname"]
+    },
+    "StoreDeck": {
+      "title": "StoreDeck",
+      "description": "Community-published flashcard deck listed in the LZHCard Store.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "maxLength": 120 },
+        "category": { "type": "string", "maxLength": 64 },
+        "desc": { "type": "string", "maxLength": 1000 },
+        "price": { "type": "number" },
+        "author": { "type": "string", "maxLength": 64 },
+        "authorId": { "type": "string", "maxLength": 128 },
+        "authorAvatar": { "type": "string", "maxLength": 1024 },
+        "words": { "type": "array" },
+        "likes": { "type": "number" },
+        "favorites": { "type": "number" },
+        "downloads": { "type": "number" },
+        "downloadCount": { "type": "number" },
+        "views": { "type": "number" },
+        "monthlyViews": { "type": "number" },
+        "monthlyDownloads": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "authorId", "price"]
+    },
+    "StoreDeckInteraction": {
+      "title": "StoreDeckInteraction",
+      "description": "Per-user reaction, download, or verified purchase marker on a StoreDeck.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128 },
+        "price": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "downloadedAt": { "type": "string", "format": "date-time" },
+        "purchasedAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "ProcessedOrder": {
+      "title": "ProcessedOrder",
+      "description": "Server-only Google Play Billing idempotency ledger preventing replay or duplicate fulfillment.",
+      "type": "object",
+      "properties": {
+        "orderId": { "type": "string", "maxLength": 256 },
+        "uid": { "type": "string", "maxLength": 128 },
+        "productId": { "type": "string", "maxLength": 128 },
+        "purchaseTokenHash": { "type": "string", "maxLength": 128 },
+        "packageName": { "type": "string", "maxLength": 128 },
+        "kind": { "type": "string", "enum": ["coins", "membership"] },
+        "coinsGranted": { "type": "number" },
+        "tierGranted": { "type": "string", "maxLength": 64 },
+        "processedAt": { "type": "number" }
+      },
+      "required": ["orderId", "uid", "productId", "processedAt"]
+    },
+    "ModerationReport": {
+      "title": "ModerationReport",
+      "description": "User-submitted moderation report for objectionable chat messages or player profiles.",
+      "type": "object",
+      "properties": {
+        "reportId": { "type": "string", "maxLength": 128 },
+        "reporterUid": { "type": "string", "maxLength": 128 },
+        "reporterNickname": { "type": "string", "maxLength": 64 },
+        "targetUid": { "type": "string", "maxLength": 128 },
+        "targetNickname": { "type": "string", "maxLength": 64 },
+        "contextType": { "type": "string", "enum": ["chat_message", "user_profile"] },
+        "chatId": { "type": "string", "maxLength": 128 },
+        "messageId": { "type": "string", "maxLength": 128 },
+        "messageSnapshot": { "type": "string", "maxLength": 500 },
+        "reason": { "type": "string", "maxLength": 200 },
+        "details": { "type": "string", "maxLength": 500 },
+        "status": { "type": "string", "enum": ["pending", "reviewed", "resolved", "dismissed"] },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["reporterUid", "targetUid", "reason", "status", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{uid}": {
+      "schema": { "$ref": "#/entities/UserAccount" },
+      "description": "Private user account data and server-controlled wallet/membership entitlements."
+    },
+    "/users/{uid}/deckChunks/{chunkId}": {
+      "schema": { "$ref": "#/entities/UserDeckChunk" },
+      "description": "Chunked flashcard deck data owned by the user."
+    },
+    "/publicProfiles/{uid}": {
+      "schema": { "$ref": "#/entities/PublicProfile" },
+      "description": "Public showcase profile visible to other authenticated players."
+    },
+    "/reports/{reportId}": {
+      "schema": { "$ref": "#/entities/ModerationReport" },
+      "description": "User-submitted moderation reports readable and resolvable only by admins."
+    },
+    "/storeDecks/{deckId}": {
+      "schema": { "$ref": "#/entities/StoreDeck" },
+      "description": "Shared community flashcard decks available in the Store."
+    },
+    "/storeDecks/{deckId}/likers/{uid}": {
+      "schema": { "$ref": "#/entities/StoreDeckInteraction" },
+      "description": "Like markers per user on a StoreDeck."
+    },
+    "/storeDecks/{deckId}/favoriters/{uid}": {
+      "schema": { "$ref": "#/entities/StoreDeckInteraction" },
+      "description": "Favorite markers per user on a StoreDeck."
+    },
+    "/storeDecks/{deckId}/downloaders/{uid}": {
+      "schema": { "$ref": "#/entities/StoreDeckInteraction" },
+      "description": "Unique downloader markers per user on a StoreDeck."
+    },
+    "/storeDecks/{deckId}/purchasers/{uid}": {
+      "schema": { "$ref": "#/entities/StoreDeckInteraction" },
+      "description": "Server-verified purchase markers per user on a paid StoreDeck."
+    },
+    "/processedOrders/{orderId}": {
+      "schema": { "$ref": "#/entities/ProcessedOrder" },
+      "description": "Server-only billing replay protection ledger."
+    }
+  }
+}

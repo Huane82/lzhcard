@@ -1,0 +1,258 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global default deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Core helper primitives
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-\\.]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
+        (
+          exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+          (
+            get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+            get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true
+          )
+        )
+      );
+    }
+
+    function isNotBanned() {
+      return isSignedIn() && (
+        !exists(/databases/$(database)/documents/users/$(request.auth.uid)) ||
+        !('ban' in get(/databases/$(database)/documents/users/$(request.auth.uid)).data) ||
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.ban.isBanned != true ||
+        (
+          'expiresAt' in get(/databases/$(database)/documents/users/$(request.auth.uid)).data.ban &&
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.ban.expiresAt is int &&
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.ban.expiresAt > 0 &&
+          request.time.toMillis() >= get(/databases/$(database)/documents/users/$(request.auth.uid)).data.ban.expiresAt
+        )
+      );
+    }
+
+    // Server-authoritative fields that clients are strictly forbidden from forging or mutating
+    function hasNoPrivilegedUserFields(data) {
+      return !('coins' in data && data.coins != 0) &&
+        !('role' in data && data.role != 'user') &&
+        !('isAdmin' in data && data.isAdmin != false) &&
+        !('ban' in data) &&
+        !('membership' in data && data.membership.tier != 'free') &&
+        !('purchasedDeckIds' in data && data.purchasedDeckIds.size() > 0) &&
+        !('purchasedDecks' in data && data.purchasedDecks.size() > 0) &&
+        !('purchasedCosmetics' in data && data.purchasedCosmetics.size() > 0) &&
+        !('coinBoost' in data);
+    }
+
+    function doesNotMutatePrivilegedUserFields() {
+      return !incoming().diff(existing()).affectedKeys().hasAny([
+        'coins',
+        'membership',
+        'role',
+        'isAdmin',
+        'ban',
+        'aiUsage',
+        'coinBoost',
+        'membershipHistory',
+        'purchasedDeckIds',
+        'purchasedDecks',
+        'purchasedCosmetics'
+      ]);
+    }
+
+    function hasValidBlockedUids(data) {
+      return !('blockedUids' in data) || (
+        data.blockedUids is list &&
+        data.blockedUids.size() <= 200
+      );
+    }
+
+    // Admins lookup collection (read own only, server-managed)
+    match /admins/{uid} {
+      allow get: if isOwner(uid);
+      allow list, write: if false;
+    }
+
+    // Billing replay-protection ledgers (100% server-only via Worker Service Account)
+    match /processedOrders/{orderId} {
+      allow read, write: if false;
+    }
+
+    match /processedTransactions/{txId} {
+      allow read, write: if false;
+    }
+
+    // User-submitted UGC moderation reports (App Store Guideline 1.2)
+    match /reports/{reportId} {
+      allow create: if isValidId(reportId) && isSignedIn() &&
+        incoming().reporterUid == request.auth.uid &&
+        incoming().targetUid is string &&
+        incoming().targetUid.size() >= 1 &&
+        incoming().targetUid.size() <= 128 &&
+        incoming().reason is string &&
+        incoming().reason.size() >= 1 &&
+        incoming().reason.size() <= 200 &&
+        (!('status' in incoming()) || incoming().status == 'pending');
+      allow get, list, update, delete: if isAdmin();
+    }
+
+    // Private User Account & Deck Chunks
+    match /users/{uid} {
+      allow get: if isValidId(uid) && (isOwner(uid) || isAdmin());
+      allow list: if isAdmin();
+      allow create: if isValidId(uid) && isOwner(uid) && hasNoPrivilegedUserFields(incoming()) && hasValidBlockedUids(incoming());
+      allow update: if isValidId(uid) && (
+        isAdmin() ||
+        (isOwner(uid) && isNotBanned() && doesNotMutatePrivilegedUserFields() && hasValidBlockedUids(incoming()))
+      );
+      allow delete: if isValidId(uid) && ((isOwner(uid) && isNotBanned()) || isAdmin());
+
+      match /deckChunks/{chunkId} {
+        allow get, list: if isValidId(uid) && ((isOwner(uid) && isNotBanned()) || isAdmin());
+        allow create, update, delete: if isValidId(uid) && isValidId(chunkId) && ((isOwner(uid) && isNotBanned()) || isAdmin());
+      }
+    }
+
+    // Public Player Showcase Profiles
+    match /publicProfiles/{uid} {
+      allow get: if isValidId(uid) && isSignedIn() && isNotBanned();
+      allow list: if isSignedIn() && isNotBanned();
+      allow create: if isValidId(uid) && isOwner(uid) && isNotBanned() &&
+        incoming().uid == request.auth.uid &&
+        (!('role' in incoming()) || incoming().role == 'user');
+      allow update: if isValidId(uid) && (
+        isAdmin() ||
+        (
+          isOwner(uid) && isNotBanned() &&
+          incoming().uid == existing().uid &&
+          (!('role' in incoming()) || incoming().role == existing().get('role', 'user'))
+        )
+      );
+      allow delete: if isValidId(uid) && ((isOwner(uid) && isNotBanned()) || isAdmin());
+    }
+
+    // Normalized unique nickname index
+    match /nicknameIndex/{normName} {
+      allow get, list: if isSignedIn() && isNotBanned();
+      allow create: if isSignedIn() && isNotBanned() &&
+        incoming().uid == request.auth.uid &&
+        incoming().nicknameLower == normName &&
+        incoming().nickname is string &&
+        incoming().nickname.size() >= 1 &&
+        incoming().nickname.size() <= 40;
+      allow update: if isSignedIn() && (
+        isAdmin() ||
+        (
+          isNotBanned() &&
+          existing().uid == request.auth.uid &&
+          incoming().uid == request.auth.uid &&
+          incoming().nicknameLower == normName
+        )
+      );
+      allow delete: if isSignedIn() && (
+        isAdmin() ||
+        (isNotBanned() && existing().uid == request.auth.uid)
+      );
+    }
+
+    // Server-managed season/system config (public read, admin Worker write)
+    match /systemConfig/{docId} {
+      allow get, list: if true;
+      allow write: if false;
+    }
+
+    // Ban appeal submissions
+    match /banAppeals/{appealId} {
+      allow create: if isValidId(appealId) && isSignedIn() &&
+        incoming().uid == request.auth.uid &&
+        incoming().message is string &&
+        incoming().message.size() >= 1 &&
+        incoming().message.size() <= 600 &&
+        (!('status' in incoming()) || incoming().status == 'pending');
+      allow get, list, update, delete: if isAdmin();
+    }
+
+    // Community Store Decks & Interaction Subcollections
+    match /storeDecks/{deckId} {
+      allow get: if isValidId(deckId);
+      allow list: if true;
+
+      allow create: if isValidId(deckId) && isSignedIn() && isNotBanned() &&
+        incoming().authorId == request.auth.uid &&
+        incoming().title is string && incoming().title.size() >= 1 && incoming().title.size() <= 120 &&
+        incoming().price is number && incoming().price >= 0 && incoming().price <= 100000;
+
+      allow update: if isValidId(deckId) && isSignedIn() && isNotBanned() && (
+        isAdmin() ||
+        (
+          existing().authorId == request.auth.uid &&
+          incoming().authorId == existing().authorId
+        ) ||
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'likes',
+          'favorites',
+          'downloads',
+          'downloadCount',
+          'views',
+          'monthlyViews',
+          'monthlyDownloads',
+          'statMonthKey',
+          'hotScore'
+        ])
+      );
+
+      allow delete: if isValidId(deckId) && isSignedIn() && (
+        (isNotBanned() && existing().authorId == request.auth.uid) || isAdmin()
+      );
+
+      match /likers/{uid} {
+        allow get: if isValidId(deckId) && isValidId(uid) && isSignedIn();
+        allow list: if isSignedIn();
+        allow create, update, delete: if isValidId(deckId) && isValidId(uid) && isOwner(uid) && isNotBanned();
+      }
+
+      match /favoriters/{uid} {
+        allow get: if isValidId(deckId) && isValidId(uid) && isSignedIn();
+        allow list: if isSignedIn();
+        allow create, update, delete: if isValidId(deckId) && isValidId(uid) && isOwner(uid) && isNotBanned();
+      }
+
+      match /downloaders/{uid} {
+        allow get: if isValidId(deckId) && isValidId(uid) && isSignedIn();
+        allow list: if isSignedIn();
+        allow create, update: if isValidId(deckId) && isValidId(uid) && isOwner(uid) && isNotBanned();
+        allow delete: if isAdmin();
+      }
+
+      match /purchasers/{uid} {
+        allow get: if isValidId(deckId) && isValidId(uid) && (isOwner(uid) || isAdmin());
+        allow list: if isAdmin();
+        allow write: if false; // Server-authoritative only via /buy-deck Worker
+      }
+    }
+  }
+}

@@ -1,0 +1,773 @@
+name: Build Signed iOS IPA & TestFlight
+
+on:
+  workflow_dispatch:
+    inputs:
+      upload_testflight:
+        description: '若已設定 App Store Connect API Key，自動上傳至 TestFlight'
+        required: false
+        default: true
+        type: boolean
+  push:
+    tags:
+      - 'ios-v*'
+
+env:
+  APP_BUNDLE_ID: com.lzhcard.app
+  BROADCAST_BUNDLE_ID: com.lzhcard.app.BroadcastUpload
+  WIDGET_BUNDLE_ID: com.lzhcard.app.LiveActivityWidget
+  APP_NAME: LZHCard
+
+jobs:
+  build-ios:
+    name: Build & Sign iOS IPA
+    runs-on: macos-latest
+
+    steps:
+      - name: 1. Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 2. Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: 3. Install Dependencies & Ensure @capacitor/ios
+        run: |
+          npm install
+          CAP_VER=$(node -p "require('./node_modules/@capacitor/core/package.json').version.split('.')[0]")
+          if [ ! -d "node_modules/@capacitor/ios" ]; then
+            npm install --no-save "@capacitor/ios@^${CAP_VER}.0.0"
+          fi
+          if [ ! -d "ios" ]; then
+            npx cap add ios
+          fi
+
+      - name: 4. Inject Info.plist Privacy Keys, GoogleService-Info & Broadcast Extension Files
+        env:
+          GOOGLE_SERVICE_INFO_PLIST_BASE64: ${{ secrets.GOOGLE_SERVICE_INFO_PLIST_BASE64 }}
+          IOS_BROADCAST_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_BROADCAST_PROVISIONING_PROFILE_BASE64 }}
+          IOS_WIDGET_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_WIDGET_PROVISIONING_PROFILE_BASE64 }}
+        run: |
+          python3 - <<'PY'
+          import os, plistlib
+
+          template_path = 'ios-template/Info.plist'
+          target_path = 'ios/App/App/Info.plist'
+
+          if os.path.exists(template_path):
+              with open(template_path, 'rb') as f:
+                  template_plist = plistlib.load(f)
+
+              if os.path.exists(target_path):
+                  with open(target_path, 'rb') as f:
+                      target_plist = plistlib.load(f)
+              else:
+                  target_plist = {}
+
+              for key, value in template_plist.items():
+                  target_plist[key] = value
+
+              bg_modes = target_plist.get('UIBackgroundModes', [])
+              if not isinstance(bg_modes, list):
+                  bg_modes = []
+              if 'audio' not in bg_modes:
+                  bg_modes.append('audio')
+              target_plist['UIBackgroundModes'] = bg_modes
+
+              with open(target_path, 'wb') as f:
+                  plistlib.dump(target_plist, f, sort_keys=False)
+              print('Merged ios-template/Info.plist and UIBackgroundModes into ios/App/App/Info.plist successfully.')
+          else:
+              print('ios-template/Info.plist not found; skipping template merge.')
+          PY
+
+          if [ -n "$GOOGLE_SERVICE_INFO_PLIST_BASE64" ]; then
+            echo "$GOOGLE_SERVICE_INFO_PLIST_BASE64" | base64 --decode > ios/App/App/GoogleService-Info.plist
+
+            python3 - <<'PY'
+          import os, plistlib
+
+          gs_path = 'ios/App/App/GoogleService-Info.plist'
+          info_path = 'ios/App/App/Info.plist'
+
+          with open(gs_path, 'rb') as f:
+              gs_plist = plistlib.load(f)
+
+          reversed_client_id = str(gs_plist.get('REVERSED_CLIENT_ID', '')).strip()
+          if reversed_client_id:
+              with open(info_path, 'rb') as f:
+                  info_plist = plistlib.load(f)
+
+              url_types = info_plist.get('CFBundleURLTypes', [])
+              if not isinstance(url_types, list):
+                  url_types = []
+
+              already_present = any(
+                  isinstance(entry, dict) and reversed_client_id in (entry.get('CFBundleURLSchemes') or [])
+                  for entry in url_types
+              )
+              if not already_present:
+                  url_types.append({
+                      'CFBundleTypeRole': 'Editor',
+                      'CFBundleURLName': 'GoogleSignIn',
+                      'CFBundleURLSchemes': [reversed_client_id]
+                  })
+                  info_plist['CFBundleURLTypes'] = url_types
+                  with open(info_path, 'wb') as f:
+                      plistlib.dump(info_plist, f, sort_keys=False)
+                  print(f'Injected REVERSED_CLIENT_ID ({reversed_client_id}) into Info.plist CFBundleURLTypes.')
+              else:
+                  print('REVERSED_CLIENT_ID already present in CFBundleURLTypes.')
+          else:
+              print('::warning::REVERSED_CLIENT_ID not found in GoogleService-Info.plist.')
+          PY
+          else
+            echo "::warning::GOOGLE_SERVICE_INFO_PLIST_BASE64 is not set; native Firebase iOS plist skipped."
+          fi
+
+          if [ -f "ios-template/App/IosScreenTranslatePlugin.swift" ]; then
+            cp ios-template/App/IosScreenTranslatePlugin.swift ios/App/App/IosScreenTranslatePlugin.swift
+          fi
+          if [ -f "ios-template/App/LzhAppIntents.swift" ]; then
+            cp ios-template/App/LzhAppIntents.swift ios/App/App/LzhAppIntents.swift
+          fi
+          if [ -d "ios-template/Shared" ]; then
+            mkdir -p ios/App/Shared
+            [ -f "ios-template/Shared/LzhTranslateActivityAttributes.swift" ] && cp ios-template/Shared/LzhTranslateActivityAttributes.swift ios/App/Shared/LzhTranslateActivityAttributes.swift
+            [ -f "ios-template/Shared/LzhSharedEcosystemStore.swift" ] && cp ios-template/Shared/LzhSharedEcosystemStore.swift ios/App/Shared/LzhSharedEcosystemStore.swift
+            [ -f "ios-template/Shared/LzhSharedIntents.swift" ] && cp ios-template/Shared/LzhSharedIntents.swift ios/App/Shared/LzhSharedIntents.swift
+          fi
+          if [ -f "ios-template/App/PrivacyInfo.xcprivacy" ]; then
+            cp ios-template/App/PrivacyInfo.xcprivacy ios/App/App/PrivacyInfo.xcprivacy
+          fi
+          if [ -f "ios-template/App/App.entitlements" ]; then
+            cp ios-template/App/App.entitlements ios/App/App/App.entitlements
+          fi
+
+          HAS_BROADCAST_PROFILE="false"
+          if [ -n "$IOS_BROADCAST_PROVISIONING_PROFILE_BASE64" ] && [ -d "ios-template/BroadcastExtension" ]; then
+            HAS_BROADCAST_PROFILE="true"
+            mkdir -p ios/App/BroadcastUpload
+            cp ios-template/BroadcastExtension/SampleHandler.swift ios/App/BroadcastUpload/SampleHandler.swift
+            cp ios-template/BroadcastExtension/Info.plist ios/App/BroadcastUpload/Info.plist
+            cp ios-template/BroadcastExtension/BroadcastUpload.entitlements ios/App/BroadcastUpload/BroadcastUpload.entitlements
+          else
+            echo "::warning::IOS_BROADCAST_PROVISIONING_PROFILE_BASE64 未設定，將只編譯主 App，略過嵌入 ReplayKit Broadcast Extension Target。"
+          fi
+          echo "HAS_BROADCAST_PROFILE=$HAS_BROADCAST_PROFILE" >> "$GITHUB_ENV"
+
+          HAS_WIDGET_PROFILE="false"
+          if [ -n "$IOS_WIDGET_PROVISIONING_PROFILE_BASE64" ] && [ -d "ios-template/LiveActivityWidget" ]; then
+            HAS_WIDGET_PROFILE="true"
+            mkdir -p ios/App/LiveActivityWidget
+            cp ios-template/LiveActivityWidget/LzhLiveActivityWidget.swift ios/App/LiveActivityWidget/LzhLiveActivityWidget.swift
+            cp ios-template/LiveActivityWidget/Info.plist ios/App/LiveActivityWidget/Info.plist
+            cp ios-template/LiveActivityWidget/LiveActivityWidget.entitlements ios/App/LiveActivityWidget/LiveActivityWidget.entitlements
+          else
+            echo "::warning::IOS_WIDGET_PROVISIONING_PROFILE_BASE64 未設定，將略過嵌入 Dynamic Island LiveActivityWidget Extension Target（主 App 仍包含 AppIntents 捷徑與 ActivityKit 定義）。"
+          fi
+          echo "HAS_WIDGET_PROFILE=$HAS_WIDGET_PROFILE" >> "$GITHUB_ENV"
+
+      - name: 5. Sync Capacitor Web Assets, Generate AppIcon & Configure Xcodeproj / CocoaPods
+        run: |
+          npx cap sync ios
+
+          if [ -f "assets/icon.png" ] && [ -s "assets/icon.png" ]; then
+            echo "Found assets/icon.png, generating iOS AppIcon after cap sync..."
+            cp assets/icon.png assets/icon-only.png
+            sips -z 1024 1024 assets/icon-only.png --out assets/icon-only.png
+            npx --yes @capacitor/assets generate --ios \
+              --iconBackgroundColor '#ffffff' \
+              --iconBackgroundColorDark '#111111' \
+              --splashBackgroundColor '#ffffff' \
+              --splashBackgroundColorDark '#111111' || {
+                echo "Fallback: resizing assets/icon.png directly into AppIcon.appiconset with sips..."
+                ICONSET_DIR="ios/App/App/Assets.xcassets/AppIcon.appiconset"
+                if [ -d "$ICONSET_DIR" ]; then
+                  for img in "$ICONSET_DIR"/*.png; do
+                    [ -f "$img" ] || continue
+                    W=$(sips -g pixelWidth "$img" | awk '/pixelWidth:/{print $2}')
+                    H=$(sips -g pixelHeight "$img" | awk '/pixelHeight:/{print $2}')
+                    [ -n "$W" ] && [ -n "$H" ] && sips -z "$H" "$W" assets/icon.png --out "$img"
+                  done
+                fi
+              }
+            rm -f assets/icon-only.png
+          else
+            echo "::warning::assets/icon.png missing or empty; keeping default Capacitor icon."
+          fi
+
+          if [ "${HAS_BROADCAST_PROFILE:-false}" = "true" ] && [ -d "ios/App/BroadcastUpload" ] && [ -d "ios/App/App/Assets.xcassets" ]; then
+            rm -rf ios/App/BroadcastUpload/Assets.xcassets
+            cp -R ios/App/App/Assets.xcassets ios/App/BroadcastUpload/Assets.xcassets
+            echo "Copied Assets.xcassets to ios/App/BroadcastUpload/Assets.xcassets"
+          fi
+          if [ "${HAS_WIDGET_PROFILE:-false}" = "true" ] && [ -d "ios/App/LiveActivityWidget" ] && [ -d "ios/App/App/Assets.xcassets" ]; then
+            rm -rf ios/App/LiveActivityWidget/Assets.xcassets
+            cp -R ios/App/App/Assets.xcassets ios/App/LiveActivityWidget/Assets.xcassets
+            echo "Copied Assets.xcassets to ios/App/LiveActivityWidget/Assets.xcassets"
+          fi
+
+          ruby - <<'RB'
+          begin
+            require 'xcodeproj'
+          rescue LoadError
+            system('gem install xcodeproj --no-document')
+            Gem.clear_paths
+            require 'xcodeproj'
+          end
+
+          project_path = 'ios/App/App.xcodeproj'
+          project = Xcodeproj::Project.open(project_path)
+          target = project.targets.find { |t| t.name == 'App' }
+          app_marketing_version = target.build_configurations.map { |c| c.build_settings['MARKETING_VERSION'].to_s.strip }.find { |v| !v.empty? && !v.include?('$(') } ||
+                                  project.build_configurations.map { |c| c.build_settings['MARKETING_VERSION'].to_s.strip }.find { |v| !v.empty? && !v.include?('$(') } ||
+                                  '1.0.0'
+          app_project_version = target.build_configurations.map { |c| c.build_settings['CURRENT_PROJECT_VERSION'].to_s.strip }.find { |v| !v.empty? && !v.include?('$(') } ||
+                                project.build_configurations.map { |c| c.build_settings['CURRENT_PROJECT_VERSION'].to_s.strip }.find { |v| !v.empty? && !v.include?('$(') } ||
+                                '1'
+          target.build_configurations.each do |cfg|
+            cfg.build_settings['MARKETING_VERSION'] = app_marketing_version if cfg.build_settings['MARKETING_VERSION'].to_s.strip.empty?
+            cfg.build_settings['CURRENT_PROJECT_VERSION'] = app_project_version if cfg.build_settings['CURRENT_PROJECT_VERSION'].to_s.strip.empty?
+          end
+          app_group = project.main_group.find_subpath('App', true)
+
+          if File.exist?('ios/App/App/GoogleService-Info.plist')
+            existing_gs = app_group.files.find { |f| f.path == 'GoogleService-Info.plist' }
+            unless existing_gs
+              file_ref = app_group.new_reference('GoogleService-Info.plist')
+              target.resources_build_phase.add_file_reference(file_ref)
+              puts 'Registered GoogleService-Info.plist in App.xcodeproj resources.'
+            end
+          end
+
+          if File.exist?('ios/App/App/PrivacyInfo.xcprivacy')
+            existing_privacy = app_group.files.find { |f| f.path == 'PrivacyInfo.xcprivacy' }
+            unless existing_privacy
+              privacy_ref = app_group.new_reference('PrivacyInfo.xcprivacy')
+              target.resources_build_phase.add_file_reference(privacy_ref)
+              puts 'Registered PrivacyInfo.xcprivacy in App.xcodeproj resources.'
+            end
+          end
+
+          if File.exist?('ios/App/App/IosScreenTranslatePlugin.swift')
+            existing_plugin = app_group.files.find { |f| f.path == 'IosScreenTranslatePlugin.swift' }
+            unless existing_plugin
+              plugin_ref = app_group.new_reference('IosScreenTranslatePlugin.swift')
+              target.source_build_phase.add_file_reference(plugin_ref)
+              puts 'Registered IosScreenTranslatePlugin.swift in App target sources.'
+            end
+          end
+
+          if File.exist?('ios/App/App/LzhAppIntents.swift')
+            existing_intents = app_group.files.find { |f| f.path == 'LzhAppIntents.swift' }
+            unless existing_intents
+              intents_ref = app_group.new_reference('LzhAppIntents.swift')
+              target.source_build_phase.add_file_reference(intents_ref)
+              puts 'Registered LzhAppIntents.swift in App target sources.'
+            end
+          end
+
+          shared_group = project.main_group.find_subpath('Shared', true)
+          shared_group.set_source_tree('SOURCE_ROOT')
+
+          shared_attr_ref = nil
+          if File.exist?('ios/App/Shared/LzhTranslateActivityAttributes.swift')
+            shared_attr_ref = shared_group.files.find { |f| f.path == 'Shared/LzhTranslateActivityAttributes.swift' } ||
+                              shared_group.new_reference('Shared/LzhTranslateActivityAttributes.swift')
+            unless target.source_build_phase.files_references.include?(shared_attr_ref)
+              target.source_build_phase.add_file_reference(shared_attr_ref)
+              puts 'Registered Shared/LzhTranslateActivityAttributes.swift in App target sources.'
+            end
+          end
+
+          shared_store_ref = nil
+          if File.exist?('ios/App/Shared/LzhSharedEcosystemStore.swift')
+            shared_store_ref = shared_group.files.find { |f| f.path == 'Shared/LzhSharedEcosystemStore.swift' } ||
+                               shared_group.new_reference('Shared/LzhSharedEcosystemStore.swift')
+            unless target.source_build_phase.files_references.include?(shared_store_ref)
+              target.source_build_phase.add_file_reference(shared_store_ref)
+              puts 'Registered Shared/LzhSharedEcosystemStore.swift in App target sources.'
+            end
+          end
+
+          shared_intents_ref = nil
+          if File.exist?('ios/App/Shared/LzhSharedIntents.swift')
+            shared_intents_ref = shared_group.files.find { |f| f.path == 'Shared/LzhSharedIntents.swift' } ||
+                                 shared_group.new_reference('Shared/LzhSharedIntents.swift')
+            unless target.source_build_phase.files_references.include?(shared_intents_ref)
+              target.source_build_phase.add_file_reference(shared_intents_ref)
+              puts 'Registered Shared/LzhSharedIntents.swift in App target sources.'
+            end
+          end
+
+          if File.exist?('ios/App/App/App.entitlements')
+            existing_ent = app_group.files.find { |f| f.path == 'App.entitlements' }
+            app_group.new_reference('App.entitlements') unless existing_ent
+            target.build_configurations.each do |cfg|
+              cfg.build_settings['CODE_SIGN_ENTITLEMENTS'] = 'App/App.entitlements'
+              cfg.build_settings['SWIFT_VERSION'] ||= '5.0'
+            end
+          end
+
+          if ENV['HAS_BROADCAST_PROFILE'] == 'true'
+            ext_name = 'BroadcastUpload'
+            ext_target = project.targets.find { |t| t.name == ext_name }
+            unless ext_target
+              ext_target = project.new_target(:app_extension, ext_name, :ios, '15.0')
+            end
+            ext_target.product_name = ext_name
+            if ext_target.product_reference
+              ext_target.product_reference.name = "#{ext_name}.appex"
+              ext_target.product_reference.path = "#{ext_name}.appex"
+              ext_target.product_reference.source_tree = 'BUILT_PRODUCTS_DIR'
+            end
+
+            ext_group = project.main_group.find_subpath(ext_name, true)
+            ext_group.set_source_tree('SOURCE_ROOT')
+
+            sample_ref = ext_group.files.find { |f| f.path == 'BroadcastUpload/SampleHandler.swift' } ||
+                         ext_group.new_reference('BroadcastUpload/SampleHandler.swift')
+            unless ext_target.source_build_phase.files_references.include?(sample_ref)
+              ext_target.source_build_phase.add_file_reference(sample_ref)
+            end
+            if shared_store_ref && !ext_target.source_build_phase.files_references.include?(shared_store_ref)
+              ext_target.source_build_phase.add_file_reference(shared_store_ref)
+            end
+
+            ext_group.new_reference('BroadcastUpload/Info.plist') unless ext_group.files.find { |f| f.path == 'BroadcastUpload/Info.plist' }
+            ext_group.new_reference('BroadcastUpload/BroadcastUpload.entitlements') unless ext_group.files.find { |f| f.path == 'BroadcastUpload/BroadcastUpload.entitlements' }
+
+            if Dir.exist?('ios/App/BroadcastUpload/Assets.xcassets')
+              assets_ref = ext_group.files.find { |f| f.path == 'BroadcastUpload/Assets.xcassets' } ||
+                           ext_group.new_reference('BroadcastUpload/Assets.xcassets')
+              unless ext_target.resources_build_phase.files_references.include?(assets_ref)
+                ext_target.resources_build_phase.add_file_reference(assets_ref)
+              end
+            end
+
+            ext_target.build_configurations.each do |cfg|
+              cfg.build_settings['PRODUCT_NAME'] = ext_name
+              cfg.build_settings['PRODUCT_MODULE_NAME'] = ext_name
+              cfg.build_settings['WRAPPER_EXTENSION'] = 'appex'
+              cfg.build_settings['MARKETING_VERSION'] = app_marketing_version
+              cfg.build_settings['CURRENT_PROJECT_VERSION'] = app_project_version
+              cfg.build_settings['PRODUCT_BUNDLE_IDENTIFIER'] = ENV['BROADCAST_BUNDLE_ID'] || 'com.lzhcard.app.BroadcastUpload'
+              cfg.build_settings['INFOPLIST_FILE'] = 'BroadcastUpload/Info.plist'
+              cfg.build_settings['CODE_SIGN_ENTITLEMENTS'] = 'BroadcastUpload/BroadcastUpload.entitlements'
+              cfg.build_settings['ASSETCATALOG_COMPILER_APPICON_NAME'] = 'AppIcon'
+              cfg.build_settings['INFOPLIST_KEY_CFBundleDisplayName'] = 'LZHCard'
+              cfg.build_settings['SWIFT_VERSION'] = '5.0'
+              cfg.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.0'
+              cfg.build_settings['SKIP_INSTALL'] = 'YES'
+              cfg.build_settings['TARGETED_DEVICE_FAMILY'] = '1,2'
+            end
+
+            target.add_dependency(ext_target) unless target.dependencies.any? { |d| d.target == ext_target }
+            embed_phase = target.copy_files_build_phases.find { |p| p.dst_subfolder_spec == '13' } ||
+                          target.new_copy_files_build_phase('Embed Foundation Extensions')
+            embed_phase.dst_subfolder_spec = '13'
+            unless embed_phase.files_references.include?(ext_target.product_reference)
+              build_file = embed_phase.add_file_reference(ext_target.product_reference)
+              build_file.settings = { 'ATTRIBUTES' => ['RemoveHeadersOnCopy'] }
+            end
+            puts 'Registered ReplayKit BroadcastUpload extension target successfully.'
+          end
+
+          if ENV['HAS_WIDGET_PROFILE'] == 'true'
+            widget_name = 'LiveActivityWidget'
+            widget_target = project.targets.find { |t| t.name == widget_name }
+            unless widget_target
+              widget_target = project.new_target(:app_extension, widget_name, :ios, '16.1')
+            end
+            widget_target.product_name = widget_name
+            if widget_target.product_reference
+              widget_target.product_reference.name = "#{widget_name}.appex"
+              widget_target.product_reference.path = "#{widget_name}.appex"
+              widget_target.product_reference.source_tree = 'BUILT_PRODUCTS_DIR'
+            end
+
+            widget_group = project.main_group.find_subpath(widget_name, true)
+            widget_group.set_source_tree('SOURCE_ROOT')
+
+            widget_swift_ref = widget_group.files.find { |f| f.path == 'LiveActivityWidget/LzhLiveActivityWidget.swift' } ||
+                               widget_group.new_reference('LiveActivityWidget/LzhLiveActivityWidget.swift')
+            unless widget_target.source_build_phase.files_references.include?(widget_swift_ref)
+              widget_target.source_build_phase.add_file_reference(widget_swift_ref)
+            end
+            if shared_attr_ref && !widget_target.source_build_phase.files_references.include?(shared_attr_ref)
+              widget_target.source_build_phase.add_file_reference(shared_attr_ref)
+            end
+            if shared_store_ref && !widget_target.source_build_phase.files_references.include?(shared_store_ref)
+              widget_target.source_build_phase.add_file_reference(shared_store_ref)
+            end
+            if shared_intents_ref && !widget_target.source_build_phase.files_references.include?(shared_intents_ref)
+              widget_target.source_build_phase.add_file_reference(shared_intents_ref)
+            end
+
+            widget_group.new_reference('LiveActivityWidget/Info.plist') unless widget_group.files.find { |f| f.path == 'LiveActivityWidget/Info.plist' }
+            widget_group.new_reference('LiveActivityWidget/LiveActivityWidget.entitlements') unless widget_group.files.find { |f| f.path == 'LiveActivityWidget/LiveActivityWidget.entitlements' }
+
+            if Dir.exist?('ios/App/LiveActivityWidget/Assets.xcassets')
+              widget_assets_ref = widget_group.files.find { |f| f.path == 'LiveActivityWidget/Assets.xcassets' } ||
+                                  widget_group.new_reference('LiveActivityWidget/Assets.xcassets')
+              unless widget_target.resources_build_phase.files_references.include?(widget_assets_ref)
+                widget_target.resources_build_phase.add_file_reference(widget_assets_ref)
+              end
+            end
+
+            widget_target.build_configurations.each do |cfg|
+              cfg.build_settings['PRODUCT_NAME'] = widget_name
+              cfg.build_settings['PRODUCT_MODULE_NAME'] = widget_name
+              cfg.build_settings['WRAPPER_EXTENSION'] = 'appex'
+              cfg.build_settings['MARKETING_VERSION'] = app_marketing_version
+              cfg.build_settings['CURRENT_PROJECT_VERSION'] = app_project_version
+              cfg.build_settings['PRODUCT_BUNDLE_IDENTIFIER'] = ENV['WIDGET_BUNDLE_ID'] || 'com.lzhcard.app.LiveActivityWidget'
+              cfg.build_settings['INFOPLIST_FILE'] = 'LiveActivityWidget/Info.plist'
+              cfg.build_settings['CODE_SIGN_ENTITLEMENTS'] = 'LiveActivityWidget/LiveActivityWidget.entitlements'
+              cfg.build_settings['ASSETCATALOG_COMPILER_APPICON_NAME'] = 'AppIcon'
+              cfg.build_settings['INFOPLIST_KEY_CFBundleDisplayName'] = 'LZHCard Live Subtitle'
+              cfg.build_settings['SWIFT_VERSION'] = '5.0'
+              cfg.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '16.1'
+              cfg.build_settings['SKIP_INSTALL'] = 'YES'
+              cfg.build_settings['TARGETED_DEVICE_FAMILY'] = '1,2'
+            end
+
+            target.add_dependency(widget_target) unless target.dependencies.any? { |d| d.target == widget_target }
+            embed_phase = target.copy_files_build_phases.find { |p| p.dst_subfolder_spec == '13' } ||
+                          target.new_copy_files_build_phase('Embed Foundation Extensions')
+            embed_phase.dst_subfolder_spec = '13'
+            unless embed_phase.files_references.include?(widget_target.product_reference)
+              build_file = embed_phase.add_file_reference(widget_target.product_reference)
+              build_file.settings = { 'ATTRIBUTES' => ['RemoveHeadersOnCopy'] }
+            end
+            puts 'Registered Dynamic Island LiveActivityWidget extension target successfully.'
+          end
+
+          project.save
+          RB
+
+          node -e '
+            const fs = require("fs");
+            const p = "ios/App/App/capacitor.config.json";
+            const cfg = JSON.parse(fs.readFileSync(p, "utf8"));
+            cfg.plugins = cfg.plugins || {};
+            cfg.plugins.FirebaseAuthentication = {
+              ...(cfg.plugins.FirebaseAuthentication || {}),
+              skipNativeAuth: false,
+              providers: ["google.com", "apple.com"]
+            };
+            cfg.packageClassList = Array.isArray(cfg.packageClassList) ? cfg.packageClassList : [];
+            if (!cfg.packageClassList.includes("IosScreenTranslatePlugin")) {
+              cfg.packageClassList.push("IosScreenTranslatePlugin");
+            }
+            fs.writeFileSync(p, JSON.stringify(cfg, null, 2));
+            console.log("=== Final iOS capacitor.config.json ===");
+            console.log(fs.readFileSync(p, "utf8"));
+          '
+          if [ -f "ios/App/Podfile" ]; then
+            cd ios/App
+            pod install --repo-update
+          fi
+
+      - name: 6. Validate Signing Secrets & Setup Keychain / Provisioning Profile
+        env:
+          IOS_P12_BASE64: ${{ secrets.IOS_P12_BASE64 }}
+          IOS_P12_PASSWORD: ${{ secrets.IOS_P12_PASSWORD }}
+          IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+          IOS_BROADCAST_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_BROADCAST_PROVISIONING_PROFILE_BASE64 }}
+          IOS_WIDGET_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_WIDGET_PROVISIONING_PROFILE_BASE64 }}
+        run: |
+          if [ -z "$IOS_P12_BASE64" ] || [ -z "$IOS_PROVISIONING_PROFILE_BASE64" ]; then
+            echo "::error::Missing IOS_P12_BASE64 or IOS_PROVISIONING_PROFILE_BASE64 in GitHub Secrets."
+            exit 1
+          fi
+
+          mkdir -p build/signing
+          KEYCHAIN_PATH="$RUNNER_TEMP/app-signing.keychain-db"
+          KEYCHAIN_PASSWORD=$(openssl rand -base64 24)
+          P12_PATH="$RUNNER_TEMP/dist-cert.p12"
+          PROFILE_PATH="$RUNNER_TEMP/dist.mobileprovision"
+          PROFILE_PLIST="$RUNNER_TEMP/profile.plist"
+
+          echo "$IOS_P12_BASE64" | base64 --decode > "$P12_PATH"
+          echo "$IOS_PROVISIONING_PROFILE_BASE64" | base64 --decode > "$PROFILE_PATH"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$P12_PATH" -P "$IOS_P12_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH" login.keychain-db
+
+          security cms -D -i "$PROFILE_PATH" > "$PROFILE_PLIST"
+          PROFILE_UUID=$(/usr/libexec/PlistBuddy -c "Print :UUID" "$PROFILE_PLIST")
+          PROFILE_NAME=$(/usr/libexec/PlistBuddy -c "Print :Name" "$PROFILE_PLIST")
+          TEAM_ID=$(/usr/libexec/PlistBuddy -c "Print :TeamIdentifier:0" "$PROFILE_PLIST")
+          export TEAM_ID
+
+          mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
+          cp "$PROFILE_PATH" "$HOME/Library/MobileDevice/Provisioning Profiles/${PROFILE_UUID}.mobileprovision"
+
+          SIGN_IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" | grep -E "Apple Distribution|iPhone Distribution" | head -n 1 | sed -E 's/.*"([^"]+)".*/\1/')
+          if [ -z "$SIGN_IDENTITY" ]; then
+            SIGN_IDENTITY="Apple Distribution"
+          fi
+          export PROFILE_UUID SIGN_IDENTITY
+
+          BROADCAST_PROFILE_ENTRY=""
+          if [ "${HAS_BROADCAST_PROFILE:-false}" = "true" ] && [ -n "$IOS_BROADCAST_PROVISIONING_PROFILE_BASE64" ]; then
+            EXT_PROFILE_PATH="$RUNNER_TEMP/broadcast.mobileprovision"
+            EXT_PROFILE_PLIST="$RUNNER_TEMP/broadcast-profile.plist"
+            echo "$IOS_BROADCAST_PROVISIONING_PROFILE_BASE64" | base64 --decode > "$EXT_PROFILE_PATH"
+            security cms -D -i "$EXT_PROFILE_PATH" > "$EXT_PROFILE_PLIST"
+            EXT_PROFILE_UUID=$(/usr/libexec/PlistBuddy -c "Print :UUID" "$EXT_PROFILE_PLIST")
+            export EXT_PROFILE_UUID
+            cp "$EXT_PROFILE_PATH" "$HOME/Library/MobileDevice/Provisioning Profiles/${EXT_PROFILE_UUID}.mobileprovision"
+            echo "EXT_PROFILE_UUID=$EXT_PROFILE_UUID" >> "$GITHUB_ENV"
+            BROADCAST_PROFILE_ENTRY="      <key>${BROADCAST_BUNDLE_ID}</key>
+              <string>${EXT_PROFILE_UUID}</string>"
+          fi
+
+          WIDGET_PROFILE_ENTRY=""
+          if [ "${HAS_WIDGET_PROFILE:-false}" = "true" ] && [ -n "$IOS_WIDGET_PROVISIONING_PROFILE_BASE64" ]; then
+            WIDGET_PROFILE_PATH="$RUNNER_TEMP/widget.mobileprovision"
+            WIDGET_PROFILE_PLIST="$RUNNER_TEMP/widget-profile.plist"
+            echo "$IOS_WIDGET_PROVISIONING_PROFILE_BASE64" | base64 --decode > "$WIDGET_PROFILE_PATH"
+            security cms -D -i "$WIDGET_PROFILE_PATH" > "$WIDGET_PROFILE_PLIST"
+            WIDGET_PROFILE_UUID=$(/usr/libexec/PlistBuddy -c "Print :UUID" "$WIDGET_PROFILE_PLIST")
+            export WIDGET_PROFILE_UUID
+            cp "$WIDGET_PROFILE_PATH" "$HOME/Library/MobileDevice/Provisioning Profiles/${WIDGET_PROFILE_UUID}.mobileprovision"
+            echo "WIDGET_PROFILE_UUID=$WIDGET_PROFILE_UUID" >> "$GITHUB_ENV"
+            WIDGET_PROFILE_ENTRY="      <key>${WIDGET_BUNDLE_ID}</key>
+              <string>${WIDGET_PROFILE_UUID}</string>"
+          fi
+
+          ruby - <<'RB'
+          require 'xcodeproj'
+          project = Xcodeproj::Project.open('ios/App/App.xcodeproj')
+          app_target = project.targets.find { |t| t.name == 'App' }
+          if app_target
+            app_target.build_configurations.each do |cfg|
+              cfg.build_settings['PRODUCT_BUNDLE_IDENTIFIER'] = ENV['APP_BUNDLE_ID'] || 'com.lzhcard.app'
+              cfg.build_settings['DEVELOPMENT_TEAM'] = ENV['TEAM_ID'] || ''
+              cfg.build_settings['CODE_SIGN_STYLE'] = 'Manual'
+              cfg.build_settings['CODE_SIGN_IDENTITY'] = ENV['SIGN_IDENTITY'] || 'Apple Distribution'
+              cfg.build_settings['PROVISIONING_PROFILE_SPECIFIER'] = ENV['PROFILE_UUID'] || ''
+            end
+          end
+          ext_target = project.targets.find { |t| t.name == 'BroadcastUpload' }
+          if ext_target && ENV['EXT_PROFILE_UUID'] && !ENV['EXT_PROFILE_UUID'].empty?
+            ext_target.build_configurations.each do |cfg|
+              cfg.build_settings['PRODUCT_BUNDLE_IDENTIFIER'] = ENV['BROADCAST_BUNDLE_ID'] || 'com.lzhcard.app.BroadcastUpload'
+              cfg.build_settings['ASSETCATALOG_COMPILER_APPICON_NAME'] = 'AppIcon'
+              cfg.build_settings['INFOPLIST_KEY_CFBundleDisplayName'] = 'LZHCard'
+              cfg.build_settings['DEVELOPMENT_TEAM'] = ENV['TEAM_ID'] || ''
+              cfg.build_settings['CODE_SIGN_STYLE'] = 'Manual'
+              cfg.build_settings['CODE_SIGN_IDENTITY'] = ENV['SIGN_IDENTITY'] || 'Apple Distribution'
+              cfg.build_settings['PROVISIONING_PROFILE_SPECIFIER'] = ENV['EXT_PROFILE_UUID'] || ''
+            end
+          end
+          widget_target = project.targets.find { |t| t.name == 'LiveActivityWidget' }
+          if widget_target && ENV['WIDGET_PROFILE_UUID'] && !ENV['WIDGET_PROFILE_UUID'].empty?
+            widget_target.build_configurations.each do |cfg|
+              cfg.build_settings['PRODUCT_BUNDLE_IDENTIFIER'] = ENV['WIDGET_BUNDLE_ID'] || 'com.lzhcard.app.LiveActivityWidget'
+              cfg.build_settings['ASSETCATALOG_COMPILER_APPICON_NAME'] = 'AppIcon'
+              cfg.build_settings['INFOPLIST_KEY_CFBundleDisplayName'] = 'LZHCard Live Subtitle'
+              cfg.build_settings['DEVELOPMENT_TEAM'] = ENV['TEAM_ID'] || ''
+              cfg.build_settings['CODE_SIGN_STYLE'] = 'Manual'
+              cfg.build_settings['CODE_SIGN_IDENTITY'] = ENV['SIGN_IDENTITY'] || 'Apple Distribution'
+              cfg.build_settings['PROVISIONING_PROFILE_SPECIFIER'] = ENV['WIDGET_PROFILE_UUID'] || ''
+            end
+          end
+          project.save
+          RB
+
+          echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
+          echo "PROFILE_UUID=$PROFILE_UUID" >> "$GITHUB_ENV"
+          echo "PROFILE_NAME=$PROFILE_NAME" >> "$GITHUB_ENV"
+          echo "TEAM_ID=$TEAM_ID" >> "$GITHUB_ENV"
+          echo "SIGN_IDENTITY=$SIGN_IDENTITY" >> "$GITHUB_ENV"
+
+          cat > build/signing/ExportOptions.plist <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key>
+            <string>app-store-connect</string>
+            <key>signingStyle</key>
+            <string>manual</string>
+            <key>teamID</key>
+            <string>${TEAM_ID}</string>
+            <key>uploadSymbols</key>
+            <true/>
+            <key>manageAppVersionAndBuildNumber</key>
+            <false/>
+            <key>provisioningProfiles</key>
+            <dict>
+              <key>${APP_BUNDLE_ID}</key>
+              <string>${PROFILE_UUID}</string>
+          ${BROADCAST_PROFILE_ENTRY}
+          ${WIDGET_PROFILE_ENTRY}
+            </dict>
+          </dict>
+          </plist>
+          EOF
+
+      - name: 7. Archive & Export Signed IPA
+        run: |
+          if [ -d "ios/App/App.xcworkspace" ]; then
+            TARGET_FLAG="-workspace ios/App/App.xcworkspace"
+          else
+            TARGET_FLAG="-project ios/App/App.xcodeproj"
+          fi
+
+          xcodebuild $TARGET_FLAG \
+            -scheme App \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -archivePath build/LZHCard.xcarchive \
+            clean archive
+
+          ARCHIVE_APP_PLIST="build/LZHCard.xcarchive/Products/Applications/App.app/Info.plist"
+          ARCHIVE_EXT_PLIST="build/LZHCard.xcarchive/Products/Applications/App.app/PlugIns/BroadcastUpload.appex/Info.plist"
+          APP_SHORT_VER=$(plutil -extract CFBundleShortVersionString raw -o - "$ARCHIVE_APP_PLIST")
+          APP_BUNDLE_VER=$(plutil -extract CFBundleVersion raw -o - "$ARCHIVE_APP_PLIST")
+          if [ -z "$APP_SHORT_VER" ] || [ -z "$APP_BUNDLE_VER" ]; then
+            echo "::error::App.app/Info.plist 缺少 CFBundleShortVersionString 或 CFBundleVersion。"
+            exit 1
+          fi
+          if [ "${HAS_BROADCAST_PROFILE:-false}" = "true" ]; then
+            if [ ! -f "$ARCHIVE_EXT_PLIST" ]; then
+              echo "::error::BroadcastUpload.appex/Info.plist 未出現在 xcarchive 中。"
+              exit 1
+            fi
+            plutil -lint "$ARCHIVE_EXT_PLIST"
+            EXT_SHORT_VER=$(plutil -extract CFBundleShortVersionString raw -o - "$ARCHIVE_EXT_PLIST" 2>/dev/null || true)
+            EXT_BUNDLE_VER=$(plutil -extract CFBundleVersion raw -o - "$ARCHIVE_EXT_PLIST" 2>/dev/null || true)
+            echo "Archive App.app version: $APP_SHORT_VER ($APP_BUNDLE_VER)"
+            echo "Archive BroadcastUpload.appex version: $EXT_SHORT_VER ($EXT_BUNDLE_VER)"
+            if [ -z "$EXT_SHORT_VER" ] || [ -z "$EXT_BUNDLE_VER" ] || [ "$EXT_SHORT_VER" != "$APP_SHORT_VER" ] || [ "$EXT_BUNDLE_VER" != "$APP_BUNDLE_VER" ]; then
+              echo "::error::BroadcastUpload.appex/Info.plist 版本欄位為空或與主 App 不一致！"
+              exit 1
+            fi
+          fi
+
+          if [ "${HAS_WIDGET_PROFILE:-false}" = "true" ]; then
+            ARCHIVE_WIDGET_PLIST="build/LZHCard.xcarchive/Products/Applications/App.app/PlugIns/LiveActivityWidget.appex/Info.plist"
+            if [ ! -f "$ARCHIVE_WIDGET_PLIST" ]; then
+              echo "::error::LiveActivityWidget.appex/Info.plist 未出現在 xcarchive 中。"
+              exit 1
+            fi
+            plutil -lint "$ARCHIVE_WIDGET_PLIST"
+            WIDGET_SHORT_VER=$(plutil -extract CFBundleShortVersionString raw -o - "$ARCHIVE_WIDGET_PLIST" 2>/dev/null || true)
+            WIDGET_BUNDLE_VER=$(plutil -extract CFBundleVersion raw -o - "$ARCHIVE_WIDGET_PLIST" 2>/dev/null || true)
+            echo "Archive LiveActivityWidget.appex version: $WIDGET_SHORT_VER ($WIDGET_BUNDLE_VER)"
+            if [ -z "$WIDGET_SHORT_VER" ] || [ -z "$WIDGET_BUNDLE_VER" ] || [ "$WIDGET_SHORT_VER" != "$APP_SHORT_VER" ] || [ "$WIDGET_BUNDLE_VER" != "$APP_BUNDLE_VER" ]; then
+              echo "::error::LiveActivityWidget.appex/Info.plist 版本欄位為空或與主 App 不一致！"
+              exit 1
+            fi
+          fi
+
+          xcodebuild -exportArchive \
+            -archivePath build/LZHCard.xcarchive \
+            -exportOptionsPlist build/signing/ExportOptions.plist \
+            -exportPath build/ipa
+
+          IPA_FOUND=$(ls build/ipa/*.ipa | head -n 1)
+          if [ -n "$IPA_FOUND" ] && [ "$IPA_FOUND" != "build/ipa/LZHCard.ipa" ]; then
+            cp "$IPA_FOUND" build/ipa/LZHCard.ipa
+          fi
+
+          if [ "${HAS_BROADCAST_PROFILE:-false}" = "true" ] || [ "${HAS_WIDGET_PROFILE:-false}" = "true" ]; then
+            TMP_VERIFY_DIR=$(mktemp -d)
+            unzip -q -o build/ipa/LZHCard.ipa "Payload/*.app/Info.plist" "Payload/*.app/PlugIns/*.appex/Info.plist" -d "$TMP_VERIFY_DIR"
+            IPA_APP_PLIST=$(find "$TMP_VERIFY_DIR/Payload" -maxdepth 2 -name "Info.plist" | head -n 1)
+            IPA_APP_SHORT=$(plutil -extract CFBundleShortVersionString raw -o - "$IPA_APP_PLIST")
+            IPA_APP_BUILD=$(plutil -extract CFBundleVersion raw -o - "$IPA_APP_PLIST")
+
+            if [ "${HAS_BROADCAST_PROFILE:-false}" = "true" ]; then
+              IPA_EXT_PLIST=$(find "$TMP_VERIFY_DIR/Payload" -path "*/PlugIns/BroadcastUpload.appex/Info.plist" | head -n 1)
+              plutil -lint "$IPA_EXT_PLIST"
+              IPA_EXT_SHORT=$(plutil -extract CFBundleShortVersionString raw -o - "$IPA_EXT_PLIST" 2>/dev/null || true)
+              IPA_EXT_BUILD=$(plutil -extract CFBundleVersion raw -o - "$IPA_EXT_PLIST" 2>/dev/null || true)
+              echo "Exported IPA App version: $IPA_APP_SHORT ($IPA_APP_BUILD)"
+              echo "Exported IPA BroadcastUpload.appex version: $IPA_EXT_SHORT ($IPA_EXT_BUILD)"
+              if [ -z "$IPA_EXT_SHORT" ] || [ -z "$IPA_EXT_BUILD" ] || [ "$IPA_EXT_SHORT" != "$IPA_APP_SHORT" ] || [ "$IPA_EXT_BUILD" != "$IPA_APP_BUILD" ]; then
+                rm -rf "$TMP_VERIFY_DIR"
+                echo "::error::匯出 IPA 內 BroadcastUpload.appex/Info.plist 版本欄位驗證失敗！"
+                exit 1
+              fi
+            fi
+
+            if [ "${HAS_WIDGET_PROFILE:-false}" = "true" ]; then
+              IPA_WIDGET_PLIST=$(find "$TMP_VERIFY_DIR/Payload" -path "*/PlugIns/LiveActivityWidget.appex/Info.plist" | head -n 1)
+              plutil -lint "$IPA_WIDGET_PLIST"
+              IPA_WIDGET_SHORT=$(plutil -extract CFBundleShortVersionString raw -o - "$IPA_WIDGET_PLIST" 2>/dev/null || true)
+              IPA_WIDGET_BUILD=$(plutil -extract CFBundleVersion raw -o - "$IPA_WIDGET_PLIST" 2>/dev/null || true)
+              echo "Exported IPA LiveActivityWidget.appex version: $IPA_WIDGET_SHORT ($IPA_WIDGET_BUILD)"
+              if [ -z "$IPA_WIDGET_SHORT" ] || [ -z "$IPA_WIDGET_BUILD" ] || [ "$IPA_WIDGET_SHORT" != "$IPA_APP_SHORT" ] || [ "$IPA_WIDGET_BUILD" != "$IPA_APP_BUILD" ]; then
+                rm -rf "$TMP_VERIFY_DIR"
+                echo "::error::匯出 IPA 內 LiveActivityWidget.appex/Info.plist 版本欄位驗證失敗！"
+                exit 1
+              fi
+            fi
+
+            rm -rf "$TMP_VERIFY_DIR"
+          fi
+          ls -lh build/ipa/
+
+      - name: 8. Upload Signed IPA Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lzhcard-signed-ipa
+          path: build/ipa/LZHCard.ipa
+          retention-days: 30
+
+      - name: 9. Upload IPA to TestFlight (Optional)
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_UPLOAD: ${{ inputs.upload_testflight }}
+          APPLE_CONNECT_API_KEY_BASE64: ${{ secrets.APPLE_CONNECT_API_KEY_BASE64 }}
+          APPLE_CONNECT_KEY_ID: ${{ secrets.APPLE_CONNECT_KEY_ID }}
+          APPLE_CONNECT_ISSUER_ID: ${{ secrets.APPLE_CONNECT_ISSUER_ID }}
+        run: |
+          if [ "$EVENT_NAME" != "push" ] && [ "$INPUT_UPLOAD" != "true" ]; then
+            echo "未勾選上傳 TestFlight，略過此步驟。"
+            exit 0
+          fi
+
+          if [ -z "$APPLE_CONNECT_API_KEY_BASE64" ] || [ -z "$APPLE_CONNECT_KEY_ID" ] || [ -z "$APPLE_CONNECT_ISSUER_ID" ]; then
+            echo "尚未設定 App Store Connect API Key Secrets，略過 TestFlight 上傳（仍可從 Artifacts 下載 .ipa）。"
+            exit 0
+          fi
+
+          mkdir -p "$HOME/.appstoreconnect/private_keys"
+          KEY_FILE="$HOME/.appstoreconnect/private_keys/AuthKey_${APPLE_CONNECT_KEY_ID}.p8"
+          echo "$APPLE_CONNECT_API_KEY_BASE64" | base64 --decode > "$KEY_FILE"
+
+          xcrun altool --upload-app \
+            --type ios \
+            -f build/ipa/LZHCard.ipa \
+            --apiKey "$APPLE_CONNECT_KEY_ID" \
+            --apiIssuer "$APPLE_CONNECT_ISSUER_ID"
+
+      - name: 10. Cleanup Keychain & Temporary Secrets
+        if: always()
+        run: |
+          if [ -n "${KEYCHAIN_PATH:-}" ] && [ -f "$KEYCHAIN_PATH" ]; then
+            security delete-keychain "$KEYCHAIN_PATH" || true
+          fi
+          rm -rf "$RUNNER_TEMP/dist-cert.p12" \
+                 "$RUNNER_TEMP/dist.mobileprovision" \
+                 "$RUNNER_TEMP/profile.plist" \
+                 "$RUNNER_TEMP/broadcast.mobileprovision" \
+                 "$RUNNER_TEMP/broadcast-profile.plist" \
+                 "$RUNNER_TEMP/widget.mobileprovision" \
+                 "$RUNNER_TEMP/widget-profile.plist" \
+                 "$HOME/.appstoreconnect/private_keys" \
+                 build/signing || true

@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LZHCard 獨立懸浮字幕視窗</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        html, body {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background: transparent;
+            font-family: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            user-select: none;
+            color: #f8fafc;
+        }
+        .sub-shell {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            border-radius: 16px;
+            background: rgba(10, 15, 29, 0.84);
+            backdrop-filter: blur(18px);
+            -webkit-backdrop-filter: blur(18px);
+            border: 1px solid rgba(255, 255, 255, 0.16);
+            box-shadow: 0 14px 36px rgba(2, 6, 23, 0.55);
+            overflow: hidden;
+        }
+        .sub-dragbar {
+            height: 28px;
+            min-height: 28px;
+            padding: 0 10px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background: rgba(15, 23, 42, 0.72);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+            -webkit-app-region: drag;
+            cursor: move;
+        }
+        .sub-brand {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.03em;
+            color: #cbd5e1;
+        }
+        .sub-dot {
+            width: 7px;
+            height: 7px;
+            border-radius: 999px;
+            background: #22c55e;
+            box-shadow: 0 0 8px rgba(34, 197, 94, 0.75);
+        }
+        .sub-dot.idle {
+            background: #64748b;
+            box-shadow: none;
+        }
+        .sub-tier {
+            font-size: 10px;
+            font-weight: 700;
+            padding: 1px 6px;
+            border-radius: 999px;
+            background: rgba(56, 189, 248, 0.18);
+            color: #7dd3fc;
+            border: 1px solid rgba(56, 189, 248, 0.35);
+        }
+        .sub-controls {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            -webkit-app-region: no-drag;
+        }
+        .sub-btn {
+            border: 1px solid rgba(255, 255, 255, 0.16);
+            background: rgba(255, 255, 255, 0.08);
+            color: #e2e8f0;
+            border-radius: 6px;
+            height: 20px;
+            min-width: 24px;
+            padding: 0 6px;
+            font-size: 11px;
+            font-weight: 700;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            transition: background 0.15s ease, border-color 0.15s ease;
+        }
+        .sub-btn:hover {
+            background: rgba(255, 255, 255, 0.18);
+            border-color: rgba(255, 255, 255, 0.32);
+        }
+        .sub-btn-close:hover {
+            background: rgba(239, 68, 68, 0.75);
+            border-color: rgba(248, 113, 113, 0.9);
+            color: #ffffff;
+        }
+        .sub-body {
+            flex: 1;
+            min-height: 0;
+            padding: 8px 16px 10px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            gap: 4px;
+            overflow-y: auto;
+        }
+        .sub-orig {
+            font-size: 13px;
+            line-height: 1.35;
+            color: rgba(203, 213, 225, 0.9);
+            font-weight: 500;
+            max-width: 100%;
+            word-break: break-word;
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.65);
+        }
+        .sub-trans {
+            font-size: 20px;
+            line-height: 1.35;
+            color: #ffffff;
+            font-weight: 800;
+            max-width: 100%;
+            word-break: break-word;
+            text-shadow: 0 2px 6px rgba(0, 0, 0, 0.75);
+        }
+        .sub-orig:empty {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="sub-shell">
+        <div class="sub-dragbar">
+            <div class="sub-brand">
+                <span id="subLiveDot" class="sub-dot"></span>
+                <span>LZHCard 即時字幕</span>
+                <span id="subTierBadge" class="sub-tier">待機</span>
+            </div>
+            <div class="sub-controls">
+                <button id="subFontDownBtn" class="sub-btn" type="button" title="縮小字幕">A-</button>
+                <button id="subFontUpBtn" class="sub-btn" type="button" title="放大字幕">A+</button>
+                <button id="subCloseBtn" class="sub-btn sub-btn-close" type="button" title="關閉字幕視窗">✕</button>
+            </div>
+        </div>
+        <div class="sub-body">
+            <div id="subOrigText" class="sub-orig"></div>
+            <div id="subTransText" class="sub-trans">等待字幕或語音辨識內容…</div>
+        </div>
+    </div>
+
+    <script>
+        (function () {
+            const FONT_KEY = 'lzhcard_desktop_sub_font_px';
+            const dotEl = document.getElementById('subLiveDot');
+            const tierEl = document.getElementById('subTierBadge');
+            const origEl = document.getElementById('subOrigText');
+            const transEl = document.getElementById('subTransText');
+            const fontDownBtn = document.getElementById('subFontDownBtn');
+            const fontUpBtn = document.getElementById('subFontUpBtn');
+            const closeBtn = document.getElementById('subCloseBtn');
+
+            let currentFontPx = 20;
+            try {
+                const saved = parseInt(localStorage.getItem(FONT_KEY) || '20', 10);
+                if (Number.isFinite(saved)) {
+                    currentFontPx = Math.max(14, Math.min(34, saved));
+                }
+            } catch (e) {}
+
+            function applyFontSize() {
+                if (transEl) {
+                    transEl.style.fontSize = currentFontPx + 'px';
+                }
+                if (origEl) {
+                    origEl.style.fontSize = Math.max(11, Math.round(currentFontPx * 0.65)) + 'px';
+                }
+            }
+            applyFontSize();
+
+            if (fontDownBtn) {
+                fontDownBtn.addEventListener('click', () => {
+                    currentFontPx = Math.max(14, currentFontPx - 2);
+                    try { localStorage.setItem(FONT_KEY, String(currentFontPx)); } catch (e) {}
+                    applyFontSize();
+                });
+            }
+
+            if (fontUpBtn) {
+                fontUpBtn.addEventListener('click', () => {
+                    currentFontPx = Math.min(34, currentFontPx + 2);
+                    try { localStorage.setItem(FONT_KEY, String(currentFontPx)); } catch (e) {}
+                    applyFontSize();
+                });
+            }
+
+            if (closeBtn) {
+                closeBtn.addEventListener('click', () => {
+                    if (window.LZHDesktopWidget && typeof window.LZHDesktopWidget.closeSubtitleWindow === 'function') {
+                        window.LZHDesktopWidget.closeSubtitleWindow();
+                    } else {
+                        window.close();
+                    }
+                });
+            }
+
+            function renderPayload(payload) {
+                const data = (payload && typeof payload === 'object') ? payload : {};
+                const orig = String(data.orig || '').trim();
+                const trans = String(data.trans || '').trim();
+                const tierLabel = String(data.tierLabel || '').trim();
+                const isLive = Boolean(data.isLive);
+
+                if (origEl) origEl.textContent = orig;
+                if (transEl) {
+                    transEl.textContent = trans || (orig ? '正在翻譯…' : '等待字幕或語音辨識內容…');
+                }
+                if (tierEl) {
+                    tierEl.textContent = tierLabel || (isLive ? '即時字幕' : '待機');
+                }
+                if (dotEl) {
+                    dotEl.classList.toggle('idle', !isLive && !trans);
+                }
+            }
+
+            if (window.LZHDesktopWidget && typeof window.LZHDesktopWidget.onSubtitleUpdate === 'function') {
+                window.LZHDesktopWidget.onSubtitleUpdate(renderPayload);
+            }
+        })();
+    </script>
+</body>
+</html>

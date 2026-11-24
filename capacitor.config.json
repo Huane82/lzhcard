@@ -1,0 +1,14 @@
+{
+  "appId": "com.lzhcard.app",
+  "appName": "LZHCard",
+  "webDir": "www",
+  "plugins": {
+    "FirebaseAuthentication": {
+      "skipNativeAuth": false,
+      "providers": [
+        "google.com",
+        "apple.com"
+      ]
+    }
+  }
+}

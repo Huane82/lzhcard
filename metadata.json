@@ -1,0 +1,6 @@
+{
+  "name": "LZHCard - 升級版 Anki 智慧單字卡大師",
+  "description": "具備 FSRS 現代認知記憶演算法、考前臨時熟悉演算法、Gemini AI 萬能解析、雲端同步與社群字庫商店的升級版 Anki 單字學習系統。",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

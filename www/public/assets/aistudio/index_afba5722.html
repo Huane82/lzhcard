@@ -1,0 +1,1528 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <script src="js/open-external.js"></script>
+    <script src="js/version.js"></script>
+    
+    <script>
+    // 初始化夜間模式 (優先讀取記憶，若無則跟隨系統)
+    const savedTheme = localStorage.getItem('theme_preference') || 'system';
+    const isSystemDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    if (savedTheme === 'dark' || (savedTheme === 'system' && isSystemDark)) {
+        document.documentElement.classList.add('dark');
+    } else {
+        document.documentElement.classList.remove('dark');
+    }
+    </script>
+    
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>LZHCard 單字卡大師 (v9.26.11.15)</title>
+    
+    <!-- 電腦分頁圖示 (Favicon) 設定 -->
+    <link rel="icon" type="image/png" href="images/logo.png">
+
+    <!-- Tailwind CSS & Icons -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="css/style.css">
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: { sans: ['"Plus Jakarta Sans"', '"Noto Sans TC"', 'sans-serif'] },
+                    colors: { brand: { 50: '#f0f7ff', 100: '#e0effe', 500: '#3b82f6', 600: '#2563eb', 700: '#1d4ed8' } }
+                }
+            }
+        }
+    </script>
+</head>
+<body class="bg-slate-50 text-slate-800 dark:bg-slate-900 dark:text-slate-100 min-h-screen flex flex-col font-sans pb-16 sm:pb-0 transition-colors duration-200">
+    
+    <!-- 🔄 全域初始化載入畫面（含即時進度條） -->
+    <div id="appLoadingOverlay" class="fixed inset-0 z-[9999] flex flex-col items-center justify-center bg-slate-50 dark:bg-slate-900 transition-opacity duration-300 px-6">
+        <div class="w-12 h-12 border-4 border-brand-200 dark:border-slate-700 border-t-brand-600 dark:border-t-brand-400 rounded-full animate-spin mb-4"></div>
+        <p class="text-base font-extrabold text-slate-800 dark:text-slate-100 tracking-wide">LZHCard</p>
+        <p id="appLoaderStatusText" data-i18n="appLoaderStatus" class="text-xs text-slate-400 dark:text-slate-500 mt-1">資料同步與初始化中，請稍候...</p>
+
+        <!-- 進度條 -->
+        <div class="w-full max-w-xs mt-4 space-y-1.5">
+            <div class="w-full h-2 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
+                <div id="appLoaderProgressBar" class="h-full bg-brand-600 dark:bg-brand-400 rounded-full transition-all duration-300" style="width: 15%;"></div>
+            </div>
+            <div class="flex justify-end">
+                <span id="appLoaderProgressPercent" class="text-[11px] font-bold text-brand-600 dark:text-brand-400 font-mono">15%</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- 🔒 未登入 / 條款同意歡迎 Modal (z-[60] 蓋過所有元件) -->
+    <div id="welcomeModal" class="hidden fixed inset-0 z-[60] bg-slate-900/80 backdrop-blur-md flex items-center justify-center p-4">
+        <div class="bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-100 dark:border-slate-700 space-y-5 max-h-[90vh] flex flex-col">
+            
+            <!-- 標頭 -->
+            <div class="text-center space-y-2 flex-shrink-0">
+                <img src="images/logo.png" alt="Logo" class="w-14 h-14 mx-auto rounded-2xl shadow-md object-cover">
+                <h2 class="text-xl font-extrabold text-slate-900 dark:text-white" data-i18n="welcomeTitle">歡迎使用 LZHCard</h2>
+                <p class="text-xs text-slate-500 dark:text-slate-400" data-i18n="welcomeSub">請閱讀並同意服務條款以開啟學習旅程</p>
+            </div>
+
+            <!-- 📜 服務條款內容區塊 (可滾動) -->
+            <div class="bg-slate-50 dark:bg-slate-900/60 p-4 rounded-xl border border-slate-200 dark:border-slate-700 text-xs text-slate-600 dark:text-slate-300 space-y-3 overflow-y-auto max-h-48 leading-relaxed font-sans">
+                <div class="font-bold text-slate-800 dark:text-slate-200 text-sm border-b border-slate-200 dark:border-slate-700 pb-1.5 flex items-center space-x-1.5">
+                    <i class="fa-solid fa-shield-halved text-brand-600"></i>
+                    <span data-i18n="tosTitle">使用者服務與隱私條款</span>
+                </div>
+
+                <p class="font-semibold text-slate-700 dark:text-slate-200" data-i18n="tosSub">為維護平台安全與使用者權益，請仔細閱讀以下聲明：</p>
+
+                <ul class="space-y-2 list-disc list-inside text-[11px]">
+                    <li>
+                        <strong class="text-slate-800 dark:text-slate-100" data-i18n="tosItem1Title">💬 對話內容檢視權限：</strong>
+                        <span data-i18n="tosItem1Desc">本平台包含之公開聊天室與「私訊管理員」功能，系統管理員出於安全稽核、違規處理與服務維護之必要，皆擁有查看與審核之權限。</span>
+                    </li>
+                    <li>
+                        <strong class="text-slate-800 dark:text-slate-100" data-i18n="tosItem2Title">💾 資料保管免責聲明：</strong>
+                        <span data-i18n="tosItem2Desc">本網頁服務不承擔任何單字庫與學習數據之免費保管或永久儲存責任。建議使用者務必定期使用系統內建之「JSON 備份」功能自行下載備份資料。</span>
+                    </li>
+                    <li>
+                        <strong class="text-slate-800 dark:text-slate-100" data-i18n="tosItem3Title">⚠️ 防詐騙與安全提醒：</strong>
+                        <span data-i18n="tosItem3Desc">請勿於聊天室中透漏任何個人敏感資訊（如銀行帳密、身份證字號）。本平台不會以私訊要求轉帳或提供信用卡資訊，請提高警覺避免受騙。</span>
+                    </li>
+                </ul>
+            </div>
+
+            <!-- 勾選框 -->
+            <div class="flex items-center space-x-2 flex-shrink-0 pt-1">
+                <input type="checkbox" id="tosCheckbox" onchange="toggleAuthButtons()" class="w-4 h-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500 cursor-pointer">
+                <label for="tosCheckbox" class="text-xs font-bold text-slate-700 dark:text-slate-200 cursor-pointer select-none" data-i18n="tosCheckLabel">
+                    我已閱讀並完全同意上述使用者服務與隱私條款
+                </label>
+            </div>
+
+            <!-- 登入與訪客按鈕區塊 -->
+            <div class="space-y-2.5 flex-shrink-0 pt-2 border-t border-slate-100 dark:border-slate-700">
+                <!-- 1. Google 登入 -->
+                <button type="button" id="welcomeGoogleBtn" onclick="handleWelcomeGoogleLogin()" disabled class="w-full py-3 bg-slate-200 dark:bg-slate-700 text-slate-400 font-bold rounded-xl text-xs flex items-center justify-center space-x-2 transition cursor-not-allowed">
+                    <i class="fa-brands fa-google text-sm"></i>
+                    <span data-i18n="btnLoginGoogle">使用 Google 帳號登入</span>
+                </button>
+
+                <!-- 2. 訪客登入 -->
+                <button type="button" id="welcomeGuestBtn" onclick="handleWelcomeGuestLogin()" disabled class="w-full py-3 bg-slate-200 dark:bg-slate-700 text-slate-400 font-bold rounded-xl text-xs flex items-center justify-center space-x-2 transition cursor-not-allowed">
+                    <i class="fa-solid fa-user text-sm"></i>
+                    <span data-i18n="btnGuestContinue">以訪客身份繼續使用</span>
+                </button>
+
+                <!-- 🔒 訪客功能限制警示標籤 -->
+                <p class="text-[11px] text-amber-600 dark:text-amber-400 text-center font-bold pt-1">
+                    <i class="fa-solid fa-lock mr-1"></i><span data-i18n="welcomeGuestWarning">注意：訪客模式將封鎖「聊天室」與「商店下載/發布」功能</span>
+                </p>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- ⚙️ 新手快速客製化設定 Modal (z-[62]) -->
+    <div id="onboardingSetupModal" class="hidden fixed inset-0 z-[62] bg-slate-900/80 backdrop-blur-md flex items-center justify-center p-4">
+        <div class="bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-100 dark:border-slate-700 space-y-5">
+            
+            <!-- 頂部標號與標頭 -->
+            <div class="flex justify-between items-center border-b border-slate-100 dark:border-slate-700 pb-3">
+                <div class="flex items-center space-x-2">
+                    <i class="fa-solid fa-sliders text-brand-600 text-lg"></i>
+                    <h3 class="text-base font-extrabold" data-i18n="onboardingSetupTitle">建立您的偏好設定</h3>
+                </div>
+                <!-- 右上角略過按鈕 -->
+                <button type="button" onclick="skipOnboardingSetup()" class="text-xs font-bold text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition">
+                    <span data-i18n="btnSkipAll">略過設定 ✕</span>
+                </button>
+            </div>
+
+            <p class="text-xs text-slate-500 dark:text-slate-400 leading-relaxed" data-i18n="onboardingSetupDesc">
+                先花 10 秒設定好您的學習習慣，稍後可隨時在「設定」中變更：
+            </p>
+
+            <!-- 📍 步驟 1：語言偏好設定 (優先確認語言) -->
+            <div id="obStep1" class="space-y-4 text-xs">
+                <div class="flex items-center justify-between font-bold text-brand-600 dark:text-brand-400 pb-1 border-b border-slate-100 dark:border-slate-700">
+                    <span data-i18n="obStep1Title">步驟 1 / 2：選擇語言</span>
+                </div>
+
+                <!-- 1. 母語 -->
+                <div>
+                    <label class="block font-bold mb-1" data-i18n="lblNativeLang">使用者母語 (Native Language)</label>
+                    <select id="obNativeLang" onchange="handleObNativeChange(this.value)" class="w-full p-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl font-bold">
+                        <option value="zh-TW">🇹🇼 繁體中文</option>
+                        <option value="en">🇺🇸 English</option>
+                        <option value="ja">🇯🇵 日本語</option>
+                    </select>
+                </div>
+
+                <!-- 2. 目標語言 -->
+                <div>
+                    <label class="block font-bold mb-1" data-i18n="lblTargetLang">學習目標語言 (Target Language)</label>
+                    <select id="obTargetLang" class="w-full p-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl font-bold">
+                        <option value="en">🇺🇸 English</option>
+                        <option value="ja">🇯🇵 日本語</option>
+                        <option value="zh-TW">🇹🇼 中文</option>
+                    </select>
+                </div>
+
+                <!-- 🚀 步驟 1 底部按鈕 -->
+                <div class="pt-4 border-t border-slate-100 dark:border-slate-700 flex items-center justify-end space-x-2">
+                    <button type="button" onclick="skipOnboardingSetup()" class="px-3.5 py-2 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-600 dark:text-slate-300 rounded-xl font-bold text-xs transition">
+                        <span data-i18n="btnSkip">略過</span>
+                    </button>
+                    <button type="button" onclick="confirmOnboardingLanguageStep()" class="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-xl font-bold text-xs transition shadow-xs flex items-center space-x-1">
+                        <span data-i18n="btnNextStep">下一步</span>
+                        <i class="fa-solid fa-chevron-right ml-1"></i>
+                    </button>
+                </div>
+            </div>
+
+            <!-- 📍 步驟 2：顯示模式與 API Key 模式設定 (預設隱藏) -->
+            <div id="obStep2" class="hidden space-y-4 text-xs">
+                <div class="flex items-center justify-between font-bold text-brand-600 dark:text-brand-400 pb-1 border-b border-slate-100 dark:border-slate-700">
+                    <span data-i18n="obStep2Title">步驟 2 / 2：顯示模式與 API 偏好</span>
+                </div>
+
+                <!-- 3. 卡片顯示模式 -->
+                <div>
+                    <label class="block font-bold mb-1" data-i18n="lblDisplayMode">卡片正面顯示模式</label>
+                    <select id="obCardDisplayMode" class="w-full p-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl font-bold">
+                        <option value="target_front" data-i18n="optTargetFront">目標語言在正面，母語在背面</option>
+                        <option value="native_front" data-i18n="optNativeFront">母語在正面，目標語言在背面</option>
+                        <option value="both_front" data-i18n="optBothFront">正面同時顯示 (雙語對照)</option>
+                    </select>
+                </div>
+
+                <!-- 4. Gemini API Key (雙軌模式選擇) -->
+                <div>
+                    <label class="block font-bold mb-1" data-i18n="lblApiModeTitle">Gemini AI Key 模式</label>
+                    <div class="grid grid-cols-2 gap-2 mb-2">
+                        <label class="flex items-center space-x-1.5 border border-slate-200 dark:border-slate-700 rounded-lg p-2 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700/50">
+                            <input type="radio" name="obApiMode" value="personal" id="obApiModePersonal" onchange="toggleObApiKeyBox()" class="text-brand-600 focus:ring-brand-500">
+                            <span class="font-bold text-slate-800 dark:text-slate-100" data-i18n="lblApiModePersonal">個人 Key</span>
+                        </label>
+                        <label class="flex items-center space-x-1.5 border border-slate-200 dark:border-slate-700 rounded-lg p-2 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700/50">
+                            <input type="radio" name="obApiMode" value="shared" id="obApiModeShared" checked onchange="toggleObApiKeyBox()" class="text-brand-600 focus:ring-brand-500">
+                            <span class="font-bold text-slate-800 dark:text-slate-100" data-i18n="lblApiModeShared">免費共用 Key</span>
+                        </label>
+                    </div>
+                    <!-- 🟢 個人 Key 輸入框 (預設帶有 hidden 類別) -->
+                    <div id="obApiKeyBox" class="hidden">
+                        <input type="password" id="obApiKey" placeholder="AIzaSy..." data-i18n-placeholder="phApiKeyInput" class="w-full p-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl font-mono">
+                    </div>
+                </div>
+
+                <!-- 🚀 步驟 2 底部按鈕 -->
+                <div class="pt-4 border-t border-slate-100 dark:border-slate-700 flex items-center justify-between">
+                    <button type="button" onclick="backToOnboardingStep1()" class="px-3.5 py-2 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-600 dark:text-slate-300 rounded-xl font-bold text-xs transition flex items-center space-x-1">
+                        <i class="fa-solid fa-chevron-left mr-1"></i>
+                        <span data-i18n="btnPrevStep">上一步</span>
+                    </button>
+                    <div class="flex items-center space-x-2">
+                        <button type="button" onclick="skipOnboardingSetup()" class="px-3.5 py-2 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-600 dark:text-slate-300 rounded-xl font-bold text-xs transition">
+                            <span data-i18n="btnSkip">略過</span>
+                        </button>
+                        <button type="button" onclick="saveOnboardingSetupAndContinue()" class="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-xl font-bold text-xs transition shadow-xs flex items-center space-x-1">
+                            <i class="fa-solid fa-compass"></i>
+                            <span data-i18n="btnSaveAndTour">儲存並開啟導覽</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- 🎯 步驟 2：新手高亮導覽 Tour Overlay (z-[70]) -->
+    <div id="onboardingTourOverlay" class="hidden fixed inset-0 z-[70] pointer-events-auto transition-all duration-300">
+        <!-- 背景半透明黑色遮罩 -->
+        <div class="absolute inset-0 bg-slate-900/70"></div>
+
+        <!-- 高亮聚焦框 (Spotlight Highlight Box) -->
+        <div id="tourHighlightBox" class="absolute transition-all duration-300 rounded-xl ring-4 ring-brand-500 ring-offset-2 ring-offset-slate-900 shadow-2xl pointer-events-none"></div>
+
+        <!-- 導覽說明浮動卡片 (Tooltip Popover) -->
+        <div id="tourPopover" class="absolute w-80 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 p-5 rounded-2xl shadow-2xl border border-slate-100 dark:border-slate-700 transition-all duration-300 space-y-3 z-[71]">
+            <div class="flex justify-between items-center">
+                <span id="tourStepBadge" class="px-2 py-0.5 bg-brand-100 dark:bg-brand-900/50 text-brand-700 dark:text-brand-300 rounded-full font-bold text-[10px]">
+                    1 / 5
+                </span>
+                <button type="button" onclick="finishTour()" class="text-xs font-bold text-slate-400 hover:text-rose-500 transition">
+                    <span data-i18n="btnSkipTour">結束導覽 ✕</span>
+                </button>
+            </div>
+
+            <div>
+                <h4 id="tourStepTitle" class="font-extrabold text-sm text-slate-900 dark:text-white">標題</h4>
+                <p id="tourStepDesc" class="text-xs text-slate-500 dark:text-slate-400 leading-relaxed mt-1">簡述說明文字...</p>
+            </div>
+
+            <div class="flex justify-between items-center pt-2 border-t border-slate-100 dark:border-slate-700">
+                <button type="button" id="tourPrevBtn" onclick="prevTourStep()" class="px-3 py-1.5 bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 rounded-lg text-xs font-bold disabled:opacity-30">
+                    <i class="fa-solid fa-chevron-left mr-1"></i><span data-i18n="btnPrevStep">上一步</span>
+                </button>
+                <button type="button" id="tourNextBtn" onclick="nextTourStep()" class="px-4 py-1.5 bg-brand-600 hover:bg-brand-700 text-white rounded-lg text-xs font-bold transition shadow-xs">
+                    <span data-i18n="btnNextStep">下一步</span> <i class="fa-solid fa-chevron-right ml-1"></i>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 頂部 Header -->
+    <header id="main-header" class="bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 sticky top-0 z-30 shadow-sm transition-colors duration-200">
+        <div class="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between">
+            <div class="flex items-center space-x-2.5 min-w-0">
+                <img src="images/logo.png" alt="LZHCard Logo" class="w-9 h-9 rounded-xl object-cover shadow-sm flex-shrink-0">
+                <div class="min-w-0">
+                    <h1 class="font-extrabold text-base sm:text-lg text-slate-900 dark:text-white leading-tight truncate">LZHCard</h1>
+                    <div class="flex items-center space-x-1.5 min-w-0">
+                        <span class="text-[10px] sm:text-xs font-semibold px-1.5 py-0.2 rounded-full bg-brand-50 text-brand-600 dark:bg-brand-950 dark:text-brand-300 border border-brand-100 dark:border-brand-800 flex-shrink-0">v9.26.11.15</span>
+                        <span class="text-[11px] text-slate-400 truncate hidden xs:inline" data-i18n="appSubtitle">小考背單字神器</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="flex items-center space-x-3">
+                <!-- 💬 聊天室按鈕 -->
+                <div class="flex items-center space-x-2">
+                    <button type="button" id="headerChatBtn" onclick="openChatDrawer()" class="relative p-2 rounded-xl bg-brand-50 dark:bg-brand-950/50 hover:bg-brand-100 dark:hover:bg-brand-900 text-brand-600 dark:text-brand-300 border border-brand-200 dark:border-brand-800 transition shadow-2xs">
+                        <i class="fa-solid fa-comments text-base"></i>
+                        <span id="chatUnreadDot" class="hidden absolute -top-0.5 -right-0.5 w-2.5 h-2.5 bg-rose-500 rounded-full ring-2 ring-white dark:ring-slate-800"></span>
+                    </button>
+                </div>
+
+                <!-- 右側字庫選擇器 (漂亮多選彈出面板版) -->
+                <div id="headerCategorySelector" class="relative">
+                    <button type="button" onclick="toggleCategoryDropdown(event)" class="flex items-center space-x-2 bg-slate-100 dark:bg-slate-700 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-600 text-xs font-bold text-slate-800 dark:text-slate-100 hover:bg-slate-200 dark:hover:bg-slate-600 transition shadow-2xs">
+                        <i class="fa-solid fa-folder-tree text-brand-600 dark:text-brand-400"></i>
+                        <span id="categoryDropdownBtnText" class="max-w-[110px] sm:max-w-[160px] truncate" data-i18n="catAll">全部字庫</span>
+                        <i class="fa-solid fa-chevron-down text-[10px] text-slate-400"></i>
+                    </button>
+
+                    <!-- 點擊彈出的多選勾選面板 -->
+                    <div id="categoryDropdownMenu" class="hidden absolute right-0 mt-2 w-56 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl z-50 p-2 space-y-1 text-xs max-h-64 overflow-y-auto">
+                        <!-- JS 動態生成多選 Checkbox 列 -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- 主要內容區 -->
+    <main class="max-w-4xl mx-auto w-full px-4 py-6 flex-1">
+
+        <!-- 全空字庫提示 -->
+        <div id="emptyNotice" class="hidden mb-6 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 rounded-xl p-4 flex items-start space-x-3 text-amber-800 dark:text-amber-200">
+            <i class="fa-solid fa-circle-info text-amber-600 text-lg mt-0.5"></i>
+            <div class="text-sm">
+                <p class="font-bold" data-i18n="emptyNoticeTitle">目前選擇的字庫沒有單字！</p>
+                <p class="mt-1" data-i18n="emptyNoticeDesc">您可以切換至「字庫管理」進行匯入或新增單字。</p>
+            </div>
+        </div>
+
+        <!-- 區塊 0：主頁 (Home View) -->
+        <section id="sec-home" class="space-y-6 py-4">
+            <div class="text-center space-y-2">
+                <h2 class="text-2xl font-extrabold text-slate-900 dark:text-white" data-i18n="homeTitle">選擇學習模式</h2>
+                <p class="text-sm text-slate-500 dark:text-slate-400" data-i18n="homeDesc">專注背單字，高效提升記憶力</p>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-5 max-w-2xl mx-auto">
+                <!-- 模式 1：卡片輪播 -->
+                <div onclick="startFocusMode('flashcard')" role="button" tabindex="0" class="group cursor-pointer p-6 bg-white dark:bg-slate-800 hover:bg-brand-50/50 dark:hover:bg-slate-700/60 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-md hover:shadow-xl hover:border-brand-300 dark:hover:border-brand-500 transition-all text-left flex flex-col justify-between h-56 relative overflow-hidden">
+                    <div class="space-y-3 z-10 w-full">
+                        <div class="flex items-center justify-between gap-2">
+                            <div class="w-12 h-12 rounded-xl bg-brand-100 dark:bg-brand-900/50 text-brand-600 dark:text-brand-300 flex items-center justify-center text-xl font-bold group-hover:scale-110 transition-transform">
+                                <i class="fa-solid fa-clone"></i>
+                            </div>
+                            <span id="homeFsrsDueBadge" data-i18n="fsrsScheduleReady" class="px-2.5 py-1 rounded-full text-[11px] font-bold bg-brand-50 text-brand-600 dark:bg-brand-950/60 dark:text-brand-300 border border-brand-200 dark:border-brand-800">
+                                FSRS 排程就緒
+                            </span>
+                        </div>
+                        <div>
+                            <h3 class="text-xl font-extrabold text-slate-900 dark:text-white group-hover:text-brand-600 dark:group-hover:text-brand-400 transition" data-i18n="modeFlashcard">卡片輪播</h3>
+                            <p class="text-xs text-slate-500 dark:text-slate-400 mt-1" data-i18n="modeFlashcardDesc">FSRS 科學遺忘曲線排程與焦點池演算法</p>
+                        </div>
+                    </div>
+                    <div class="flex items-center justify-between gap-2 z-10 w-full">
+                        <div class="flex items-center text-xs font-bold text-brand-600 dark:text-brand-400 space-x-1">
+                            <span data-i18n="btnStartFocus">開啟專注輪播</span>
+                            <i class="fa-solid fa-arrow-right group-hover:translate-x-1 transition-transform"></i>
+                        </div>
+                        <button type="button" onclick="event.stopPropagation(); startFreePracticeMode();" class="px-2.5 py-1 rounded-lg bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/60 dark:hover:bg-emerald-900/80 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 text-[11px] font-bold transition flex items-center space-x-1">
+                            <i class="fa-solid fa-dumbbell"></i>
+                            <span data-i18n="btnFreePractice">自由加練</span>
+                        </button>
+                    </div>
+                    <i class="fa-solid fa-layer-group absolute -right-4 -bottom-4 text-8xl text-slate-100 dark:text-slate-700/30 group-hover:text-brand-100/50 dark:group-hover:text-brand-900/20 transition-colors"></i>
+                </div>
+
+                <!-- 模式 2：隨堂測驗 -->
+                <button type="button" onclick="startFocusMode('quiz')" class="group p-6 bg-white dark:bg-slate-800 hover:bg-purple-50/50 dark:hover:bg-slate-700/60 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-md hover:shadow-xl hover:border-purple-300 dark:hover:border-purple-500 transition-all text-left flex flex-col justify-between h-56 relative overflow-hidden">
+                    <div class="space-y-3 z-10">
+                        <div class="w-12 h-12 rounded-xl bg-purple-100 dark:bg-purple-900/50 text-purple-600 dark:text-purple-300 flex items-center justify-center text-xl font-bold group-hover:scale-110 transition-transform">
+                            <i class="fa-solid fa-graduation-cap"></i>
+                        </div>
+                        <div>
+                            <h3 class="text-xl font-extrabold text-slate-900 dark:text-white group-hover:text-purple-600 dark:group-hover:text-purple-400 transition" data-i18n="modeQuiz">隨堂測驗</h3>
+                            <p class="text-xs text-slate-500 dark:text-slate-400 mt-1" data-i18n="modeQuizDesc">拼字、詞性變化與拼寫上下文挑戰</p>
+                        </div>
+                    </div>
+                    <div class="flex items-center text-xs font-bold text-purple-600 dark:text-purple-400 space-x-1 z-10">
+                        <span data-i18n="btnStartQuiz">進入測驗</span>
+                        <i class="fa-solid fa-arrow-right group-hover:translate-x-1 transition-transform"></i>
+                    </div>
+                    <i class="fa-solid fa-award absolute -right-4 -bottom-4 text-8xl text-slate-100 dark:text-slate-700/30 group-hover:text-purple-100/50 dark:group-hover:text-purple-900/20 transition-colors"></i>
+                </button>
+            </div>
+        </section>
+
+        <!-- 區塊 1：專注卡片輪播模式 -->
+        <section id="sec-flashcard" class="hidden space-y-5">
+            <div class="flex items-center justify-between flex-wrap gap-2 text-xs text-slate-500 dark:text-slate-400 font-medium">
+                <div class="flex items-center space-x-2">
+                    <button type="button" onclick="exitFocusMode()" class="px-3 py-1.5 rounded-lg bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 font-bold flex items-center space-x-1 transition">
+                        <i class="fa-solid fa-arrow-left"></i>
+                        <span data-i18n="btnExit">退出模式</span>
+                    </button>
+                    <!-- ⚡ 快速填入按鈕 -->
+                    <button type="button" onclick="openModal('quickAddModal')" class="px-3 py-1.5 rounded-lg bg-brand-50 hover:bg-brand-100 dark:bg-brand-900/40 dark:hover:bg-brand-900/60 text-brand-600 dark:text-brand-300 font-bold flex items-center space-x-1 transition border border-brand-200 dark:border-brand-700">
+                        <i class="fa-solid fa-bolt"></i>
+                        <span data-i18n="btnQuickAdd">快速填入</span>
+                    </button>
+                    <!-- ↩️ 還原上一張按鈕 -->
+                    <button type="button" id="undoCardBtn" onclick="if(typeof handleUndoLastCard==='function') handleUndoLastCard();" data-i18n-title="tipUndoCard" title="還原上一張評分" class="px-3 py-1.5 rounded-lg bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/40 dark:hover:bg-amber-900/60 text-amber-700 dark:text-amber-300 font-bold flex items-center space-x-1 transition border border-amber-200 dark:border-amber-800">
+                        <i class="fa-solid fa-rotate-left"></i>
+                        <span data-i18n="btnUndoCard">還原</span>
+                    </button>
+                </div>
+                <div class="flex items-center space-x-2">
+                    <button type="button" id="fsrsSessionBadge" onclick="toggleFreePracticeMode()" data-i18n-title="tipToggleFreePractice" title="點擊切換排程 / 自由加練模式" class="px-2.5 py-1 rounded-full text-[11px] font-bold bg-brand-50 hover:bg-brand-100 text-brand-600 dark:bg-brand-950/60 dark:text-brand-300 border border-brand-200 dark:border-brand-800 transition cursor-pointer">
+                        <span data-i18n="fsrsScheduleBadge">FSRS 排程</span>
+                    </button>
+                    <div><span data-i18n="stockCount">當前庫存:</span> <span id="cardCountDisplay" class="font-bold text-slate-700 dark:text-slate-200">0</span></div>
+                </div>
+            </div>
+
+            <!-- 3D 卡片 -->
+            <div class="perspective-1000 w-full max-w-lg mx-auto h-[380px] cursor-pointer group" onclick="flipCard()">
+                <div id="flashcard" class="relative w-full h-full transform-style-3d card-flip-duration shadow-xl rounded-2xl border border-slate-200/80 dark:border-slate-700 bg-white dark:bg-slate-800">
+                    <div class="absolute inset-0 backface-hidden rounded-2xl p-8 flex flex-col justify-between bg-gradient-to-br from-white to-slate-50 dark:from-slate-800 dark:to-slate-900">
+                        <div class="flex items-center justify-between gap-2">
+                            <div class="flex items-center space-x-2 flex-wrap gap-y-1">
+                                <span id="cardPosFront" class="px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider bg-brand-50 text-brand-600 dark:bg-brand-900/50 dark:text-brand-300 border border-brand-100 dark:border-brand-800">POS</span>
+                                <span id="cardLevelFront" class="px-2.5 py-1 rounded-full text-xs font-bold border bg-rose-50 text-rose-700 dark:bg-rose-950 dark:text-rose-300 border-rose-200 dark:border-rose-800">Lv.1</span>
+                                <span id="cardAltLevelFront" class="hidden px-2 py-0.5 rounded-full text-[11px] font-bold border"></span>
+                                <span id="cardFsrsMetaFront" class="text-[11px] font-semibold text-slate-400 dark:text-slate-400"></span>
+                            </div>
+                            <button type="button" onclick="event.stopPropagation(); speakWord();" data-i18n-title="tipSpeakWord" title="朗讀" class="w-10 h-10 rounded-full bg-slate-100 dark:bg-slate-700 hover:bg-brand-100 dark:hover:bg-slate-600 text-slate-600 dark:text-slate-200 flex items-center justify-center transition shrink-0">
+                                <i class="fa-solid fa-volume-high"></i>
+                            </button>
+                        </div>
+                        <div class="text-center py-4">
+                            <h2 id="cardWord" class="text-4xl sm:text-5xl font-extrabold text-slate-900 dark:text-white tracking-tight">Word</h2>
+                            <p id="cardPhonetic" class="text-lg text-slate-500 dark:text-slate-400 font-mono mt-3">/---/</p>
+                        </div>
+                        <div class="text-center text-xs text-slate-400 dark:text-slate-500 font-medium flex items-center justify-center space-x-1">
+                            <i class="fa-solid fa-rotate text-slate-300 dark:text-slate-600"></i>
+                            <span data-i18n="flipHintFront">點擊卡片翻面</span>
+                        </div>
+                    </div>
+
+                    <div class="absolute inset-0 backface-hidden rotate-y-180 rounded-2xl p-8 flex flex-col justify-between bg-slate-900 text-white">
+                        <div class="flex items-center justify-between gap-2">
+                            <div class="flex items-center space-x-2 flex-wrap gap-y-1">
+                                <span id="cardPosBack" class="px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider bg-brand-500/20 text-brand-300 border border-brand-500/30">POS</span>
+                                <span id="cardLevelBack" class="px-2.5 py-1 rounded-full text-xs font-bold border bg-rose-50 text-rose-700 border-rose-200">Lv.1</span>
+                                <span id="cardAltLevelBack" class="hidden px-2 py-0.5 rounded-full text-[11px] font-bold border"></span>
+                                <span id="cardFsrsMetaBack" class="text-[11px] font-semibold text-slate-400"></span>
+                            </div>
+                            <button type="button" onclick="event.stopPropagation(); speakWord();" data-i18n-title="tipSpeakWord" title="朗讀" class="w-10 h-10 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-200 flex items-center justify-center transition shrink-0">
+                                <i class="fa-solid fa-volume-high"></i>
+                            </button>
+                        </div>
+                        <div class="space-y-4 my-auto">
+                            <div id="cardMeaning" class="text-2xl sm:text-3xl font-bold text-center text-amber-300 leading-snug">請新增單字</div>
+                            <div id="cardPhoneticBack" class="text-base text-amber-200/90 font-mono text-center"></div>
+                            <div class="bg-slate-800/80 rounded-xl p-4 border border-slate-700/50 space-y-1.5">
+                                <p id="cardSentence" class="text-sm font-medium text-slate-200 italic leading-relaxed">"No sentence"</p>
+                                <p id="cardTranslation" class="text-xs text-slate-400">翻譯</p>
+                            </div>
+                        </div>
+                        <div class="text-center text-xs text-slate-500 font-medium" data-i18n="flipHintBack">點擊翻回正面</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 控制按鈕 (FSRS 四段記憶回饋 + 下次複習間隔預覽) -->
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-2.5 max-w-lg mx-auto pt-1 relative z-20">
+                <button type="button" onclick="handleDontKnow(event)" class="py-2.5 px-3 rounded-xl bg-rose-600 hover:bg-rose-700 active:scale-95 text-white font-bold shadow-md transition flex flex-col items-center justify-center cursor-pointer">
+                    <span class="text-sm flex items-center space-x-1">
+                        <i class="fa-solid fa-xmark"></i>
+                        <span data-i18n="btnDontKnow">不熟悉</span>
+                    </span>
+                    <span id="fsrsPreview1" data-i18n="fsrsInterval10m" class="text-[10px] font-normal text-rose-100 mt-0.5">10 分鐘後</span>
+                </button>
+
+                <button type="button" onclick="handleHard(event)" class="py-2.5 px-3 rounded-xl bg-amber-500 hover:bg-amber-600 active:scale-95 text-white font-bold shadow-md transition flex flex-col items-center justify-center cursor-pointer">
+                    <span class="text-sm flex items-center space-x-1">
+                        <i class="fa-solid fa-circle-question"></i>
+                        <span data-i18n="btnHard">模糊</span>
+                    </span>
+                    <span id="fsrsPreview2" data-i18n="fsrsInterval10m" class="text-[10px] font-normal text-amber-100 mt-0.5">10 分鐘後</span>
+                </button>
+
+                <button type="button" onclick="handleKnow(event)" class="py-2.5 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-bold shadow-md transition flex flex-col items-center justify-center cursor-pointer">
+                    <span class="text-sm flex items-center space-x-1">
+                        <i class="fa-solid fa-check"></i>
+                        <span data-i18n="btnKnow">已掌握</span>
+                        <span id="knowStreakText" class="hidden">0/2</span>
+                    </span>
+                    <span id="fsrsPreview3" data-i18n="fsrsInterval10m" class="text-[10px] font-normal text-emerald-100 mt-0.5">10 分鐘後</span>
+                </button>
+
+                <button type="button" onclick="handleEasy(event)" class="py-2.5 px-3 rounded-xl bg-sky-600 hover:bg-sky-700 active:scale-95 text-white font-bold shadow-md transition flex flex-col items-center justify-center cursor-pointer">
+                    <span class="text-sm flex items-center space-x-1">
+                        <i class="fa-solid fa-bolt"></i>
+                        <span data-i18n="btnEasy">秒答</span>
+                    </span>
+                    <span id="fsrsPreview4" data-i18n="fsrsInterval4d" class="text-[10px] font-normal text-sky-100 mt-0.5">4 天後</span>
+                </button>
+            </div>
+        </section>
+
+        <!-- 區塊 2：專注測驗模式 -->
+        <section id="sec-quiz" class="hidden space-y-6">
+            <div class="flex items-center justify-between">
+                <div class="flex items-center space-x-2">
+                    <button type="button" onclick="exitFocusMode()" class="px-3 py-1.5 rounded-lg bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 font-bold text-xs flex items-center space-x-1 transition">
+                        <i class="fa-solid fa-arrow-left"></i>
+                        <span data-i18n="btnExit">退出模式</span>
+                    </button>
+                    <!-- ⚡ 快速記生字按鈕 -->
+                    <button type="button" onclick="openModal('quickAddModal')" class="px-3 py-1.5 rounded-lg bg-brand-50 hover:bg-brand-100 dark:bg-brand-900/40 dark:hover:bg-brand-900/60 text-brand-600 dark:text-brand-300 font-bold text-xs flex items-center space-x-1 transition border border-brand-200 dark:border-brand-700">
+                        <i class="fa-solid fa-bolt"></i>
+                        <span data-i18n="btnQuickAdd">快速記生字</span>
+                    </button>
+                </div>
+                <div class="text-xs text-slate-400 font-medium"><span data-i18n="accuracyRate">精熟率:</span> <span id="quizScore" class="font-bold text-slate-700 dark:text-slate-200">0/0</span></div>
+            </div>
+
+            <!-- 📍 測驗語言選擇頁籤 -->
+            <div class="flex items-center space-x-2 bg-slate-100 dark:bg-slate-800/80 p-1 rounded-xl">
+                <button type="button" id="qlang-en" onclick="setQuizLanguage('en')" class="flex-1 py-1.5 text-xs font-bold rounded-lg transition bg-white dark:bg-slate-700 text-brand-600 dark:text-brand-400 shadow-2xs" data-i18n="quizLangEn">
+                    🇬🇧 英文
+                </button>
+                <button type="button" id="qlang-zh" onclick="setQuizLanguage('zh')" class="flex-1 py-1.5 text-xs font-bold rounded-lg transition text-slate-500 dark:text-slate-400 hover:text-slate-800" data-i18n="quizLangZh">
+                    🇹🇼 中文 (開發中)
+                </button>
+                <button type="button" id="qlang-ja" onclick="setQuizLanguage('ja')" class="flex-1 py-1.5 text-xs font-bold rounded-lg transition text-slate-500 dark:text-slate-400 hover:text-slate-800" data-i18n="quizLangJa">
+                    🇯🇵 日文 (開發中)
+                </button>
+            </div>
+            
+            <div class="bg-white dark:bg-slate-800 p-2 rounded-xl border border-slate-200 dark:border-slate-700 grid grid-cols-3 gap-1.5 text-xs">
+                <button type="button" id="qmode-1" onclick="setQuizMode(1)" class="py-2 px-1 rounded-lg font-bold transition bg-brand-600 text-white" data-i18n="quizMode1">模式 1</button>
+                <button type="button" id="qmode-2" onclick="setQuizMode(2)" class="py-2 px-1 rounded-lg font-bold transition bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300" data-i18n="quizMode2">模式 2</button>
+                <button type="button" id="qmode-3" onclick="setQuizMode(3)" class="py-2 px-1 rounded-lg font-bold transition bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300" data-i18n="quizMode3">模式 3</button>
+            </div>
+
+            <div id="quizContainer" class="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-6 shadow-sm space-y-6">
+                <div class="flex items-center justify-between border-b border-slate-100 dark:border-slate-700 pb-3">
+                    <span id="quizBadge" class="px-2.5 py-1 bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800 rounded-full text-xs font-bold" data-i18n="quizMode1Ready">模式 1 準備中</span>
+                </div>
+                <div class="space-y-2">
+                    <p id="quizPromptTitle" class="text-xs font-semibold text-slate-400 uppercase" data-i18n="quizPromptTitle">題目提示</p>
+                    <div id="quizPromptBox" class="text-lg font-bold text-slate-800 dark:text-slate-100 bg-slate-50 dark:bg-slate-900 p-4 rounded-xl border border-slate-100 dark:border-slate-700">載入中...</div>
+                </div>
+                <form onsubmit="handleQuizSubmit(event)" class="space-y-4">
+                    <input type="text" id="quizInput" autocomplete="off" data-i18n-placeholder="quizInputPlaceholder" placeholder="在此輸入答案..." class="w-full px-4 py-3 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 focus:border-brand-500 outline-none text-base font-semibold">
+                    <div class="flex space-x-2">
+                        <button type="submit" id="quizSubmitBtn" class="flex-1 py-3 bg-brand-600 hover:bg-brand-700 text-white font-bold rounded-xl shadow-sm" data-i18n="btnSubmit">提交答案</button>
+                        <button type="button" onclick="nextQuizQuestion()" class="px-4 py-3 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold rounded-xl" data-i18n="btnNext">下一題</button>
+                    </div>
+                </form>
+                <div id="quizFeedback" class="hidden p-4 rounded-xl text-sm font-semibold"></div>
+            </div>
+        </section>
+
+        <!-- 區塊 3：字庫管理頁面 (整合所有管理工具) -->
+        <section id="sec-list" class="hidden space-y-4">
+            <div class="flex flex-col space-y-3 bg-white dark:bg-slate-800 p-4 rounded-xl border border-slate-200 dark:border-slate-700 shadow-2xs">
+                
+                <!-- 快捷功能區 (新增單字 / 批量匯入 / JSON 備份) -->
+                <div class="grid grid-cols-3 gap-2 pb-3 border-b border-slate-100 dark:border-slate-700">
+                    <button type="button" onclick="openModal('cardModal')" class="py-2 px-3 bg-brand-600 hover:bg-brand-700 text-white font-bold rounded-lg text-xs transition flex items-center justify-center space-x-1.5 shadow-xs">
+                        <i class="fa-solid fa-plus"></i>
+                        <span data-i18n="btnAddWord">個別填入</span>
+                    </button>
+                    <button type="button" onclick="openModal('batchModal')" class="py-2 px-3 bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 font-bold rounded-lg text-xs transition flex items-center justify-center space-x-1.5">
+                        <i class="fa-solid fa-file-import"></i>
+                        <span data-i18n="btnBatchImport">批量單字</span>
+                    </button>
+                    <button type="button" onclick="openModal('backupModal')" class="py-2 px-3 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-600 font-bold rounded-lg text-xs transition flex items-center justify-center space-x-1.5">
+                        <i class="fa-solid fa-database"></i>
+                        <span data-i18n="btnBackup">JSON 備份</span>
+                    </button>
+                </div>
+
+                <!-- 搜尋與排序條 -->
+                <div class="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5">
+                    <div class="relative flex-1">
+                        <i class="fa-solid fa-magnifying-glass absolute left-3.5 top-3 text-slate-400 text-xs"></i>
+                        <input type="text" id="searchInput" oninput="renderWordList()" data-i18n-placeholder="searchPlaceholder" placeholder="搜尋單字、詞性、字庫或中文釋義..." class="w-full pl-9 pr-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-xs text-slate-800 dark:text-slate-100 focus:bg-white dark:focus:bg-slate-900 focus:ring-2 focus:ring-brand-500 outline-none">
+                    </div>
+                    
+                    <div class="flex items-center space-x-2">
+                        <select id="sortSelect" onchange="renderWordList()" class="min-w-0 flex-1 sm:flex-initial px-2.5 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-xs font-semibold text-slate-700 dark:text-slate-200 focus:bg-white dark:focus:bg-slate-900 outline-none cursor-pointer">
+                            <optgroup label="↕️ 常用排序" data-i18n-label="optGroupSortCommon">
+                                <option value="default" data-i18n="sortDefault">預設排序</option>
+                                <option value="alpha-asc" data-i18n="sortAlphaAsc">字母 (A ➔ Z)</option>
+                                <option value="alpha-desc" data-i18n="sortAlphaDesc">字母 (Z ➔ A)</option>
+                                <option value="pos" data-i18n="sortPos">詞性排序</option>
+                                <option value="level-asc" data-i18n="sortLevelAsc">等級 (Lv.1 ➔ 5)</option>
+                                <option value="level-desc" data-i18n="sortLevelDesc">等級 (Lv.5 ➔ 1)</option>
+                            </optgroup>
+                            <optgroup label="⚠️ 按缺失資料排序 (優先顯示)" data-i18n-label="optGroupSortMissing">
+                                <option value="missing_meaning_first" data-i18n="sortMissingMeaning">缺少釋義優先</option>
+                                <option value="missing_sentence_first" data-i18n="sortMissingSentence">缺少例句優先</option>
+                                <option value="missing_pos_first" data-i18n="sortMissingPos">缺少詞性優先</option>
+                                <option value="missing_phonetic_first" data-i18n="sortMissingPhonetic">缺少音標優先</option>
+                            </optgroup>
+                            <optgroup label="🔍 僅篩選資料缺失單字" data-i18n-label="optGroupFilterMissing">
+                                <option value="only_missing_meaning" data-i18n="optOnlyMissingMeaning">僅顯示「缺少釋義」</option>
+                                <option value="only_missing_sentence" data-i18n="optOnlyMissingSentence">僅顯示「缺少例句」</option>
+                                <option value="only_missing_pos" data-i18n="optOnlyMissingPos">僅顯示「缺少詞性」</option>
+                                <option value="only_missing_phonetic" data-i18n="optOnlyMissingPhonetic">僅顯示「缺少音標」</option>
+                            </optgroup>
+                            <optgroup label="🎯 僅篩選記憶等級 (Lv.1 ~ 5)" data-i18n-label="optGroupFilterLevel">
+                                <option value="only_level_1" data-i18n="optOnlyLevel1">僅顯示 Lv.1</option>
+                                <option value="only_level_2" data-i18n="optOnlyLevel2">僅顯示 Lv.2</option>
+                                <option value="only_level_3" data-i18n="optOnlyLevel3">僅顯示 Lv.3</option>
+                                <option value="only_level_4" data-i18n="optOnlyLevel4">僅顯示 Lv.4</option>
+                                <option value="only_level_5" data-i18n="optOnlyLevel5">僅顯示 Lv.5</option>
+                            </optgroup>
+                            <optgroup id="sortGroupFreeLevel" label="⚡ 自由練習臨時等級" data-i18n-label="optGroupFreeLevel">
+                                <option value="free-level-asc" data-i18n="optSortFreeAsc">自由練習：臨時 Lv.1 → Lv.5</option>
+                                <option value="free-level-desc" data-i18n="optSortFreeDesc">自由練習：臨時 Lv.5 → Lv.1</option>
+                                <option value="only_free_level_1" data-i18n="optOnlyFreeLv1">僅顯示：臨時 Lv.1</option>
+                                <option value="only_free_level_2" data-i18n="optOnlyFreeLv2">僅顯示：臨時 Lv.2</option>
+                                <option value="only_free_level_3" data-i18n="optOnlyFreeLv3">僅顯示：臨時 Lv.3</option>
+                                <option value="only_free_level_4" data-i18n="optOnlyFreeLv4">僅顯示：臨時 Lv.4</option>
+                                <option value="only_free_level_5" data-i18n="optOnlyFreeLv5">僅顯示：臨時 Lv.5</option>
+                            </optgroup>
+                        </select>
+
+                        <button type="button" onclick="openSplitDeckModal()" class="px-2.5 py-2 text-xs font-semibold text-purple-700 dark:text-purple-300 hover:bg-purple-50 dark:hover:bg-purple-950/40 border border-purple-200 dark:border-purple-800 rounded-lg transition whitespace-nowrap">
+                            <i class="fa-solid fa-scissors mr-1"></i><span data-i18n="btnSplit">拆分</span>
+                        </button>
+                        <button type="button" onclick="handleClearAllWords()" class="px-2.5 py-2 text-xs font-semibold text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 border border-rose-200 dark:border-rose-800 rounded-lg transition whitespace-nowrap">
+                            <i class="fa-solid fa-trash-can mr-1"></i><span data-i18n="btnClear">清空</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 批量操作列 -->
+                <div class="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100 dark:border-slate-700 text-xs">
+                    <div class="flex items-center space-x-2 text-slate-600 dark:text-slate-300">
+                        <input type="checkbox" id="selectAllCheckbox" onchange="toggleSelectAllWords(this)" class="w-4 h-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500 cursor-pointer">
+                        <label for="selectAllCheckbox" class="font-bold cursor-pointer" data-i18n="lblSelectAll">全選</label>
+                        <span id="selectedCountBadge" class="hidden px-2 py-0.5 rounded-full bg-brand-100 dark:bg-brand-900 text-brand-700 dark:text-brand-300 font-bold text-[11px]">0 筆</span>
+                    </div>
+                    <!-- 🏷️ 批次管理按鈕列 (含重命名 / 移動 / 還原進度 / 重置臨時等級 / AI 補齊 / 刪除) -->
+                    <div class="flex flex-wrap items-center justify-end gap-1.5">
+                        <button type="button" onclick="handleRenameCategory()" class="px-2.5 py-1.5 bg-amber-50 dark:bg-amber-950/40 hover:bg-amber-100 dark:hover:bg-amber-900/60 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800 font-bold rounded-lg transition" data-i18n="btnRenameDeck">重命名字庫</button>
+                        <button type="button" onclick="handleBatchChangeCategory()" class="px-2.5 py-1.5 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 font-bold rounded-lg transition" data-i18n="btnBatchMove">移動字庫</button>
+                        <button type="button" onclick="if(typeof handleBatchResetProgress==='function') handleBatchResetProgress();" class="px-2.5 py-1.5 bg-sky-50 dark:bg-sky-950/40 hover:bg-sky-100 dark:hover:bg-sky-900/60 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-800 font-bold rounded-lg transition" data-i18n="btnBatchReset">還原進度</button>
+                        <button type="button" id="batchResetFreeLevelBtn" onclick="if(typeof handleBatchResetFreeLevel==='function') handleBatchResetFreeLevel();" class="px-2.5 py-1.5 bg-sky-50 dark:bg-sky-950/40 hover:bg-sky-100 dark:hover:bg-sky-900/60 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-800 font-bold rounded-lg transition" data-i18n="btnBatchResetFree">重置臨時等級</button>
+                        <button type="button" onclick="handleBatchAiFillLibraryWords()" class="px-2.5 py-1.5 bg-purple-600 hover:bg-purple-700 text-white font-bold rounded-lg transition shadow-xs" data-i18n="btnBatchAi">✨ AI 補齊</button>
+                        <button type="button" onclick="handleBatchDeleteWords()" class="px-2.5 py-1.5 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 dark:hover:bg-rose-900/60 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800 font-bold rounded-lg transition" data-i18n="btnBatchDelete">刪除</button>
+                    </div>
+                </div>
+
+                <!-- AI 進度條 -->
+                <div id="libAiProgressContainer" class="hidden space-y-1 pt-2 border-t border-purple-100 dark:border-purple-900">
+                    <div class="flex justify-between text-xs text-purple-700 dark:text-purple-300 font-bold">
+                        <span id="libAiProgressText" data-i18n="libAiProgressText">AI 自動補充中...</span>
+                        <span id="libAiProgressPercent">0%</span>
+                    </div>
+                    <div class="w-full h-1.5 bg-purple-100 dark:bg-purple-950 rounded-full overflow-hidden">
+                        <div id="libAiProgressBar" class="h-full bg-purple-600 transition-all duration-300 w-0"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 單字表格 -->
+            <div class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden shadow-2xs">
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left border-collapse">
+                        <thead>
+                            <tr class="bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                                <th class="py-3 px-2.5 w-8 whitespace-nowrap" data-i18n="thCheck">勾</th>
+                                <th class="py-3 px-2.5" data-i18n="thWord">單字 / 音標</th>
+                                <th class="py-3 px-2.5 whitespace-nowrap" data-i18n="thCategory">字庫</th>
+                                <th class="py-3 px-2.5 whitespace-nowrap" data-i18n="thLevel">等級</th>
+                                <th class="py-3 px-2.5" data-i18n="thMeaning">中文釋義</th>
+                                <th class="py-3 px-2.5 text-right whitespace-nowrap sticky right-0 bg-slate-50 dark:bg-slate-900 z-10" data-i18n="thAction">操作</th>
+                            </tr>
+                        </thead>
+
+                        <tbody id="wordTableBody" class="divide-y divide-slate-100 dark:divide-slate-700 text-xs">
+                            <!-- 動態渲染 -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+        <!-- 📊 學習統計與成果區域 -->
+        <section id="sec-stats" class="hidden space-y-6 pb-20 max-w-4xl mx-auto">
+            <!-- 標題區 -->
+            <div class="bg-white dark:bg-slate-800 p-6 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-700">
+                <h2 class="text-xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                    <i class="fa-solid fa-chart-line text-brand-600 dark:text-brand-400"></i>
+                    <span data-i18n="statsTitle">學習成果與數據統計</span>
+                </h2>
+                <p class="text-xs text-slate-500 dark:text-slate-400 mt-1" data-i18n="statsDesc">掌握您的詞彙累積量、學習熟悉度與各字庫分佈</p>
+
+                <!-- ⚙️ 使用者顯示偏好勾選區 -->
+                <div class="mt-4 pt-4 border-t border-slate-100 dark:border-slate-700">
+                    <span class="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-2" data-i18n="statsOptionsTitle">顯示指標設定</span>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                        <label class="flex items-center space-x-2 cursor-pointer bg-slate-50 dark:bg-slate-700/50 p-2.5 rounded-xl border border-slate-200 dark:border-slate-600 hover:bg-slate-100 transition">
+                            <input type="checkbox" id="chkShowTotal" checked onchange="renderStats()" class="w-4 h-4 rounded text-brand-600 focus:ring-brand-500">
+                            <span class="font-semibold text-slate-800 dark:text-slate-200" data-i18n="lblShowTotal">📊 總單字量與掌握率</span>
+                        </label>
+                        <label class="flex items-center space-x-2 cursor-pointer bg-slate-50 dark:bg-slate-700/50 p-2.5 rounded-xl border border-slate-200 dark:border-slate-600 hover:bg-slate-100 transition">
+                            <input type="checkbox" id="chkShowLevel" checked onchange="renderStats()" class="w-4 h-4 rounded text-brand-600 focus:ring-brand-500">
+                            <span class="font-semibold text-slate-800 dark:text-slate-200" data-i18n="lblShowLevel">📈 FSRS 記憶穩定度等級分佈</span>
+                        </label>
+                        <label class="flex items-center space-x-2 cursor-pointer bg-slate-50 dark:bg-slate-700/50 p-2.5 rounded-xl border border-slate-200 dark:border-slate-600 hover:bg-slate-100 transition">
+                            <input type="checkbox" id="chkShowCategory" checked onchange="renderStats()" class="w-4 h-4 rounded text-brand-600 focus:ring-brand-500">
+                            <span class="font-semibold text-slate-800 dark:text-slate-200" data-i18n="lblShowCategory">📚 各字庫 / 語言分佈</span>
+                        </label>
+                        <label class="flex items-center space-x-2 cursor-pointer bg-slate-50 dark:bg-slate-700/50 p-2.5 rounded-xl border border-slate-200 dark:border-slate-600 hover:bg-slate-100 transition">
+                            <input type="checkbox" id="chkShowCatLevel" checked onchange="renderStats()" class="w-4 h-4 rounded text-brand-600 focus:ring-brand-500">
+                            <span class="font-semibold text-slate-800 dark:text-slate-200" data-i18n="lblShowCatLevel">🔍 各字庫之等級細節分佈</span>
+                        </label>
+                    </div>
+                </div>
+            </div>
+            <div id="statsContainer" class="space-y-6"></div>
+        </section>
+        
+        <!-- 區塊 4：字庫商店頁面 -->
+        <section id="sec-store" class="hidden space-y-4 pb-20">
+            <!-- 頂部標題、金幣顯示與上架按鈕 -->
+            <div class="flex justify-between items-center">
+                <div class="space-y-1">
+                    <div class="flex items-center space-x-2.5">
+                        <h2 class="text-xl font-bold text-slate-900 dark:text-white" data-i18n="navStore">字庫商店</h2>
+                        <!-- 🪙 金幣數顯示 -->
+                        <div class="flex items-center space-x-1 px-2.5 py-1 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 rounded-lg text-amber-600 dark:text-amber-400 text-xs font-extrabold shadow-2xs">
+                            <i class="fa-solid fa-coins text-amber-500"></i>
+                            <span id="userCoinsDisplay">500</span>
+                        </div>
+                    </div>
+                    <p class="text-xs text-slate-400" data-i18n="storeSubDesc">搜尋、下載或分享來自社群的單字庫</p>
+                </div>
+                <button type="button" onclick="openPublishModal()" class="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition flex items-center space-x-1 shadow-sm">
+                    <i class="fa-solid fa-cloud-arrow-up"></i>
+                    <span data-i18n="btnPublishDeck">發布字庫</span>
+                </button>
+            </div>
+
+            <!-- 🔍 搜尋列 -->
+            <div class="relative">
+                <i class="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm"></i>
+                <input type="text" id="storeSearchInput" oninput="renderStore()" data-i18n-placeholder="storeSearchPlaceholder" placeholder="搜尋字庫名稱、簡介或作者名稱..." class="w-full pl-9 pr-4 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 text-slate-800 dark:text-slate-100">
+            </div>
+
+            <!-- 📦 商店字庫列表容器 -->
+            <div id="storeContainer" class="grid grid-cols-1 md:grid-cols-2 gap-4"></div>
+        </section>
+
+        <!-- 區塊 5：設定頁面 -->
+        <section id="sec-settings" class="hidden space-y-6">
+            <div class="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-6 shadow-2xs space-y-6 max-w-lg mx-auto">
+                <div class="border-b border-slate-100 dark:border-slate-700 pb-4">
+                    <h2 class="text-lg font-extrabold text-slate-900 dark:text-white" data-i18n="settingsTitle">帳號與系統設定</h2>
+                    <p class="text-xs text-slate-500 dark:text-slate-400" data-i18n="settingsDesc">管理您的個人資料、學習偏好、外觀主題與 API 金鑰</p>
+                </div>
+
+                <!-- 個人資訊區塊 -->
+                <div class="p-4 bg-slate-50 dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700 flex items-center justify-between">
+                    <div class="flex items-center space-x-3">
+                        <img id="settings-avatar" src="https://api.dicebear.com/7.x/bottts/svg?seed=user" alt="Avatar" class="w-12 h-12 rounded-full border border-slate-200 dark:border-slate-700 object-cover">
+                        <div>
+                            <div id="settings-email" class="font-bold text-sm text-slate-800 dark:text-slate-100" data-i18n="guestMode">訪客模式</div>
+                            <div id="settings-subtext" class="text-xs text-slate-400" data-i18n="notLinkedGoogle">目前未連結 Google 帳號</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 🏷️ 個人固定暱稱設定區塊 -->
+                <div class="pt-4 border-t border-slate-100 dark:border-slate-700 space-y-2">
+                    <div class="flex justify-between items-center">
+                        <div>
+                            <div class="text-xs font-bold text-slate-800 dark:text-slate-100" data-i18n="lblNickname">個人固定暱稱 (用於發布字庫與社群)</div>
+                            <div class="text-[11px] text-slate-400" data-i18n="descNickname">登入後固定綁定帳號，防止他人盜用身份發布</div>
+                        </div>
+                    </div>
+                    <div class="flex space-x-2">
+                        <input type="text" id="settingsNicknameInput" data-i18n-placeholder="phNicknameInput" placeholder="設定您的固定暱稱..." class="flex-1 px-3.5 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-xs text-slate-800 dark:text-slate-100 font-semibold outline-none focus:ring-2 focus:ring-brand-500">
+                        <button type="button" onclick="handleSaveNickname()" class="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white font-bold rounded-xl text-xs transition shadow-xs whitespace-nowrap" data-i18n="btnSaveNickname">儲存暱稱</button>
+                    </div>
+                </div>
+
+                <!-- 🔒 隱私與線上狀態設定 -->
+                <div class="pt-4 border-t border-slate-100 dark:border-slate-700 flex items-center justify-between">
+                    <div>
+                        <div class="text-xs font-bold text-slate-800 dark:text-slate-100" data-i18n="lblPrivacyStatus">隱藏線上狀態與訊息已讀</div>
+                        <div class="text-[11px] text-slate-400" data-i18n="descPrivacyStatus">開啟後其他玩家將無法看到您的在線狀態</div>
+                    </div>
+                    <label class="relative inline-flex items-center cursor-pointer">
+                        <input type="checkbox" id="privacyStatusToggle" onchange="if(typeof handlePrivacyToggleChange==='function')handlePrivacyToggleChange(this.checked)" class="sr-only peer">
+                        <div class="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-slate-600 peer-checked:bg-brand-600"></div>
+                    </label>
+                </div>
+
+                <!-- 登入/登出操作 -->
+                <div id="settings-auth-actions" class="space-y-2">
+                    <div id="settings-logged-out">
+                        <button type="button" onclick="loginWithGoogle()" class="w-full py-2.5 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-slate-600 font-bold rounded-xl text-xs transition flex items-center justify-center space-x-2 shadow-xs">
+                            <i class="fa-brands fa-google text-red-500 text-sm"></i>
+                            <span data-i18n="btnLoginGoogle">使用 Google 帳號登入</span>
+                        </button>
+                    </div>
+                    <div id="settings-logged-in" style="display: none;">
+                        <button type="button" onclick="logoutUser()" class="w-full py-2.5 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 dark:hover:bg-rose-900 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800 font-bold rounded-xl text-xs transition flex items-center justify-center space-x-1.5">
+                            <i class="fa-solid fa-right-from-bracket"></i>
+                            <span data-i18n="btnLogout">登出帳號</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 多語系與顯示模式設定 -->
+                <div class="pt-4 border-t border-slate-100 dark:border-slate-700 space-y-4">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <div class="text-xs font-bold text-slate-800 dark:text-slate-100" data-i18n="lblNativeLang">使用者母語 (Native Language)</div>
+                            <div class="text-[11px] text-slate-400" data-i18n="descNativeLang">系統已依據您的裝置語言自動判定</div>
+                        </div>
+                        <div class="flex flex-col items-end space-y-1">
+                            <select id="nativeLangSelect" onchange="handleNativeLangChange(this.value)" class="px-2.5 py-1.5 bg-slate-100 dark:bg-slate-900 text-slate-800 dark:text-slate-100 border border-slate-200 dark:border-slate-700 font-bold rounded-lg text-xs outline-none cursor-pointer">
+                                <option value="zh-TW">🇹🇼 繁體中文</option>
+                                <option value="en">🇺🇸 English</option>
+                                <option value="ja">🇯🇵 日本語</option>
+                                <option value="custom" data-i18n="optCustomNative">✏️ 自訂母語...</option>
+                            </select>
+                            <input type="text" id="customNativeInput" onchange="handleCustomLangChange('native', this.value)" data-i18n-placeholder="phCustomNative" placeholder="輸入自訂母語" class="hidden px-2 py-1 text-xs border border-slate-300 dark:border-slate-600 rounded bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-slate-100">
+                        </div>
+                    </div>
+
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <div class="text-xs font-bold text-slate-800 dark:text-slate-100" data-i18n="lblTargetLang">學習目標語言 (Target Language)</div>
+                            <div class="text-[11px] text-slate-400" data-i18n="descTargetLang">選擇 AI 自動解析單字與例句時的語言</div>
+                        </div>
+                        <div class="flex flex-col items-end space-y-1">
+                            <select id="targetLangSelect" onchange="handleTargetLangChange(this.value)" class="px-2.5 py-1.5 bg-slate-100 dark:bg-slate-900 text-slate-800 dark:text-slate-100 border border-slate-200 dark:border-slate-700 font-bold rounded-lg text-xs outline-none cursor-pointer">
+                                <option value="en">🇺🇸 English</option>
+                                <option value="ja">🇯🇵 日本語</option>
+                                <option value="zh-TW">🇹🇼 中文</option>
+                                <option value="custom" data-i18n="optCustomLang">✏️ 自訂語言...</option>
+                            </select>
+                            <input type="text" id="customTargetInput" onchange="handleCustomLangChange('target', this.value)" data-i18n-placeholder="customTargetPlaceholder" placeholder="輸入自訂目標語言" class="hidden px-2 py-1 text-xs border border-slate-300 dark:border-slate-600 rounded bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-slate-100">
+                        </div>
+                    </div>
+
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <div class="text-xs font-bold text-slate-800 dark:text-slate-100" data-i18n="lblDisplayMode">卡片正面顯示模式</div>
+                            <div class="text-[11px] text-slate-400" data-i18n="descDisplayMode">可自由切換母語/外語在正面或同時顯示</div>
+                        </div>
+                        <select id="cardDisplayModeSelect" onchange="handleCardDisplayModeChange(this.value)" class="px-2.5 py-1.5 bg-slate-100 dark:bg-slate-900 text-slate-800 dark:text-slate-100 border border-slate-200 dark:border-slate-700 font-bold rounded-lg text-xs outline-none cursor-pointer">
+                            <option value="target_front" data-i18n="optTargetFront">目標語言在正面，母語在背面</option>
+                            <option value="native_front" data-i18n="optNativeFront">母語在正面，目標語言在背面</option>
+                            <option value="both_front" data-i18n="optBothFront">正面同時顯示 (雙語對照)</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- 音標顯示位置 -->
+                <div class="flex items-center justify-between pt-3 border-t border-slate-100 dark:border-slate-700">
+                    <div>
+                        <div class="text-xs font-bold text-slate-800 dark:text-slate-100" data-i18n="lblPhoneticPos">音標 / 讀音顯示位置</div>
+                        <div class="text-[11px] text-slate-400" data-i18n="descPhoneticPos">背日文時建議設為「背面」，避免正面直接透露發音</div>
+                    </div>
+                    <select id="phoneticPosSelect" onchange="handlePhoneticPosChange(this.value)" class="px-2.5 py-1.5 bg-slate-100 dark:bg-slate-900 text-slate-800 dark:text-slate-100 border border-slate-200 dark:border-slate-700 font-bold rounded-lg text-xs outline-none cursor-pointer">
+                        <option value="front" data-i18n="optPhoneticFront">🔤 正面顯示 (英文預設)</option>
+                        <option value="back" data-i18n="optPhoneticBack">🙈 背面顯示 (日文推薦)</option>
+                    </select>
+                </div>
+
+                <!-- 主題設定區塊 -->
+                <div class="pt-4 border-t border-slate-100 dark:border-slate-700 flex items-center justify-between">
+                    <div>
+                        <div class="text-xs font-bold text-slate-800 dark:text-slate-100" data-i18n="lblTheme">外觀主題設定</div>
+                        <div class="text-[11px] text-slate-400" data-i18n="descTheme">可手動切換或跟隨手機系統預設</div>
+                    </div>
+                    
+                    <select id="themeSelect" onchange="handleThemeChange(this.value)" class="px-2.5 py-1.5 bg-slate-100 dark:bg-slate-900 text-slate-800 dark:text-slate-100 border border-slate-200 dark:border-slate-700 font-bold rounded-lg text-xs outline-none cursor-pointer">
+                        <option value="system" data-i18n="themeSystem">📱 跟隨系統</option>
+                        <option value="light" data-i18n="themeLight">☀️ 亮色模式</option>
+                        <option value="dark" data-i18n="themeDark">🌙 夜間模式</option>
+                    </select>
+                </div>
+
+                <!-- API Key 設定 -->
+                <div class="pt-4 border-t border-slate-100 dark:border-slate-700 flex items-center justify-between">
+                    <div>
+                        <div class="text-xs font-bold text-slate-800 dark:text-slate-100" data-i18n="lblApiKey">Gemini AI Key</div>
+                        <div class="text-[11px] text-slate-400" data-i18n="descApiKey">用於自動帶入音標與例句</div>
+                    </div>
+                    <button type="button" onclick="openModal('keyModal')" class="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white font-bold rounded-lg text-xs transition shadow-xs flex items-center space-x-1">
+                        <i class="fa-solid fa-key"></i>
+                        <span data-i18n="btnSetKey">設定 Key</span>
+                    </button>
+                </div>
+
+                <!-- 🚀 頁面功能導覽教學 -->
+                <div class="pt-4 border-t border-slate-100 dark:border-slate-700 flex items-center justify-between">
+                    <div>
+                        <div class="text-xs font-bold text-slate-800 dark:text-slate-100" data-i18n="lblTourGuide">頁面功能導覽</div>
+                        <div class="text-[11px] text-slate-400" data-i18n="descTourGuide">重新開啟新手介面指引教學</div>
+                    </div>
+                    <button type="button" onclick="startInteractiveTour()" class="px-3 py-1.5 bg-brand-600 hover:bg-brand-700 text-white font-bold rounded-lg text-xs transition shadow-xs flex items-center space-x-1">
+                        <i class="fa-solid fa-compass"></i>
+                        <span data-i18n="btnStartTour">開啟導覽</span>
+                    </button>
+                </div>
+
+            </div>
+        </section>
+
+    </main>
+
+    <!-- 底部 Tab 導覽列 -->
+    <nav id="bottom-nav" class="fixed bottom-0 left-0 right-0 bg-white dark:bg-slate-800 border-t border-slate-200 dark:border-slate-700 z-40 shadow-lg transition-colors duration-200">
+        <div class="max-w-md mx-auto grid grid-cols-5 h-14">
+            <button type="button" onclick="switchTab('home')" id="bnav-home" class="flex flex-col items-center justify-center text-brand-600 dark:text-brand-400 space-y-1">
+                <i class="fa-solid fa-house text-lg"></i>
+                <span class="text-[10px] font-bold" data-i18n="navHome">主頁</span>
+            </button>
+            <button type="button" onclick="switchTab('list')" id="bnav-list" class="flex flex-col items-center justify-center text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 space-y-1">
+                <i class="fa-solid fa-list-check text-lg"></i>
+                <span class="text-[10px] font-bold" data-i18n="navList">字庫管理</span>
+            </button>
+            <button type="button" onclick="switchTab('store')" id="bnav-store" class="flex flex-col items-center justify-center text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 space-y-1">
+                <i class="fa-solid fa-store text-lg"></i>
+                <span class="text-[10px] font-bold" data-i18n="navStore">字庫商店</span>
+            </button>
+            <button type="button" id="bnav-stats" onclick="switchTab('stats')" class="flex flex-col items-center justify-center text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 space-y-1 transition">
+                <i class="fa-solid fa-chart-pie text-lg"></i>
+                <span class="text-[10px] font-bold" data-i18n="navStats">統計</span>
+            </button>
+            <button type="button" onclick="switchTab('settings')" id="bnav-settings" class="flex flex-col items-center justify-center text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 space-y-1">
+                <img id="nav-avatar" src="https://api.dicebear.com/7.x/bottts/svg?seed=user" class="w-5 h-5 rounded-full border border-slate-300 dark:border-slate-600 object-cover">
+                <span class="text-[10px] font-bold" data-i18n="navSettings">設定</span>
+            </button>
+        </div>
+    </nav>
+
+    <!-- 彈窗 1: 新增/編輯單字 Modal -->
+    <div id="cardModal" class="hidden fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+        <div class="bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-2xl max-w-lg w-full p-6 space-y-5 shadow-2xl border border-slate-100 dark:border-slate-700 max-h-[90vh] overflow-y-auto">
+            <div class="flex items-center justify-between border-b border-slate-100 dark:border-slate-700 pb-3">
+                <h3 id="cardModalTitle" class="text-lg font-bold" data-i18n="modalCardTitle">新增/編輯單字卡</h3>
+                <button type="button" onclick="closeModal('cardModal')" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1">
+                    <i class="fa-solid fa-xmark text-lg"></i>
+                </button>
+            </div>
+
+            <form id="cardForm" onsubmit="handleSaveCardForm(event)" class="space-y-4">
+                <input type="hidden" id="editCardId">
+
+                <div>
+                    <label class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1" data-i18n="lblFormCategory">歸屬字庫/分類名稱</label>
+                    <select id="formCategorySelect" onchange="handleCategorySelectWithNew('form')" class="w-full px-3.5 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-slate-100 outline-none text-sm font-semibold cursor-pointer">
+                    </select>
+                    <input type="text" id="formCategory" data-i18n-placeholder="phFormCategory" placeholder="請輸入新字庫名稱..." class="hidden w-full px-3.5 py-2 rounded-lg border border-brand-400 dark:border-brand-500 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 outline-none text-sm font-semibold">
+                </div>
+
+                <div>
+                    <label class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1" data-i18n="lblFormLevel">記憶穩定度等級 (Level 1~5)</label>
+                    <select id="formLevel" class="w-full px-3 py-2 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg text-sm text-slate-800 dark:text-slate-200 focus:ring-2 focus:ring-brand-500 font-semibold transition">
+                        <option value="1" data-i18n="optLevel1">Lv.1 - 新單字 / 短期重學</option>
+                        <option value="2" data-i18n="optLevel2">Lv.2 - 初步印象 (穩定 1~3 天)</option>
+                        <option value="3" data-i18n="optLevel3">Lv.3 - 中等鞏固 (穩定 3~8 天)</option>
+                        <option value="4" data-i18n="optLevel4">Lv.4 - 高度熟練 (穩定 8~21 天)</option>
+                        <option value="5" data-i18n="optLevel5">Lv.5 - 長期記憶 (穩定 21 天+)</option>
+                    </select>
+                </div>
+
+                <div id="formFreeLevelWrapper">
+                    <label for="formFreeLevel" class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1" data-i18n="labelFreeLevel">⚡ 自由練習臨時等級 (臨時 Lv.1~5)</label>
+                    <select id="formFreeLevel" class="w-full px-3 py-2 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg text-sm text-slate-800 dark:text-slate-200 focus:ring-2 focus:ring-brand-500 font-semibold transition">
+                        <option value="1" data-i18n="optFreeLv1">臨時 Lv.1 - 高頻焦點池 (最多 6 字)</option>
+                        <option value="2" data-i18n="optFreeLv2">臨時 Lv.2 - 次高頻焦點池 (最多 4 字)</option>
+                        <option value="3" data-i18n="optFreeLv3">臨時 Lv.3 - 初步熟悉</option>
+                        <option value="4" data-i18n="optFreeLv4">臨時 Lv.4 - 考前熟練</option>
+                        <option value="5" data-i18n="optFreeLv5">臨時 Lv.5 - 完全掌握 (低頻抽考)</option>
+                    </select>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1"><span data-i18n="lblFormWord">目標語言單字 / 詞彙</span> <span class="text-rose-500">*</span></label>
+                    <div class="flex space-x-2">
+                        <input type="text" id="formWord" required data-i18n-placeholder="phFormWord" placeholder="例如: resilient / 食べる" class="flex-1 px-3.5 py-2.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-900 outline-none text-sm font-semibold">
+                        <button type="button" onclick="handleAiSingleFill()" id="aiGenerateBtn" class="px-3.5 py-2.5 rounded-lg bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white font-medium text-xs flex items-center space-x-1 shadow-sm transition">
+                            <i class="fa-solid fa-wand-magic-sparkles"></i>
+                            <span data-i18n="btnAiFill">AI 自動帶入</span>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1" data-i18n="lblFormPos">詞性 (POS)</label>
+                        <input type="text" id="formPos" data-i18n-placeholder="phFormPos" placeholder="例如: adj. / 動詞" class="w-full px-3.5 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-900 outline-none text-sm">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1" data-i18n="lblFormPhonetic">音標 / 讀音 (Phonetic)</label>
+                        <input type="text" id="formPhonetic" data-i18n-placeholder="phFormPhonetic" placeholder="例如: /rɪˈzɪl.jənt/ 或 たべる" class="w-full px-3.5 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-900 outline-none text-sm font-mono">
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1"><span data-i18n="lblFormMeaning">母語釋義 / 翻譯</span></label>
+                    <input type="text" id="formMeaning" data-i18n-placeholder="phFormMeaning" placeholder="例如: 有彈性的 / 吃 (可留空，交由 AI 自動補充)" class="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-900 outline-none text-sm font-medium">
+                </div>
+
+                <div>
+                    <label class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1" data-i18n="lblFormSentence">目標語言例句</label>
+                    <textarea id="formSentence" rows="2" data-i18n-placeholder="phFormSentence" placeholder="例如: She is resilient enough to bounce back from failure." class="w-full px-3.5 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-900 outline-none text-sm"></textarea>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1" data-i18n="lblFormTranslation">例句母語翻譯</label>
+                    <textarea id="formTranslation" rows="2" data-i18n-placeholder="phFormTranslation" placeholder="例如: 她很有韌性，能從失敗中迅速振作起來。" class="w-full px-3.5 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-900 outline-none text-sm"></textarea>
+                </div>
+
+                <div class="pt-2 flex justify-end space-x-2">
+                    <button type="button" onclick="closeModal('cardModal')" class="px-4 py-2 rounded-lg text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700" data-i18n="btnCancel">取消</button>
+                    <button type="submit" class="px-5 py-2 rounded-lg bg-brand-600 hover:bg-brand-700 text-white text-sm font-bold shadow-sm" data-i18n="btnSaveCard">儲存卡片</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- 彈窗 2: 批量貼上與 AI 智慧解析 Modal -->
+    <div id="batchModal" class="hidden fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+        <div class="bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-2xl max-w-3xl w-full p-6 space-y-5 shadow-2xl border border-slate-100 dark:border-slate-700 max-h-[92vh] flex flex-col">
+            <div class="flex items-center justify-between border-b border-slate-100 dark:border-slate-700 pb-3 flex-shrink-0">
+                <div class="flex items-center space-x-2">
+                    <i class="fa-solid fa-file-import text-emerald-600 text-xl"></i>
+                    <h3 class="text-lg font-bold" data-i18n="modalBatchTitle">批量貼上與 AI 智慧解析</h3>
+                </div>
+                <button type="button" onclick="closeModal('batchModal')" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1">
+                    <i class="fa-solid fa-xmark text-lg"></i>
+                </button>
+            </div>
+
+            <div class="space-y-4 flex-1 overflow-y-auto pr-1">
+                <!-- 預設單字庫一鍵匯入區塊（依目標語言動態切換：英文 7000 單 / 日文 JLPT N5~N1） -->
+                <div id="batchPresetBox" class="p-3.5 bg-gradient-to-r from-brand-50 to-indigo-50 dark:from-slate-900 dark:to-slate-900 border border-brand-200 dark:border-slate-700 rounded-xl space-y-2">
+                    <div class="flex items-center space-x-2 font-bold text-xs">
+                        <i class="fa-solid fa-graduation-cap text-brand-600 text-sm"></i>
+                        <span id="batchPresetTitleText" data-i18n="batchPresetTitle">一鍵載入高中 7000 單字庫 (大考中心 / 108 課綱分級)</span>
+                    </div>
+                    <div id="batchPresetButtons" class="grid grid-cols-2 sm:grid-cols-3 gap-2 pt-1">
+                        <button type="button" onclick="handleLoadPreset(1, event)" class="py-1.5 px-2 bg-white dark:bg-slate-800 hover:bg-brand-100 dark:hover:bg-slate-700 text-brand-700 dark:text-brand-300 border border-brand-200 dark:border-slate-600 text-xs font-bold rounded-lg transition shadow-2xs">Level 1</button>
+                        <button type="button" onclick="handleLoadPreset(2, event)" class="py-1.5 px-2 bg-white dark:bg-slate-800 hover:bg-brand-100 dark:hover:bg-slate-700 text-brand-700 dark:text-brand-300 border border-brand-200 dark:border-slate-600 text-xs font-bold rounded-lg transition shadow-2xs">Level 2</button>
+                        <button type="button" onclick="handleLoadPreset(3, event)" class="py-1.5 px-2 bg-white dark:bg-slate-800 hover:bg-brand-100 dark:hover:bg-slate-700 text-brand-700 dark:text-brand-300 border border-brand-200 dark:border-slate-600 text-xs font-bold rounded-lg transition shadow-2xs">Level 3</button>
+                        <button type="button" onclick="handleLoadPreset(4, event)" class="py-1.5 px-2 bg-white dark:bg-slate-800 hover:bg-brand-100 dark:hover:bg-slate-700 text-brand-700 dark:text-brand-300 border border-brand-200 dark:border-slate-600 text-xs font-bold rounded-lg transition shadow-2xs">Level 4</button>
+                        <button type="button" onclick="handleLoadPreset(5, event)" class="py-1.5 px-2 bg-white dark:bg-slate-800 hover:bg-brand-100 dark:hover:bg-slate-700 text-brand-700 dark:text-brand-300 border border-brand-200 dark:border-slate-600 text-xs font-bold rounded-lg transition shadow-2xs">Level 5</button>
+                        <button type="button" onclick="handleLoadPreset(6, event)" class="py-1.5 px-2 bg-white dark:bg-slate-800 hover:bg-brand-100 dark:hover:bg-slate-700 text-brand-700 dark:text-brand-300 border border-brand-200 dark:border-slate-600 text-xs font-bold rounded-lg transition shadow-2xs">Level 6</button>
+                    </div>
+                </div>
+
+
+                <div>
+                    <label class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1" data-i18n="lblBatchCategory">匯入至此字庫名稱：</label>
+                    <select id="batchTargetCategorySelect" onchange="handleCategorySelectWithNew('batch')" class="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-slate-100 outline-none font-semibold cursor-pointer">
+                    </select>
+                    <input type="text" id="batchTargetCategory" data-i18n-placeholder="phBatchCategory" placeholder="請輸入新字庫名稱..." class="hidden w-full px-3 py-2 text-xs rounded-lg border border-brand-400 dark:border-brand-500 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 outline-none font-semibold">
+                </div>
+
+                <div>
+                    <label class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1" data-i18n="lblBatchRaw">貼上原始文字庫資料：</label>
+                    <textarea id="batchRawInput" rows="5" data-i18n-placeholder="phBatchRaw" placeholder="請在此貼上單字內容..." class="w-full p-3 font-mono text-xs rounded-xl border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-900 outline-none"></textarea>
+                </div>
+
+                <div class="flex space-x-2">
+                    <button type="button" onclick="handleParseBatchText()" class="flex-1 py-2.5 bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs rounded-lg transition flex items-center justify-center space-x-1.5">
+                        <i class="fa-solid fa-magnifying-glass font-normal"></i>
+                        <span data-i18n="btnParseText">解析貼入文字</span>
+                    </button>
+                </div>
+
+                <!-- 預覽表格區塊 -->
+                <div id="batchPreviewBox" class="hidden space-y-3 pt-2">
+                    <div class="flex items-center justify-between">
+                        <span class="text-xs font-bold"><span data-i18n="lblBatchPreview">解析預覽</span> (共 <span id="batchParsedCount">0</span> 筆)：</span>
+                        <button type="button" id="batchAiFillBtn" onclick="handleRunBatchAiAutoFill()" class="px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold rounded-lg shadow-xs transition flex items-center space-x-1">
+                            <i class="fa-solid fa-wand-magic-sparkles"></i>
+                            <span data-i18n="btnBatchAiFill">AI 批次補齊缺漏欄位</span>
+                        </button>
+                    </div>
+
+                    <!-- 進度條 -->
+                    <div id="batchProgressContainer" class="hidden space-y-1">
+                        <div class="flex justify-between text-xs text-slate-600 dark:text-slate-300">
+                            <span id="batchProgressText" data-i18n="libAiProgressText">AI 自動補齊中...</span>
+                            <span id="batchProgressPercent">0%</span>
+                        </div>
+                        <div class="w-full h-2 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
+                            <div id="batchProgressBar" class="h-full bg-purple-600 transition-all duration-300 w-0"></div>
+                        </div>
+                    </div>
+
+                    <div class="max-h-56 overflow-y-auto border border-slate-200 dark:border-slate-700 rounded-lg text-xs">
+                        <table class="w-full text-left border-collapse">
+                            <thead class="bg-slate-100 dark:bg-slate-900 text-slate-600 dark:text-slate-300 font-bold sticky top-0">
+                                <tr>
+                                    <th class="p-2 border-b dark:border-slate-700" data-i18n="thBatchWord">單字</th>
+                                    <th class="p-2 border-b dark:border-slate-700" data-i18n="thBatchPos">詞性</th>
+                                    <th class="p-2 border-b dark:border-slate-700" data-i18n="thBatchMeaning">母語釋義</th>
+                                    <th class="p-2 border-b dark:border-slate-700" data-i18n="thBatchStatus">狀態</th>
+                                    <th class="p-2 border-b dark:border-slate-700 text-right" data-i18n="thAction">操作</th>
+                                </tr>
+                            </thead>
+                            <tbody id="batchPreviewBody" class="divide-y divide-slate-100 dark:divide-slate-700 font-mono">
+                                <!-- 動態解析列 -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <div class="pt-3 border-t border-slate-100 dark:border-slate-700 flex justify-end space-x-2 flex-shrink-0">
+                <button type="button" onclick="closeModal('batchModal')" class="px-4 py-2 rounded-lg text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700" data-i18n="btnCancel">取消</button>
+                <button type="button" id="confirmBatchImportBtn" onclick="handleConfirmBatchImport()" disabled class="px-5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-bold shadow-sm transition" data-i18n="btnConfirmImport">確認匯入至字庫</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 彈窗 3: Gemini API Key Modal (雙軌模式) -->
+    <div id="keyModal" class="hidden fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+        <div class="bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl border border-slate-100 dark:border-slate-700">
+            <div class="flex items-center justify-between border-b border-slate-100 dark:border-slate-700 pb-3">
+                <div class="flex items-center space-x-2">
+                    <i class="fa-solid fa-key text-amber-500"></i>
+                    <h3 class="text-base font-bold" data-i18n="modalKeyTitle">Gemini API Key 設定</h3>
+                </div>
+                <button type="button" onclick="closeModal('keyModal')" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1">
+                    <i class="fa-solid fa-xmark text-lg"></i>
+                </button>
+            </div>
+
+            <p class="text-xs text-slate-500 dark:text-slate-400 leading-relaxed" data-i18n="modalKeyDesc">
+                選擇 API 金鑰模式以啟用自動生成單字音標、詞性、母語釋義及例句翻譯功能。
+            </p>
+
+            <!-- 🌟 雙軌模式切換選單 -->
+            <div class="space-y-3">
+                <label class="block text-xs font-bold text-slate-700 dark:text-slate-300" data-i18n="lblApiKeySource">API 金鑰來源</label>
+                <div class="grid grid-cols-2 gap-2.5">
+                    <label class="flex items-center space-x-2 border border-slate-200 dark:border-slate-700 rounded-xl p-3 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700/50 transition">
+                        <input type="radio" name="apiMode" value="personal" id="apiModePersonal" onchange="switchApiMode('personal')" class="text-brand-600 focus:ring-brand-500">
+                        <div class="text-xs font-bold text-slate-800 dark:text-slate-100">
+                            <span data-i18n="lblApiPersonalKey">個人 API Key</span>
+                            <div class="text-[10px] text-slate-400 font-normal" data-i18n="lblApiPersonalKeyDesc">獨享 200 字大批次</div>
+                        </div>
+                    </label>
+                    <label class="flex items-center space-x-2 border border-slate-200 dark:border-slate-700 rounded-xl p-3 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700/50 transition">
+                        <input type="radio" name="apiMode" value="shared" id="apiModeShared" onchange="switchApiMode('shared')" class="text-brand-600 focus:ring-brand-500">
+                        <div class="text-xs font-bold text-slate-800 dark:text-slate-100">
+                            <span data-i18n="lblApiSharedKey">免費共用 Key</span>
+                            <div class="text-[10px] text-slate-400 font-normal" data-i18n="lblApiSharedKeyDesc">免設定，全站共享</div>
+                        </div>
+                    </label>
+                </div>
+            </div>
+
+            <!-- 個人 Key 輸入框 (選免費共用時會自動隱藏) -->
+            <div id="personalKeyInputBox" class="pt-1">
+                <label class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1" data-i18n="lblApiKeyInput">個人 API Key</label>
+                <input type="password" id="geminiApiKeyInput" placeholder="AIzaSy..." class="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-900 text-sm font-mono outline-none">
+            </div>
+
+            <div class="pt-2 flex justify-end space-x-2">
+                <button type="button" onclick="closeModal('keyModal')" class="px-4 py-2 rounded-lg text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700" data-i18n="btnCancel">取消</button>
+                <button type="button" onclick="handleSaveApiKey()" class="px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold shadow-sm" data-i18n="btnSaveKey">儲存設定</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 彈窗 4: 字庫 JSON 備份與還原 Modal -->
+    <div id="backupModal" class="hidden fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+        <div class="bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-2xl max-w-md w-full p-6 space-y-5 shadow-2xl border border-slate-100 dark:border-slate-700">
+            <div class="flex items-center justify-between border-b border-slate-100 dark:border-slate-700 pb-3">
+                <div class="flex items-center space-x-2">
+                    <i class="fa-solid fa-database text-brand-600 dark:text-brand-400"></i>
+                    <h3 class="text-base font-bold" data-i18n="modalBackupTitle">字庫 JSON 備份與還原</h3>
+                </div>
+                <button type="button" onclick="closeModal('backupModal')" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1">
+                    <i class="fa-solid fa-xmark text-lg"></i>
+                </button>
+            </div>
+
+            <div class="space-y-4">
+                <div class="p-3.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl space-y-2.5">
+                    <h4 class="text-xs font-bold" data-i18n="lblExport">選擇匯出的字庫 (Export)</h4>
+                    <select id="exportCategorySelect" class="w-full px-3 py-2 text-xs font-semibold rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 outline-none">
+                        <option value="ALL" data-i18n="optExportAll">包含全部字庫</option>
+                    </select>
+                    <button type="button" onclick="exportJSON()" class="w-full py-2 bg-brand-600 hover:bg-brand-700 text-white text-xs font-bold rounded-lg transition">
+                        <i class="fa-solid fa-download mr-1"></i><span data-i18n="btnDownloadBackup">下載 JSON 備份檔</span>
+                    </button>
+                </div>
+
+                <div class="p-3.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl space-y-2.5">
+                    <h4 class="text-xs font-bold" data-i18n="lblImport">還原字庫 (Import)</h4>
+                    <p class="text-xs text-slate-500 dark:text-slate-400" data-i18n="lblImportDesc">上傳先前備份的 .json 檔案進行還原。</p>
+                    <input type="file" id="jsonFileInput" accept=".json" class="block w-full text-xs text-slate-500 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-brand-50 file:text-brand-700 hover:file:bg-brand-100">
+                    <button type="button" onclick="handleImportJSON()" class="w-full py-2 bg-slate-800 dark:bg-slate-700 hover:bg-slate-900 dark:hover:bg-slate-600 text-white text-xs font-bold rounded-lg transition">
+                        <i class="fa-solid fa-upload mr-1"></i><span data-i18n="btnUploadImport">匯入並更新字庫</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 彈窗 5: 批量拆分大字庫 Modal -->
+    <div id="splitModal" class="hidden fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+        <div class="bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl border border-slate-100 dark:border-slate-700">
+            <div class="flex items-center justify-between border-b border-slate-100 dark:border-slate-700 pb-3">
+                <div class="flex items-center space-x-2 text-purple-700 dark:text-purple-300 font-bold">
+                    <i class="fa-solid fa-scissors"></i>
+                    <h3 class="text-base" data-i18n="modalSplitTitle">批量拆分大字庫</h3>
+                </div>
+                <button type="button" onclick="closeModal('splitModal')" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1">
+                    <i class="fa-solid fa-xmark text-lg"></i>
+                </button>
+            </div>
+
+            <p class="text-xs text-slate-500 dark:text-slate-400 leading-relaxed" data-i18n="modalSplitDesc">
+                選擇要拆分的大字庫，並輸入每個新字庫包含的單字上限。
+            </p>
+
+            <div class="space-y-3">
+                <div>
+                    <label class="block text-xs font-bold mb-1" data-i18n="lblSplitCategory">選擇要拆分的目標字庫：</label>
+                    <select id="splitTargetCategorySelect" class="w-full px-3 py-2 text-xs font-semibold rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 outline-none">
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-xs font-bold mb-1" data-i18n="lblSplitChunkSize">每個拆分小字庫的單字數量：</label>
+                    <input type="number" id="splitChunkSizeInput" value="200" min="10" max="1000" class="w-full px-3 py-2 text-xs font-bold rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 outline-none">
+                </div>
+            </div>
+
+            <div class="pt-2 flex justify-end space-x-2">
+                <button type="button" onclick="closeModal('splitModal')" class="px-4 py-2 rounded-lg text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700" data-i18n="btnCancel">取消</button>
+                <button type="button" onclick="handleConfirmSplitDeck()" class="px-4 py-2 rounded-lg bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold shadow-sm" data-i18n="btnStartSplit">開始拆分字庫</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 彈窗 6: ⚡ 快速記生字 Modal -->
+    <div id="quickAddModal" class="hidden fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+        <div class="bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-2xl max-w-sm w-full p-5 space-y-4 shadow-2xl border border-slate-100 dark:border-slate-700">
+            <div class="flex items-center justify-between border-b border-slate-100 dark:border-slate-700 pb-2.5">
+                <div class="flex items-center space-x-2 text-brand-600 dark:text-brand-400 font-bold text-sm">
+                    <i class="fa-solid fa-bolt"></i>
+                    <span data-i18n="modalQuickAddTitle">快速收錄生字</span>
+                </div>
+                <button type="button" onclick="closeModal('quickAddModal')" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+
+            <p class="text-xs text-slate-500 dark:text-slate-400 leading-relaxed" data-i18n="modalQuickAddDesc">
+                輸入單字（多個單字可以用逗號、空白或換行隔開），AI 將會自動加入字庫！(此功能自訂語言無法使用)
+            </p>
+
+            <!-- 指定/選擇儲存字庫欄位 -->
+            <div>
+                <label class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1" data-i18n="lblQuickAddCategory">儲存至字庫：</label>
+                <select id="quickAddCategorySelect" onchange="handleCategorySelectWithNew('quickAdd')" class="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-brand-500 outline-none font-semibold cursor-pointer">
+                </select>
+                <input type="text" id="quickAddCategoryInput" data-i18n-placeholder="phFormCategory" placeholder="請輸入新字庫名稱..." class="hidden w-full px-3 py-2 text-xs rounded-lg border border-brand-400 dark:border-brand-500 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-brand-500 outline-none font-semibold">
+            </div>
+
+            <div>
+                <textarea id="quickAddInput" rows="3" data-i18n-placeholder="phQuickAddInput" placeholder="例如: resilient, fragile" class="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-brand-500 outline-none font-semibold"></textarea>
+            </div>
+
+            <div class="flex justify-end space-x-2">
+                <button type="button" onclick="closeModal('quickAddModal')" class="px-3 py-1.5 rounded-lg text-xs font-medium text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700" data-i18n="btnCancel">取消</button>
+                <button type="button" id="quickAddConfirmBtn" onclick="handleQuickAddWords()" class="px-4 py-1.5 rounded-lg bg-brand-600 hover:bg-brand-700 text-white text-xs font-bold shadow-xs transition" data-i18n="btnQuickAddConfirm">確定並 AI 自動填入</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 彈窗 7: 📤 發布字庫 Modal -->
+    <div id="publishModal" class="hidden fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+        <div class="bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl border border-slate-100 dark:border-slate-700">
+            <div class="flex justify-between items-center border-b border-slate-100 dark:border-slate-700 pb-3">
+                <h3 class="font-bold text-base text-slate-900 dark:text-white" data-i18n="modalPublishTitle">🚀 發布我的字庫至商店</h3>
+                <button type="button" onclick="closeModal('publishModal')" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"><i class="fa-solid fa-xmark text-lg"></i></button>
+            </div>
+
+            <div class="space-y-3">
+                <div>
+                    <label class="block text-xs font-bold text-slate-500 mb-1" data-i18n="lblPubCategory">選擇要發布的字庫分類 <span class="text-rose-500">*</span></label>
+                    <select id="pubCategorySelect" class="w-full p-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-brand-500 text-slate-800 dark:text-slate-100"></select>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-bold text-slate-500 mb-1" data-i18n="lblPubTitle">字庫名稱 (不可與商店現有名稱重複) <span class="text-rose-500">*</span></label>
+                    <input type="text" id="pubTitle" data-i18n-placeholder="phPubTitle" placeholder="例如：JLPT N3 高頻動詞 100 選" class="w-full p-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-xs text-slate-800 dark:text-slate-100 font-semibold">
+                </div>
+
+                <!-- 🪙 設定字庫下載價格 -->
+                <div>
+                    <label class="block text-xs font-bold text-slate-500 mb-1" data-i18n="lblPubPrice">下載所需金幣 (0 表示免費分享)</label>
+                    <input type="number" id="pubPrice" value="0" min="0" data-i18n-placeholder="phPubPrice" placeholder="例如：100" class="w-full p-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-xs text-slate-800 dark:text-slate-100 font-semibold focus:outline-none focus:ring-2 focus:ring-brand-500">
+                    <!-- 💡 抽成 30% 提示標籤 -->
+                    <p class="text-[11px] text-amber-600 dark:text-amber-400 font-bold mt-1" data-i18n="descPubPriceTax">
+                        💡 提示：商店將扣除 30% 平台抽成，創作者實際獲得 70% 金幣收益。
+                    </p>
+                </div>
+
+                <div class="p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl flex justify-between items-center text-xs">
+                    <span class="font-bold text-slate-500" data-i18n="lblPubAuthor">發布者暱稱 (已鎖定帳號)：</span>
+                    <span id="pubAuthorDisplay" data-i18n="loadingText" class="font-extrabold text-brand-600 dark:text-brand-400">載入中...</span>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-bold text-slate-500 mb-1" data-i18n="lblPubDesc">字庫簡介</label>
+                    <textarea id="pubDesc" rows="3" data-i18n-placeholder="phPubDesc" placeholder="簡短說明這個字庫包含什麼內容..." class="w-full p-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-xs text-slate-800 dark:text-slate-100"></textarea>
+                </div>
+            </div>
+
+            <div class="flex justify-end space-x-2 pt-2">
+                <button type="button" onclick="closeModal('publishModal')" class="px-4 py-2 bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 text-xs font-bold rounded-xl" data-i18n="btnCancel">取消</button>
+                <button type="button" onclick="submitPublishDeck()" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl shadow-sm" data-i18n="btnSubmitPublish">發布上架</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 彈窗 8: 👤 作者作品集 Modal -->
+    <div id="authorModal" class="hidden fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+        <div class="bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-4 border border-slate-100 dark:border-slate-700 max-h-[85vh] flex flex-col">
+            <div class="flex justify-between items-center border-b border-slate-100 dark:border-slate-700 pb-3">
+                <div class="flex items-center space-x-3">
+                    <img id="authorModalAvatar" src="" class="w-10 h-10 rounded-full border border-slate-200 dark:border-slate-600 object-cover">
+                    <div>
+                        <h3 id="authorModalName" class="font-bold text-base text-slate-900 dark:text-white"></h3>
+                        <p id="authorModalCount" class="text-xs text-slate-400"></p>
+                    </div>
+                </div>
+                <button type="button" onclick="closeModal('authorModal')" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"><i class="fa-solid fa-xmark text-lg"></i></button>
+            </div>
+
+            <div id="authorDecksContainer" class="overflow-y-auto space-y-3 pr-1 flex-1"></div>
+        </div>
+    </div>
+
+    <!-- 浮動提示 Toast -->
+    <div id="toast-container" class="fixed top-5 right-5 z-50 flex flex-col space-y-2 pointer-events-none"></div>
+
+    <!-- 💬 右側聊天室抽屜 (Drawer) -->
+    <div id="chatDrawer" class="hidden fixed inset-0 z-50 overflow-hidden">
+        <div class="absolute inset-0 bg-slate-900/50 backdrop-blur-xs transition-opacity" onclick="closeChatDrawer()"></div>
+
+        <div class="fixed inset-y-0 right-0 max-w-full flex pl-10">
+            <div class="w-screen max-w-md bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 shadow-2xl border-l border-slate-200 dark:border-slate-700 flex flex-col">
+                
+                <!-- 1. 抽屜頂部標題與關閉按鈕 -->
+                <div class="p-4 border-b border-slate-100 dark:border-slate-700 flex items-center justify-between bg-slate-50 dark:bg-slate-900">
+                    <div class="flex items-center space-x-2">
+                        <i class="fa-solid fa-comments text-brand-600 text-lg"></i>
+                        <h3 class="font-extrabold text-base text-slate-900 dark:text-white" data-i18n="chatDrawerTitle">交流聊天室</h3>
+                        <span id="adminBadge" class="hidden px-2 py-0.5 text-[10px] font-black bg-rose-600 text-white rounded-full" data-i18n="badgeAdmin">管理員</span>
+                    </div>
+                    <button type="button" onclick="closeChatDrawer()" class="p-1.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
+                        <i class="fa-solid fa-xmark text-lg"></i>
+                    </button>
+                </div>
+
+                <!-- 2. 搜尋列與 Tab 功能頁籤 -->
+                <div class="p-3 border-b border-slate-100 dark:border-slate-700 space-y-2 bg-slate-50/50 dark:bg-slate-900/50">
+                    <!-- 🔍 搜尋框 -->
+                    <div class="relative">
+                        <input type="text" id="chatSearchInput" oninput="handleChatSearch()" data-i18n-placeholder="phChatSearch" placeholder="搜尋群組、固定暱稱或 Email..." class="w-full pl-8 pr-3 py-1.5 text-xs bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-brand-500">
+                        <i class="fa-solid fa-magnifying-glass absolute left-2.5 top-2.5 text-slate-400 text-xs"></i>
+                    </div>
+
+                    <!-- 📌 頁籤按鈕 -->
+                    <div class="flex border-b border-slate-200 dark:border-slate-700">
+                        <button type="button" id="tabNoticeBtn" onclick="switchChatTab('notice')" class="flex-1 py-2 text-center text-xs font-bold text-slate-400" data-i18n="tabNotice">公告</button>
+                        <button type="button" id="tabChatsBtn" onclick="switchChatTab('chats')" class="flex-1 py-2 text-center text-xs font-bold text-slate-400" data-i18n="tabChats">對話</button>
+                        <button type="button" id="tabFriendsBtn" onclick="switchChatTab('friends')" class="flex-1 py-2 text-center text-xs font-bold text-slate-400" data-i18n="tabFriends">好友</button>
+                        <button type="button" id="tabAdminBtn" onclick="switchChatTab('admin')" class="hidden flex-1 py-2 text-center text-xs font-bold text-rose-500" data-i18n="tabAdmin">巡視</button>
+                    </div>
+                </div>
+
+                <!-- 🌐 線上人數與在線名單區塊 (歸位至抽屜內部) -->
+                <div class="p-3 bg-slate-50 dark:bg-slate-800/50 border-b border-slate-100 dark:border-slate-700">
+                    <div class="flex items-center justify-between mb-2">
+                        <!-- 線上人數統計標籤 -->
+                        <span id="onlineUserCountText" data-i18n="onlineUserCountInit" class="text-xs font-bold text-slate-600 dark:text-slate-300 flex items-center gap-1.5">
+                            <span class="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></span>
+                            線上人數：0 人
+                        </span>
+                    </div>
+                    
+                    <!-- 一般玩家可見的在線使用者列表 -->
+                    <div id="onlineUsersListContainer" class="max-h-24 overflow-y-auto space-y-1 custom-scrollbar">
+                        <!-- JS 動態渲染線上使用者 -->
+                    </div>
+
+                    <!-- 👑 管理員專用透視監控面板 (預設隱藏) -->
+                    <div id="adminOnlineMonitorPanel" class="hidden mt-2 pt-2 border-t border-slate-200 dark:border-slate-700">
+                        <div class="text-[10px] font-bold text-rose-500 dark:text-rose-400 mb-1" data-i18n="adminOnlineMonitorTitle">👑 管理員全站線上監控面板</div>
+                        <div id="adminOnlineMonitorList" class="max-h-32 overflow-y-auto space-y-1"></div>
+                    </div>
+                </div>
+
+                <!-- 3. 抽屜內容區域 -->
+                <div class="flex-1 overflow-y-auto p-4 relative space-y-3">
+
+                    <!-- 📢 View A: 公告區塊 -->
+                    <div id="noticeView" class="space-y-3">
+                        <div id="adminNoticeAction" class="hidden mb-3">
+                            <button type="button" onclick="openModal('announceModal')" class="w-full py-2 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-xl text-xs flex items-center justify-center space-x-1 shadow-sm">
+                                <i class="fa-solid fa-bullhorn"></i>
+                                <span data-i18n="btnPubAnnounce">發布官方公告</span>
+                            </button>
+                        </div>
+                        <div id="noticeList" class="space-y-2.5"></div>
+                    </div>
+
+                    <!-- 💬 View B: 對話列表區塊 -->
+                    <div id="chatsView" class="hidden space-y-2">
+                        <div id="chatThreadsList" class="space-y-2"></div>
+                    </div>
+
+                    <!-- 👥 View C: 好友列表區塊 -->
+                    <div id="friendsView" class="hidden space-y-3">
+                        <div class="flex justify-between items-center px-1">
+                            <span class="text-xs font-bold text-slate-500 dark:text-slate-400" data-i18n="lblFriendsHeader">好友與聯絡人</span>
+                            <button type="button" onclick="sendFriendRequestByEmail(null, this)" class="text-xs text-brand-600 dark:text-brand-400 font-bold hover:underline flex items-center space-x-1">
+                                <i class="fa-solid fa-user-plus"></i>
+                                <span data-i18n="btnEmailAddFriend">Email 加好友</span>
+                            </button>
+                        </div>
+                        <div id="friendsListContainer" class="space-y-2"></div>
+                    </div>
+
+                    <!-- ✉️ View D: 單一對話對話框 Window -->
+                    <div id="activeChatWindow" class="hidden absolute inset-0 bg-white dark:bg-slate-800 flex flex-col z-10">
+                        <!-- 對話頂部 Header -->
+                        <div class="p-3 border-b border-slate-100 dark:border-slate-700 flex items-center space-x-2 bg-slate-50 dark:bg-slate-900">
+                            <button type="button" onclick="backToChatThreads()" class="p-1.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
+                                <i class="fa-solid fa-chevron-left text-sm"></i>
+                            </button>
+                            <h4 id="activeChatTitle" class="font-bold text-sm text-slate-800 dark:text-slate-100 flex-1 truncate">對話標題</h4>
+                            <div id="activeChatHeaderActions" class="flex items-center space-x-1.5"></div>
+                        </div>
+                        <!-- 訊息對話框 -->
+                        <div id="chatMessagesBox" class="flex-1 overflow-y-auto p-3 space-y-3"></div>
+                        <!-- 輸入框與發送按鈕 -->
+                        <form onsubmit="handleSendMessage(event)" class="p-3 border-t border-slate-100 dark:border-slate-700 flex items-center space-x-2 bg-slate-50 dark:bg-slate-900">
+                            <input type="text" id="chatInput" data-i18n-placeholder="phChatInput" placeholder="輸入訊息..." class="flex-1 px-3 py-2 text-xs bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-brand-500">
+                            <button type="submit" class="px-3 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-xl text-xs font-bold shadow-xs">
+                                <i class="fa-solid fa-paper-plane"></i>
+                            </button>
+                        </form>
+                    </div>
+
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+    <!-- 📢 發布公告 Modal (僅管理員可見) -->
+    <div id="announceModal" class="hidden fixed inset-0 z-[65] bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+        <div class="bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl border border-slate-100 dark:border-slate-700">
+            <h3 class="font-bold text-base" data-i18n="modalAnnounceTitle">📢 發布官方公告</h3>
+            <input type="text" id="annTitle" data-i18n-placeholder="phAnnTitle" placeholder="公告標題" class="w-full p-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-semibold">
+            <textarea id="annContent" rows="4" data-i18n-placeholder="phAnnContent" placeholder="公告內容..." class="w-full p-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-xs"></textarea>
+            <div class="flex justify-end space-x-2">
+                <button type="button" onclick="closeModal('announceModal')" class="px-4 py-2 bg-slate-100 dark:bg-slate-700 text-xs font-bold rounded-xl" data-i18n="btnCancel">取消</button>
+                <button type="button" onclick="submitAnnouncement()" class="px-4 py-2 bg-rose-600 text-white text-xs font-bold rounded-xl" data-i18n="btnPubAnnounceSubmit">發布公告</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 🛍️ 彈窗 9: 商店字庫內容預覽 Modal -->
+    <div id="storePreviewModal" class="hidden fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+        <div class="bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-2xl max-w-2xl w-full p-6 space-y-4 shadow-2xl border border-slate-100 dark:border-slate-700 max-h-[85vh] flex flex-col">
+            <div class="flex justify-between items-center border-b border-slate-100 dark:border-slate-700 pb-3 flex-shrink-0">
+                <div>
+                    <h3 id="previewDeckTitle" class="font-extrabold text-base text-slate-900 dark:text-white">字庫名稱</h3>
+                    <p id="previewDeckSub" class="text-xs text-slate-400 mt-0.5">發布者與單字簡介</p>
+                </div>
+                <button type="button" onclick="closeModal('storePreviewModal')" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1">
+                    <i class="fa-solid fa-xmark text-lg"></i>
+                </button>
+            </div>
+
+            <!-- 📜 單字預覽列表區塊 -->
+            <div id="previewWordsContainer" class="flex-1 overflow-y-auto space-y-2 pr-1 text-xs">
+                <!-- 動態注入單字列表 -->
+            </div>
+
+            <div class="pt-3 border-t border-slate-100 dark:border-slate-700 flex justify-end space-x-2 flex-shrink-0">
+                <button type="button" onclick="closeModal('storePreviewModal')" class="px-4 py-2 bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 text-xs font-bold rounded-xl" data-i18n="btnClose">關閉</button>
+                <button type="button" id="previewActionBtn" class="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white text-xs font-bold rounded-xl shadow-sm" data-i18n="btnGetDeck">取得字庫</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Firebase SDKs (Compat 10.7.1) -->
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-database-compat.js"></script>
+    
+    <!-- 正確腳本載入順序 (algorithm.js 優先於 storage.js 以確保 FSRS 遷移可用) -->
+    <script src="js/firebase.js"></script>
+    <script src="js/algorithm.js"></script>
+    <script src="js/storage.js"></script>
+    <script src="js/i18n.js"></script>
+    <script src="js/ai.js"></script>
+    <script src="js/quiz.js"></script>
+    <script src="js/chat.js"></script>
+    <script src="js/store.js"></script>
+    <script src="js/stats.js"></script>
+    <script src="js/batch.js"></script>
+    <script src="js/settings.js"></script>
+    <script src="js/app.js"></script>
+    <script src="js/onboarding.js"></script>
+    <script src="js/ui-sync.js"></script>
+    
+</body>
+</html>

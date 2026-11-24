@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "471941628425",
+    "firebase_url": "https://flashcards-5f514-default-rtdb.asia-southeast1.firebasedatabase.app",
+    "project_id": "flashcards-5f514",
+    "storage_bucket": "flashcards-5f514.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:471941628425:android:2c9949fcd0b1a22c9aaed8",
+        "android_client_info": {
+          "package_name": "com.lzhcard.app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "471941628425-qrnnlm3o8ohpt4j2m9aodotnlocrulb0.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.lzhcard.app",
+            "certificate_hash": "6e0075a88a64e81ffb1d9b34ea886c0edb8997be"
+          }
+        },
+        {
+          "client_id": "471941628425-ntpg366fqtn73t0lolri8dsckdpes4ai.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAWUJL7cChhzDsRdtQDTq7lH3Z9LaJSht4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "471941628425-ntpg366fqtn73t0lolri8dsckdpes4ai.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -1,0 +1,32 @@
+# Logs & Dependencies
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Build & Environment
+node_modules/
+build/
+dist/
+dist-ssr/
+coverage/
+*.local
+.env*
+!.env.example
+
+# Editor & OS files
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+
+# Android / Capacitor & Secrets
+android/.gradle/
+android/local.properties
+*.apk
+*.aab
+android/app/google-services.json 
+desktop-widget/dist-widget/ 
+*.blockmap 
