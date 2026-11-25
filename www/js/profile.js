@@ -1686,23 +1686,31 @@
 
         // 判斷好友狀態與防重複申請狀態
         const myFriends = Array.isArray(global.userData?.friends) ? global.userData.friends : [];
-        const isAlreadyFriend = Boolean(cleanUid && myFriends.some(f => f.uid === cleanUid));
-        const isPendingRequest = Boolean(cleanUid && pendingOutgoingFriendUids.has(cleanUid));
+        const isAlreadyFriend = Boolean(cleanUid && myFriends.some(f => f && f.uid === cleanUid));
+        const outgoingReq = (cleanUid && typeof global.getOutgoingPendingRequestByUid === 'function')
+            ? global.getOutgoingPendingRequestByUid(cleanUid)
+            : null;
+        const isPendingRequest = Boolean(cleanUid && (pendingOutgoingFriendUids.has(cleanUid) || outgoingReq));
+        const pendingReqId = outgoingReq && outgoingReq.id ? String(outgoingReq.id) : '';
 
         let friendBtnHtml = '';
         if (!isSelf && cleanUid) {
             if (isAlreadyFriend) {
                 friendBtnHtml = `
-                    <button type="button" disabled class="flex-1 py-2.5 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 cursor-default">
-                        <i class="fa-solid fa-user-check"></i>
-                        <span>${escapeProfileHTML(profileTr('btnAlreadyFriend', '已是好友'))}</span>
+                    <button type="button"
+                        onclick="if(typeof removeFriendByUid==='function') removeFriendByUid('${escapeProfileHTML(cleanUid)}', '${encodeURIComponent(resolvedName)}').then((ok)=>{ if(ok) openPlayerProfileModal('${escapeProfileHTML(cleanUid)}', '${encodeURIComponent(resolvedName)}'); });"
+                        class="flex-1 py-2.5 bg-emerald-50 hover:bg-rose-50 dark:bg-emerald-950/40 dark:hover:bg-rose-950/40 text-emerald-700 hover:text-rose-600 dark:text-emerald-300 dark:hover:text-rose-400 border border-emerald-200 hover:border-rose-300 dark:border-emerald-800 dark:hover:border-rose-800 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer">
+                        <i class="fa-solid fa-user-minus"></i>
+                        <span>${escapeProfileHTML(profileTr('btnRemoveFriend', '刪除好友'))}</span>
                     </button>
                 `;
             } else if (isPendingRequest) {
                 friendBtnHtml = `
-                    <button type="button" disabled class="flex-1 py-2.5 bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 cursor-not-allowed">
-                        <i class="fa-solid fa-hourglass-half"></i>
-                        <span>${escapeProfileHTML(profileTr('btnFriendReqPending', '已發送邀請'))}</span>
+                    <button type="button" id="playerModalCancelFriendReqBtn"
+                        onclick="if(typeof cancelSentFriendRequest==='function') cancelSentFriendRequest('${escapeProfileHTML(pendingReqId)}', '${escapeProfileHTML(cleanUid)}', '${encodeURIComponent(resolvedName)}').then((ok)=>{ if(ok) openPlayerProfileModal('${escapeProfileHTML(cleanUid)}', '${encodeURIComponent(resolvedName)}'); });"
+                        class="flex-1 py-2.5 bg-amber-50 hover:bg-rose-50 dark:bg-amber-950/40 dark:hover:bg-rose-950/40 text-amber-700 hover:text-rose-600 dark:text-amber-300 dark:hover:text-rose-400 border border-amber-200 hover:border-rose-300 dark:border-amber-800 dark:hover:border-rose-800 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer">
+                        <i class="fa-solid fa-xmark"></i>
+                        <span>${escapeProfileHTML(profileTr('btnCancelFriendInvite', '取消好友邀請'))}</span>
                     </button>
                 `;
             } else {
@@ -1891,6 +1899,10 @@
             if (!ok) {
                 pendingOutgoingFriendUids.delete(targetUid);
             }
+            const modalEl = document.getElementById('playerProfileModal');
+            if (modalEl && !modalEl.classList.contains('hidden')) {
+                await openPlayerProfileModal(targetUid, encodedName);
+            }
         }
         return true;
     }
@@ -2024,6 +2036,9 @@
     global.handleLeaderboardAnonymousToggleChange = handleLeaderboardAnonymousToggleChange;
     global.markOutgoingFriendRequestUid = function (uid) {
         if (uid) pendingOutgoingFriendUids.add(uid);
+    };
+    global.removeOutgoingFriendRequestUid = function (uid) {
+        if (uid) pendingOutgoingFriendUids.delete(uid);
     };
     global.clearOutgoingFriendRequestUids = function () {
         pendingOutgoingFriendUids.clear();

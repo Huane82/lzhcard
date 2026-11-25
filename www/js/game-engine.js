@@ -51,6 +51,10 @@
     let pendingBattleTimer = null;
     let isBattleAnsweringLock = false;
 
+    const BOSS_COOLDOWN_MS = 60 * 60 * 1000;
+    let bossCooldownTickerHandle = null;
+    let bossDeckSaveTimer = null;
+
     // 獨立封閉的深淵魔王狀態（嚴禁共用 window.currentCard）
     const BossBattleState = {
         sessionToken: 0,
@@ -63,6 +67,7 @@
         pool: [],
         distractors: [],
         reviewedWords: [],
+        sessionMissMap: Object.create(null),
         currentSnapshot: null,
         isLocked: false,
         waitingWrongAck: false
@@ -79,9 +84,145 @@
         BossBattleState.pool = [];
         BossBattleState.distractors = [];
         BossBattleState.reviewedWords = [];
+        BossBattleState.sessionMissMap = Object.create(null);
         BossBattleState.currentSnapshot = null;
         BossBattleState.isLocked = false;
         BossBattleState.waitingWrongAck = false;
+    }
+
+    function getAbyssBossCooldownStorageKey() {
+        return `lzhcard_boss_cooldown_until__${getCurrentUidSafe()}`;
+    }
+
+    function getAbyssBossCooldownUntil() {
+        let localUntil = 0;
+        try {
+            localUntil = Number(localStorage.getItem(getAbyssBossCooldownStorageKey()) || '0') || 0;
+        } catch (e) {}
+        const cloudUntil = Number(global.userData?.progression?.abyssBossCooldownUntil) || 0;
+        const maxUntil = Math.max(
+            Number.isFinite(localUntil) ? localUntil : 0,
+            Number.isFinite(cloudUntil) ? cloudUntil : 0
+        );
+        return maxUntil;
+    }
+
+    function getAbyssBossCooldownRemainingMs(nowMs = Date.now()) {
+        const until = getAbyssBossCooldownUntil();
+        return Math.max(0, until - nowMs);
+    }
+
+    function formatBossCooldownMMSS(ms) {
+        const totalSec = Math.max(0, Math.ceil((Number(ms) || 0) / 1000));
+        const mins = Math.floor(totalSec / 60);
+        const secs = totalSec % 60;
+        return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+    }
+
+    function formatBossCooldownChinese(ms) {
+        const totalSec = Math.max(0, Math.ceil((Number(ms) || 0) / 1000));
+        const mins = Math.floor(totalSec / 60);
+        const secs = totalSec % 60;
+        return `${mins} 分 ${String(secs).padStart(2, '0')} 秒`;
+    }
+
+    function syncBossCooldownCountdownUi() {
+        const remaining = getAbyssBossCooldownRemainingMs();
+        const isCooling = remaining > 0;
+        const mmss = formatBossCooldownMMSS(remaining);
+
+        const homeBadge = document.getElementById('homeBossCooldownBadge');
+        const homeSub = document.getElementById('homeBossCooldownSub');
+        if (homeBadge) {
+            if (isCooling) {
+                homeBadge.textContent = `⏳ ${mmss}`;
+                homeBadge.className = 'px-1.5 py-0.5 rounded-full text-[10px] font-extrabold font-mono bg-amber-100 dark:bg-amber-950/70 text-amber-700 dark:text-amber-300';
+            } else {
+                const count = getAbyssBossWords().length;
+                homeBadge.textContent = `${count} 隻`;
+                homeBadge.className = `px-1.5 py-0.5 rounded-full text-[10px] font-extrabold ${count > 0 ? 'bg-rose-500 text-white' : 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400'}`;
+            }
+        }
+        if (homeSub) {
+            homeSub.textContent = isCooling ? `冷卻中・剩餘 ${mmss}` : '專打錯 3 次以上魔王字';
+        }
+
+        const hudBtn = document.getElementById('hudBossCooldownBtn');
+        if (hudBtn) {
+            if (isCooling) {
+                hudBtn.textContent = `⏳ 魔王冷卻 ${mmss}`;
+            } else {
+                hudBtn.textContent = `⚔️ 討伐魔王 (${getAbyssBossWords().length})`;
+            }
+        }
+
+        const retryBtn = document.getElementById('bossResultRetryBtn');
+        if (retryBtn) {
+            if (isCooling) {
+                retryBtn.disabled = true;
+                retryBtn.className = 'flex-1 py-2.5 bg-slate-200 dark:bg-slate-700 text-slate-500 dark:text-slate-400 text-xs font-bold rounded-xl cursor-not-allowed font-mono';
+                retryBtn.textContent = `⏳ 冷卻中 ${mmss}`;
+            } else {
+                retryBtn.disabled = false;
+                retryBtn.className = 'flex-1 py-2.5 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold rounded-xl cursor-pointer';
+                retryBtn.textContent = '再次討伐';
+            }
+        }
+
+        if (!isCooling && bossCooldownTickerHandle) {
+            clearInterval(bossCooldownTickerHandle);
+            bossCooldownTickerHandle = null;
+        }
+    }
+
+    function ensureBossCooldownTicker() {
+        if (getAbyssBossCooldownRemainingMs() <= 0) {
+            if (bossCooldownTickerHandle) {
+                clearInterval(bossCooldownTickerHandle);
+                bossCooldownTickerHandle = null;
+            }
+            return;
+        }
+        if (!bossCooldownTickerHandle) {
+            bossCooldownTickerHandle = setInterval(syncBossCooldownCountdownUi, 1000);
+        }
+    }
+
+    function setAbyssBossCooldown(untilMs = Date.now() + BOSS_COOLDOWN_MS, immediateSync = false) {
+        const cleanUntil = Math.max(0, Math.floor(Number(untilMs) || 0));
+        try {
+            localStorage.setItem(getAbyssBossCooldownStorageKey(), String(cleanUntil));
+        } catch (e) {}
+
+        const u = (typeof global.ensureUserProfileDefaults === 'function')
+            ? global.ensureUserProfileDefaults()
+            : (global.userData || (global.userData = { progression: {} }));
+        if (!u.progression || typeof u.progression !== 'object') u.progression = {};
+        u.progression.abyssBossCooldownUntil = cleanUntil;
+
+        if (immediateSync && typeof global.saveUserData === 'function') {
+            global.saveUserData();
+        } else {
+            scheduleCloudProfileAndUserSync();
+        }
+
+        ensureBossCooldownTicker();
+        syncBossCooldownCountdownUi();
+        return cleanUntil;
+    }
+
+    function scheduleBossDeckSave() {
+        if (bossDeckSaveTimer) clearTimeout(bossDeckSaveTimer);
+        bossDeckSaveTimer = setTimeout(() => {
+            bossDeckSaveTimer = null;
+            if (typeof wordList !== 'undefined' && Array.isArray(wordList)) {
+                if (typeof StorageEngine !== 'undefined' && typeof StorageEngine.saveData === 'function') {
+                    StorageEngine.saveData(wordList, false);
+                } else if (typeof global.saveStorage === 'function') {
+                    global.saveStorage(false);
+                }
+            }
+        }, 600);
     }
 
     function shuffleFisherYates(items) {
@@ -754,11 +895,15 @@
                 </div>
 
                 <div class="flex items-center gap-2">
-                    ${abyssList.length > 0 ? `
-                        <button type="button" onclick="GameEngine.startAbyssBossMode()" class="px-2 py-0.5 rounded-lg bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/60 text-rose-600 dark:text-rose-300 border border-rose-200 dark:border-rose-800 text-[10px] font-extrabold cursor-pointer transition">
-                            ⚔️ 討伐魔王 (${abyssList.length})
+                    ${abyssList.length > 0 ? (() => {
+                        const cdMs = getAbyssBossCooldownRemainingMs();
+                        const cdLabel = cdMs > 0 ? `⏳ 魔王冷卻 ${formatBossCooldownMMSS(cdMs)}` : `⚔️ 討伐魔王 (${abyssList.length})`;
+                        return `
+                        <button type="button" id="hudBossCooldownBtn" onclick="GameEngine.startAbyssBossMode()" class="px-2 py-0.5 rounded-lg ${cdMs > 0 ? 'bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-800' : 'bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/60 text-rose-600 dark:text-rose-300 border-rose-200 dark:border-rose-800'} border text-[10px] font-extrabold cursor-pointer transition">
+                            ${cdLabel}
                         </button>
-                    ` : ''}
+                    `;
+                    })() : ''}
                     <div class="hidden sm:flex items-center gap-1.5 text-[10px] font-bold text-slate-500 dark:text-slate-400" title="今日寶箱進度">
                         <span>🎁 ${Math.min(daily.reviews, DAILY_CHEST_GOAL)}/${DAILY_CHEST_GOAL}</span>
                         <div class="w-14 h-1.5 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
@@ -771,6 +916,7 @@
                 </div>
             </div>
         `;
+        if (getAbyssBossCooldownRemainingMs() > 0) ensureBossCooldownTicker();
     }
 
     /* ==========================================================================
@@ -877,18 +1023,25 @@
                         </div>
                     </button>
 
+                    ${(() => {
+                        const cdMs = getAbyssBossCooldownRemainingMs();
+                        const isCooling = cdMs > 0;
+                        const cdLabel = formatBossCooldownMMSS(cdMs);
+                        return `
                     <button type="button" onclick="GameEngine.startAbyssBossMode()" class="p-3.5 bg-white dark:bg-slate-800 hover:bg-rose-50/70 dark:hover:bg-slate-700/70 rounded-2xl border border-slate-200 dark:border-slate-700 hover:border-rose-400 text-left transition shadow-2xs space-y-2 cursor-pointer group">
                         <div class="flex items-center justify-between">
                             <span class="w-9 h-9 rounded-xl bg-rose-100 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 flex items-center justify-center text-base group-hover:scale-110 transition-transform">
                                 <i class="fa-solid fa-skull"></i>
                             </span>
-                            <span class="px-1.5 py-0.5 rounded-full text-[10px] font-extrabold ${abyssWords.length > 0 ? 'bg-rose-500 text-white' : 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400'}">${abyssWords.length} 隻</span>
+                            <span id="homeBossCooldownBadge" class="px-1.5 py-0.5 rounded-full text-[10px] font-extrabold ${isCooling ? 'font-mono bg-amber-100 dark:bg-amber-950/70 text-amber-700 dark:text-amber-300' : (abyssWords.length > 0 ? 'bg-rose-500 text-white' : 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400')}">${isCooling ? `⏳ ${cdLabel}` : `${abyssWords.length} 隻`}</span>
                         </div>
                         <div>
                             <div class="text-xs font-extrabold text-slate-900 dark:text-white">深淵魔王懸賞</div>
-                            <div class="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5 line-clamp-1">專打錯 3 次以上魔王字</div>
+                            <div id="homeBossCooldownSub" class="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5 line-clamp-1">${isCooling ? `冷卻中・剩餘 ${cdLabel}` : '專打錯 3 次以上魔王字'}</div>
                         </div>
                     </button>
+                        `;
+                    })()}
 
                     <button type="button" id="homeMultiplayerEntry" onclick="if(typeof MultiplayerEngine!=='undefined') MultiplayerEngine.openModal('duel')" class="p-3.5 bg-white dark:bg-slate-800 hover:bg-brand-50/70 dark:hover:bg-slate-700/70 rounded-2xl border border-slate-200 dark:border-slate-700 hover:border-brand-400 text-left transition shadow-2xs space-y-2 cursor-pointer group">
                         <div class="flex items-center justify-between">
@@ -918,6 +1071,7 @@
                 </div>
             </div>
         `;
+        if (getAbyssBossCooldownRemainingMs() > 0) ensureBossCooldownTicker();
     }
 
     /* ==========================================================================
@@ -1558,7 +1712,50 @@
         });
     }
 
+    function getBossCardKey(card) {
+        if (!card || typeof card !== 'object') return '';
+        if (card.id && String(card.id).trim()) return String(card.id).trim().toLowerCase();
+        return String(card.word || '').trim().toLowerCase();
+    }
+
+    function computeBossWordPriority(card, sessionMissMap = BossBattleState.sessionMissMap, nowMs = Date.now()) {
+        const key = getBossCardKey(card);
+        const sess = (key && sessionMissMap && sessionMissMap[key]) ? sessionMissMap[key] : null;
+        const sessWrong = sess ? Math.max(0, Number(sess.wrongCount) || 0) : 0;
+        const persistentWrong = Math.max(0, Number(card?.bossWrongCount) || 0);
+        const lapses = Math.max(0, Number(card?.lapses) || 0);
+        const lastWrongAt = Math.max(Number(sess?.lastWrongAt) || 0, Number(card?.lastBossWrongAt) || 0);
+        const recencyBonus = lastWrongAt > 0
+            ? Math.max(0, 500 - Math.floor(Math.max(0, nowMs - lastWrongAt) / 60000))
+            : 0;
+        return sessWrong * 100000 + persistentWrong * 1000 + lapses * 10 + recencyBonus;
+    }
+
+    function selectNextBossWord(pool, lastWordKey = '', sessionMissMap = BossBattleState.sessionMissMap, nowMs = Date.now()) {
+        if (!Array.isArray(pool) || pool.length === 0) return null;
+        if (pool.length === 1) return pool[0];
+
+        const ranked = shuffleFisherYates(pool).sort((a, b) => {
+            return computeBossWordPriority(b, sessionMissMap, nowMs) - computeBossWordPriority(a, sessionMissMap, nowMs);
+        });
+
+        const cleanLast = String(lastWordKey || '').trim().toLowerCase();
+        if (!cleanLast) return ranked[0];
+
+        const nextDifferent = ranked.find(item => getBossCardKey(item) !== cleanLast && String(item?.word || '').trim().toLowerCase() !== cleanLast);
+        return nextDifferent || ranked[0];
+    }
+
     function startAbyssBossMode() {
+        const remainingCd = getAbyssBossCooldownRemainingMs();
+        if (remainingCd > 0) {
+            ensureBossCooldownTicker();
+            if (typeof global.showToast === 'function') {
+                global.showToast(`⏳ 深淵魔王冷卻中！請於 ${formatBossCooldownChinese(remainingCd)} 後再來挑戰！`, 'warning');
+            }
+            return false;
+        }
+
         const abyssWords = getAbyssBossWords();
         if (abyssWords.length === 0) {
             if (typeof global.showToast === 'function') {
@@ -1588,8 +1785,14 @@
         BossBattleState.pool = abyssWords;
         BossBattleState.distractors = distractors;
         BossBattleState.reviewedWords = [];
+        BossBattleState.sessionMissMap = Object.create(null);
         BossBattleState.currentSnapshot = null;
         BossBattleState.isLocked = false;
+
+        // 開戰即記錄冷卻（並於結束時重設為結束起算 1 小時，避免提前退出洗冷卻）
+        setAbyssBossCooldown(Date.now() + BOSS_COOLDOWN_MS, false);
+        renderHomePortal();
+        renderFlashcardHud();
 
         nextBossQuestion();
         if (typeof global.openModal === 'function') global.openModal('gameArenaModal');
@@ -1598,12 +1801,12 @@
 
     function nextBossQuestion() {
         if (activeArenaMode !== 'boss' || !BossBattleState.pool.length) return;
-        const pool = BossBattleState.pool;
-        let pick = pool[Math.floor(Math.random() * pool.length)];
-        if (pool.length > 1 && BossBattleState.currentSnapshot && pick.word === BossBattleState.currentSnapshot.word) {
-            const altIdx = (pool.indexOf(pick) + 1) % pool.length;
-            pick = pool[altIdx];
-        }
+        const lastKey = BossBattleState.currentSnapshot
+            ? (BossBattleState.currentSnapshot.cardId || BossBattleState.currentSnapshot.word || '')
+            : '';
+        const pick = selectNextBossWord(BossBattleState.pool, lastKey, BossBattleState.sessionMissMap, Date.now());
+        if (!pick) return;
+
         BossBattleState.currentSnapshot = buildBossSnapshot(pick, BossBattleState.distractors);
         BossBattleState.isLocked = false;
         BossBattleState.waitingWrongAck = false;
@@ -1749,6 +1952,14 @@
         const hpBarEl = document.getElementById('bossHpBar');
         const heartsEl = document.getElementById('bossHeartsDisplay');
 
+        const cardKey = String(snapshot.cardId || snapshot.word || '').trim().toLowerCase();
+        const nowMs = Date.now();
+        const matchingPoolCards = BossBattleState.pool.filter(c => getBossCardKey(c) === cardKey || String(c?.word || '').trim().toLowerCase() === String(snapshot.word || '').trim().toLowerCase());
+        const matchingWordListCards = (typeof wordList !== 'undefined' && Array.isArray(wordList))
+            ? wordList.filter(c => getBossCardKey(c) === cardKey || (String(c?.word || '').trim().toLowerCase() === String(snapshot.word || '').trim().toLowerCase() && isCardValidForBattleLang(c)))
+            : [];
+        const targetCards = Array.from(new Set([...matchingPoolCards, ...matchingWordListCards]));
+
         if (isCorrect) {
             BossBattleState.combo += 1;
             BossBattleState.slainCount += 1;
@@ -1758,6 +1969,22 @@
             const dmg = 100 + (BossBattleState.combo >= 3 ? 50 : 0);
             BossBattleState.bossHp = Math.max(0, BossBattleState.bossHp - dmg);
             playComboSfx(BossBattleState.combo + 2);
+
+            if (cardKey && BossBattleState.sessionMissMap[cardKey]) {
+                BossBattleState.sessionMissMap[cardKey].wrongCount = Math.max(0, (Number(BossBattleState.sessionMissMap[cardKey].wrongCount) || 0) - 1);
+                if (BossBattleState.sessionMissMap[cardKey].wrongCount <= 0) {
+                    delete BossBattleState.sessionMissMap[cardKey];
+                }
+            }
+            let updatedPersistent = false;
+            targetCards.forEach(c => {
+                if ((Number(c.bossWrongCount) || 0) > 0) {
+                    c.bossWrongCount = Math.max(0, (Number(c.bossWrongCount) || 0) - 1);
+                    c.updatedAt = nowMs;
+                    updatedPersistent = true;
+                }
+            });
+            if (updatedPersistent) scheduleBossDeckSave();
 
             allBtns.forEach(b => {
                 if (b === btn) applyBossButtonHighlight(b, 'correct');
@@ -1777,6 +2004,20 @@
             BossBattleState.combo = 0;
             BossBattleState.playerHearts = Math.max(0, BossBattleState.playerHearts - 1);
             playMissSfx();
+
+            if (cardKey) {
+                const prevMiss = BossBattleState.sessionMissMap[cardKey] || { wrongCount: 0, lastWrongAt: 0 };
+                BossBattleState.sessionMissMap[cardKey] = {
+                    wrongCount: (Number(prevMiss.wrongCount) || 0) + 1,
+                    lastWrongAt: nowMs
+                };
+            }
+            targetCards.forEach(c => {
+                c.bossWrongCount = (Number(c.bossWrongCount) || 0) + 1;
+                c.lastBossWrongAt = nowMs;
+                c.updatedAt = nowMs;
+            });
+            if (targetCards.length > 0) scheduleBossDeckSave();
 
             // 遍歷 4 顆 DOM 按鈕找出真正 data-is-correct="true" 的按鈕標綠，點錯按鈕標紅
             allBtns.forEach(b => {
@@ -1849,10 +2090,18 @@
         clearPendingBattleTimer();
         isBattleAnsweringLock = false;
         if (!BossBattleState.sessionToken && activeArenaMode !== 'boss') return;
+
+        // 無論勝利或戰敗，結束即啟動 1 小時深淵魔王冷卻時間
+        setAbyssBossCooldown(Date.now() + BOSS_COOLDOWN_MS, true);
+
         const rewardXp = victory ? 120 : 25;
         awardProgression({ xp: rewardXp, unlockTitle: victory ? 'abyss_slayer' : '' });
         if (victory) playMilestoneSfx(20);
         renderHomePortal();
+        renderFlashcardHud();
+
+        const cdRemaining = getAbyssBossCooldownRemainingMs();
+        const cdLabel = formatBossCooldownMMSS(cdRemaining);
 
         const body = document.getElementById('gameArenaBody');
         if (body) {
@@ -1861,19 +2110,23 @@
                     <div class="text-4xl">${victory ? '⚔️👑' : '💀'}</div>
                     <div>
                         <h3 class="text-xl font-black text-slate-900 dark:text-white">${victory ? '成功討伐深淵魔王！' : '討伐失敗，整裝再戰！'}</h3>
-                        <p class="text-xs text-slate-400 mt-1">${victory ? '你的弱點單字已被徹底壓制！' : '別氣餒，建議先回卡片模式熟悉這些易忘字！'}</p>
+                        <p class="text-xs text-slate-400 mt-1">${victory ? '你的弱點單字已被徹底壓制！' : '別氣餒，錯過的弱點字已提高權重，下次會優先出現！'}</p>
                     </div>
                     <div class="text-xs font-extrabold ${victory ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600'}">
                         戰利品：+${rewardXp} XP ${victory ? '｜解鎖稱號「⚔️ 深淵征服者」' : ''}
                     </div>
+                    <div class="p-2.5 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-[11px] font-bold text-amber-700 dark:text-amber-300">
+                        ⏳ 單人深淵魔王需冷卻 1 小時後才可再次挑戰
+                    </div>
                     <div class="flex gap-2">
-                        <button type="button" onclick="GameEngine.startAbyssBossMode()" class="flex-1 py-2.5 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold rounded-xl cursor-pointer">再次討伐</button>
+                        <button type="button" id="bossResultRetryBtn" onclick="GameEngine.startAbyssBossMode()" disabled class="flex-1 py-2.5 bg-slate-200 dark:bg-slate-700 text-slate-500 dark:text-slate-400 text-xs font-bold rounded-xl cursor-not-allowed font-mono">⏳ 冷卻中 ${cdLabel}</button>
                         <button type="button" onclick="GameEngine.closeArenaModal()" class="flex-1 py-2.5 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold rounded-xl cursor-pointer">關閉</button>
                     </div>
                 </div>
             `;
         }
         resetBossBattleState();
+        ensureBossCooldownTicker();
     }
 
     /* ==========================================================================
@@ -2060,6 +2313,11 @@
         advanceArcadeNext,
         finishArcadeMode,
         startAbyssBossMode,
+        getAbyssBossCooldownUntil,
+        getAbyssBossCooldownRemainingMs,
+        setAbyssBossCooldown,
+        computeBossWordPriority,
+        selectNextBossWord,
         buildBossSnapshot,
         answerBossFromDom,
         answerBossOption,

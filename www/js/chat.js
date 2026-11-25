@@ -13,6 +13,8 @@ let chatSearchQuery = '';
 let activeChatListener = null;
 let activeChatReadListener = null;
 let friendRequestsListener = null;
+let friendRemovalsListener = null;
+let _friendRemovalsRef = null;
 let groupInvitesListener = null;
 let chatsListListener = null;
 let announcementsListener = null;
@@ -23,12 +25,14 @@ let onlineUiRefreshTimer = null;
 let currentTrackedPresenceUid = null;
 
 let pendingRequestsList = [];
+let outgoingRequestsList = [];
 let pendingGroupInvitesList = [];
 let userChatThreads = [];
 let cloudAnnouncements = [];
 let onlineUsersMap = {}; // 記錄全站線上使用者狀態
 let chatReadByMap = {};   // 記錄當前聊天室各成員最後已讀時間
 let currentChatMessages = []; // 快取當前聊天室訊息，避免已讀狀態變更時重複向 Firebase 下載
+const _recentlyRemovedFriendUids = new Set();
 
 // 🔔 原生狀態列推播防舊訊息轟炸基準線與狀態
 let _notifSessionStartedAt = Date.now();
@@ -680,8 +684,11 @@ function initChatRealtimeListeners() {
                 (req.toEmail && myEmail && String(req.toEmail).trim().toLowerCase() === myEmail)
             )
         );
+        outgoingRequestsList = allReqs
+            .filter(req => req && req.fromUid === currentUid && req.status === 'pending')
+            .sort((a, b) => (toChatTimestampMs(b.createdAt) || 0) - (toChatTimestampMs(a.createdAt) || 0));
 
-        // 自動同步「對方已同意」的好友申請至申請者（本人）的好友名單
+        // 自動同步「對方已同意」的好友申請至申請者（本人）的好友名單（排除剛解除的好友）
         const acceptedOutgoing = allReqs.filter(req =>
             req && req.status === 'accepted' && req.fromUid === currentUid && req.toUid && req.toUid !== currentUid
         );
@@ -690,6 +697,7 @@ function initChatRealtimeListeners() {
             if (!Array.isArray(window.userData.friends)) window.userData.friends = [];
             let friendAdded = false;
             acceptedOutgoing.forEach(req => {
+                if (_recentlyRemovedFriendUids.has(req.toUid)) return;
                 if (!window.userData.friends.some(f => f && f.uid === req.toUid)) {
                     const live = onlineUsersMap[req.toUid] || {};
                     window.userData.friends.push({
@@ -728,17 +736,58 @@ function initChatRealtimeListeners() {
 
         if (typeof clearOutgoingFriendRequestUids === 'function') {
             clearOutgoingFriendRequestUids();
-            allReqs
-                .filter(req => req.fromUid === currentUid && req.status === 'pending' && req.toUid)
-                .forEach(req => {
-                    if (typeof markOutgoingFriendRequestUid === 'function') markOutgoingFriendRequestUid(req.toUid);
-                });
+            outgoingRequestsList.forEach(req => {
+                if (req.toUid && typeof markOutgoingFriendRequestUid === 'function') {
+                    markOutgoingFriendRequestUid(req.toUid);
+                }
+            });
         }
 
         updateUnreadBadgeUI();
         const friendsView = document.getElementById('friendsView');
         if (friendsView && !friendsView.classList.contains('hidden')) {
             renderFriendsList();
+        }
+    });
+
+    if (_friendRemovalsRef && friendRemovalsListener) {
+        try { _friendRemovalsRef.off('value', friendRemovalsListener); } catch (e) {}
+    }
+    _friendRemovalsRef = rtdb.ref(`friendRemovals/${currentUid}`);
+    friendRemovalsListener = _friendRemovalsRef.on('value', async snapshot => {
+        const val = snapshot.val() || {};
+        const entries = Object.keys(val).map(id => ({ id, ...(val[id] || {}) }));
+        if (entries.length === 0) return;
+
+        if (!window.userData) window.userData = {};
+        if (!Array.isArray(window.userData.friends)) window.userData.friends = [];
+        let changed = false;
+
+        for (const entry of entries) {
+            const peerUid = String(entry.fromUid || '').trim();
+            if (peerUid) {
+                _recentlyRemovedFriendUids.add(peerUid);
+                const beforeLen = window.userData.friends.length;
+                window.userData.friends = window.userData.friends.filter(f => f && f.uid !== peerUid);
+                if (window.userData.friends.length !== beforeLen) {
+                    changed = true;
+                }
+                await cleanupFriendRequestsBetween(currentUid, peerUid).catch(() => {});
+            }
+            rtdb.ref(`friendRemovals/${currentUid}/${entry.id}`).remove().catch(() => {});
+        }
+
+        if (changed && typeof saveUserData === 'function') {
+            await saveUserData();
+        }
+        renderOnlineStatusUI();
+        const friendsView = document.getElementById('friendsView');
+        if (friendsView && !friendsView.classList.contains('hidden')) {
+            renderFriendsList();
+        }
+        const chatsView = document.getElementById('chatsView');
+        if (chatsView && !chatsView.classList.contains('hidden')) {
+            renderChatThreads(false);
         }
     });
 
@@ -919,6 +968,11 @@ function detachChatRealtimeListeners(options = {}) {
             rtdb.ref('friendRequests').off('value', friendRequestsListener);
             friendRequestsListener = null;
         }
+        if (_friendRemovalsRef && friendRemovalsListener) {
+            try { _friendRemovalsRef.off('value', friendRemovalsListener); } catch (e) {}
+            _friendRemovalsRef = null;
+            friendRemovalsListener = null;
+        }
         if (groupInvitesListener) {
             rtdb.ref('groupInvites').off('value', groupInvitesListener);
             groupInvitesListener = null;
@@ -949,11 +1003,13 @@ function detachChatRealtimeListeners(options = {}) {
         currentTrackedPresenceUid = null;
     }
     pendingRequestsList = [];
+    outgoingRequestsList = [];
     pendingGroupInvitesList = [];
     userChatThreads = [];
     onlineUsersMap = {};
     chatReadByMap = {};
     currentChatMessages = [];
+    _recentlyRemovedFriendUids.clear();
 
     _annBaselineReady = false;
     _knownAnnouncementIds.clear();
@@ -1635,6 +1691,57 @@ async function renderFriendsList() {
         html += `</div></div>`;
     }
 
+    const filteredOutgoing = outgoingRequestsList.filter(req => {
+        if (!query) return true;
+        return (
+            String(req.toNickname || '').toLowerCase().includes(query) ||
+            String(req.toEmail || '').toLowerCase().includes(query) ||
+            String(req.toUid || '').toLowerCase().includes(query)
+        );
+    });
+
+    if (filteredOutgoing.length > 0) {
+        html += `
+            <div class="mb-3 p-3 bg-sky-50/80 dark:bg-sky-950/35 rounded-xl border border-sky-200 dark:border-sky-800">
+                <div class="flex items-center justify-between mb-2">
+                    <span class="text-xs font-bold text-sky-800 dark:text-sky-300 flex items-center gap-1.5">
+                        <i class="fa-solid fa-paper-plane text-sky-600"></i>
+                        <span>${chatTr('sentFriendRequests', '已發送的好友申請')} (${filteredOutgoing.length})</span>
+                    </span>
+                </div>
+                <div class="space-y-2">
+        `;
+        html += filteredOutgoing.map(req => {
+            const liveTarget = (req.toUid && onlineUsersMap[req.toUid]) ? onlineUsersMap[req.toUid] : null;
+            const targetLabel = req.toNickname || (liveTarget && liveTarget.nickname) || (req.toEmail ? req.toEmail.split('@')[0] : chatTr('defaultPlayerName', '玩家'));
+            const subInfo = req.toEmail || (req.toUid ? `ID: ${req.toUid.slice(0, 8)}...` : '等待對方確認中');
+            const outFallbackAvatar = `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(req.toUid || targetLabel || 'user')}`;
+            const safeOutAvatar = escapeHTML(sanitizeChatUrl(req.toAvatar || (liveTarget && liveTarget.avatar) || outFallbackAvatar, outFallbackAvatar));
+            const safeReqId = escapeHTML(req.id || '');
+            const safeToUid = escapeHTML(req.toUid || '');
+            const encodedTarget = encodeURIComponent(targetLabel);
+            const infoInner = `
+                <img src="${safeOutAvatar}" referrerpolicy="no-referrer" onerror="if(typeof handleLzhAvatarError==='function')handleLzhAvatarError(this,'${escapeHTML(outFallbackAvatar)}');" class="w-8 h-8 rounded-full border border-slate-200 dark:border-slate-700 object-cover shrink-0">
+                <div class="min-w-0">
+                    <h4 class="font-bold text-xs text-slate-800 dark:text-slate-100 truncate">${escapeHTML(targetLabel)}</h4>
+                    <p class="text-[10px] text-slate-400 font-mono truncate">${escapeHTML(subInfo)}</p>
+                </div>
+            `;
+            const leftBlock = safeToUid
+                ? `<button type="button" onclick="if(typeof openPlayerProfileModal==='function') openPlayerProfileModal('${safeToUid}', '${encodedTarget}')" class="flex items-center space-x-2.5 text-left min-w-0 group cursor-pointer">${infoInner}</button>`
+                : `<div class="flex items-center space-x-2.5 text-left min-w-0">${infoInner}</div>`;
+            return `
+            <div class="p-2.5 bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-700 flex items-center justify-between gap-2">
+                ${leftBlock}
+                <button type="button" onclick="cancelSentFriendRequest('${safeReqId}', '${safeToUid}', '${encodedTarget}')" class="px-2.5 py-1 bg-slate-100 dark:bg-slate-800 hover:bg-rose-500 hover:text-white text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 text-[11px] font-bold rounded-lg transition shrink-0 cursor-pointer">
+                    ${chatTr('btnCancelFriendReq', '取消申請')}
+                </button>
+            </div>
+        `;
+        }).join('');
+        html += `</div></div>`;
+    }
+
     if (pendingGroupInvitesList.length > 0) {
         html += `
             <div class="mb-3 p-3 bg-purple-50/80 dark:bg-purple-950/40 rounded-xl border border-purple-200 dark:border-purple-800">
@@ -1837,11 +1944,16 @@ async function renderFriendsList() {
                                 ${f.email ? `<p class="text-[10px] text-slate-400 font-mono truncate">${escapeHTML(f.email)}</p>` : ''}
                             </div>
                         </button>
-                        <button type="button" onclick="openFriendDirectChat('${encodedName}', '${safeFriendUid}')" class="px-3 py-1.5 bg-brand-600 hover:bg-brand-700 text-white text-xs font-bold rounded-lg transition shadow-xs flex items-center space-x-1 shrink-0 cursor-pointer relative">
-                            <i class="fa-solid fa-comment-dots"></i>
-                            <span>${chatTr('btnEnterFriendChat', '進入聊天室')}</span>
-                            ${hasUnread ? `<span class="w-2 h-2 bg-rose-400 rounded-full ring-2 ring-white dark:ring-slate-900 ml-0.5"></span>` : ''}
-                        </button>
+                        <div class="flex items-center gap-1.5 shrink-0">
+                            <button type="button" onclick="openFriendDirectChat('${encodedName}', '${safeFriendUid}')" class="px-3 py-1.5 bg-brand-600 hover:bg-brand-700 text-white text-xs font-bold rounded-lg transition shadow-xs flex items-center space-x-1 shrink-0 cursor-pointer relative">
+                                <i class="fa-solid fa-comment-dots"></i>
+                                <span>${chatTr('btnEnterFriendChat', '進入聊天室')}</span>
+                                ${hasUnread ? `<span class="w-2 h-2 bg-rose-400 rounded-full ring-2 ring-white dark:ring-slate-900 ml-0.5"></span>` : ''}
+                            </button>
+                            <button type="button" onclick="removeFriendByUid('${safeFriendUid}', '${encodedName}')" title="${chatTr('btnRemoveFriend', '刪除好友')}" class="px-2 py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-rose-500 hover:text-white text-slate-500 dark:text-slate-400 text-[11px] font-bold rounded-lg transition shrink-0 cursor-pointer">
+                                <i class="fa-solid fa-user-minus"></i>
+                            </button>
+                        </div>
                     </div>
                     <button type="button" onclick="openFriendDirectChat('${encodedName}', '${safeFriendUid}')" class="w-full px-2.5 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-800/80 hover:bg-brand-50/70 dark:hover:bg-brand-950/30 border border-slate-100 dark:border-slate-700/80 flex items-center justify-between gap-2 text-left transition cursor-pointer">
                         <div class="flex items-center gap-1.5 min-w-0">
@@ -2127,6 +2239,162 @@ async function handleRejectFriendRequest(reqId) {
     } catch (e) {
         console.error("拒絕好友申請失敗:", e);
     }
+}
+
+function getOutgoingPendingRequestByUid(targetUid) {
+    const cleanUid = String(targetUid || '').trim();
+    if (!cleanUid) return null;
+    return outgoingRequestsList.find(req => req && req.status === 'pending' && req.toUid === cleanUid) || null;
+}
+
+async function cleanupFriendRequestsBetween(uidA, uidB, targetEmail = '') {
+    const rtdb = getRtdb();
+    const a = String(uidA || '').trim();
+    const b = String(uidB || '').trim();
+    const cleanEmail = String(targetEmail || '').trim().toLowerCase();
+    if (!rtdb || !a || (!b && !cleanEmail)) return;
+    try {
+        const snap = await rtdb.ref('friendRequests').once('value');
+        const map = snap.val() || {};
+        const deletes = [];
+        Object.keys(map).forEach(reqId => {
+            const r = map[reqId];
+            if (!r) return;
+            const matchesUidPair = Boolean(b && (
+                (r.fromUid === a && r.toUid === b) ||
+                (r.fromUid === b && r.toUid === a)
+            ));
+            const matchesEmailFallback = Boolean(cleanEmail && r.fromUid === a && String(r.toEmail || '').trim().toLowerCase() === cleanEmail);
+            if (matchesUidPair || matchesEmailFallback) {
+                deletes.push(rtdb.ref(`friendRequests/${reqId}`).remove().catch(() => {}));
+            }
+        });
+        if (deletes.length > 0) {
+            await Promise.all(deletes);
+        }
+    } catch (e) {}
+}
+
+async function cancelSentFriendRequest(reqId = '', targetUid = '', encodedName = '') {
+    if (isGuestUser()) {
+        if (typeof showToast === 'function') showToast('請先登入帳號後再操作', 'warning');
+        return false;
+    }
+    const rtdb = getRtdb();
+    const currentUid = firebase.auth()?.currentUser?.uid || '';
+    if (!rtdb || !currentUid) return false;
+
+    let cleanReqId = String(reqId || '').trim();
+    const cleanTargetUid = String(targetUid || '').trim();
+    let decodedName = '';
+    try { decodedName = decodeURIComponent(encodedName || ''); } catch (e) { decodedName = encodedName || ''; }
+
+    if (!cleanReqId && cleanTargetUid) {
+        const found = getOutgoingPendingRequestByUid(cleanTargetUid);
+        if (found && found.id) cleanReqId = found.id;
+    }
+
+    try {
+        if (cleanReqId) {
+            const reqSnap = await rtdb.ref(`friendRequests/${cleanReqId}`).once('value');
+            const reqVal = reqSnap.val();
+            if (reqVal && reqVal.fromUid && reqVal.fromUid !== currentUid) {
+                if (typeof showToast === 'function') showToast('無權限取消此好友申請', 'error');
+                return false;
+            }
+            if (!decodedName && reqVal) {
+                decodedName = reqVal.toNickname || reqVal.toEmail || '';
+            }
+            await rtdb.ref(`friendRequests/${cleanReqId}`).remove();
+        } else if (cleanTargetUid) {
+            const snap = await rtdb.ref('friendRequests').once('value');
+            const map = snap.val() || {};
+            const matchedIds = Object.keys(map).filter(id => {
+                const r = map[id];
+                return r && r.fromUid === currentUid && r.status === 'pending' && r.toUid === cleanTargetUid;
+            });
+            if (matchedIds.length === 0) {
+                if (typeof showToast === 'function') showToast('找不到待處理的好友申請', 'info');
+                return false;
+            }
+            await Promise.all(matchedIds.map(id => rtdb.ref(`friendRequests/${id}`).remove()));
+        } else {
+            return false;
+        }
+
+        outgoingRequestsList = outgoingRequestsList.filter(r => {
+            if (!r) return false;
+            if (cleanReqId && r.id === cleanReqId) return false;
+            if (cleanTargetUid && r.toUid === cleanTargetUid) return false;
+            return true;
+        });
+
+        if (cleanTargetUid && typeof window.removeOutgoingFriendRequestUid === 'function') {
+            window.removeOutgoingFriendRequestUid(cleanTargetUid);
+        }
+
+        const label = decodedName || '該玩家';
+        if (typeof showToast === 'function') showToast(`已取消對「${label}」的好友申請`, 'info');
+        renderFriendsList();
+        return true;
+    } catch (e) {
+        console.error('取消好友申請失敗:', e);
+        if (typeof showToast === 'function') showToast('取消好友申請失敗：' + e.message, 'error');
+        return false;
+    }
+}
+
+async function removeFriendByUid(targetUid, encodedName = '') {
+    if (isGuestUser()) {
+        if (typeof showToast === 'function') showToast('請先登入帳號才能管理好友', 'warning');
+        return false;
+    }
+    const cleanUid = String(targetUid || '').trim();
+    const currentUid = firebase.auth()?.currentUser?.uid || '';
+    if (!cleanUid || !currentUid || cleanUid === currentUid) return false;
+
+    let decodedName = '';
+    try { decodedName = decodeURIComponent(encodedName || ''); } catch (e) { decodedName = encodedName || ''; }
+
+    const currentFriends = (window.userData && Array.isArray(window.userData.friends)) ? window.userData.friends : [];
+    const targetFriendObj = currentFriends.find(f => f && f.uid === cleanUid) || null;
+    const label = decodedName || (targetFriendObj && (targetFriendObj.nickname || targetFriendObj.username)) || '這位好友';
+
+    const confirmed = typeof window.lzhConfirm === 'function'
+        ? await window.lzhConfirm(`確定要刪除好友「${label}」嗎？雙方將互相解除好友關係，但過去的 1v1 私人聊天紀錄仍會保留。`)
+        : true;
+    if (!confirmed) return false;
+
+    const rtdb = getRtdb();
+    _recentlyRemovedFriendUids.add(cleanUid);
+
+    if (!window.userData) window.userData = {};
+    window.userData.friends = currentFriends.filter(f => f && f.uid !== cleanUid);
+
+    if (typeof saveUserData === 'function') {
+        await saveUserData();
+    }
+
+    if (rtdb) {
+        await cleanupFriendRequestsBetween(currentUid, cleanUid, targetFriendObj ? targetFriendObj.email : '').catch(() => {});
+        const myName = (window.userData && window.userData.nickname) || firebase.auth()?.currentUser?.displayName || '玩家';
+        await rtdb.ref(`friendRemovals/${cleanUid}`).push({
+            fromUid: currentUid,
+            fromNickname: myName,
+            removedAt: Date.now()
+        }).catch((err) => {
+            console.warn('同步解除好友信號寫入失敗:', err);
+        });
+    }
+
+    // 保留雙方過去 1v1 私人聊天室與訊息，不呼叫 deleteChatThread 或 setChatDeleted
+    renderOnlineStatusUI();
+    renderFriendsList();
+    renderChatThreads(false);
+    if (typeof showToast === 'function') {
+        showToast(`已刪除好友「${label}」（過去聊天紀錄已保留）`, 'info');
+    }
+    return true;
 }
 
 async function createGroupPrompt() {
@@ -3841,6 +4109,9 @@ if (typeof window !== 'undefined') {
     window.isUidBlocked = isUidBlocked;
     window.blockPlayerByUid = blockPlayerByUid;
     window.unblockPlayerByUid = unblockPlayerByUid;
+    window.getOutgoingPendingRequestByUid = getOutgoingPendingRequestByUid;
+    window.cancelSentFriendRequest = cancelSentFriendRequest;
+    window.removeFriendByUid = removeFriendByUid;
     window.openUgcReportModal = openUgcReportModal;
     window.closeUgcReportModal = closeUgcReportModal;
     window.submitUgcReport = submitUgcReport;

@@ -31,6 +31,12 @@
 
     let activeQueueRef = null;
     let activeQueueListener = null;
+    let matchmakingScanRef = null;
+    let matchmakingScanListener = null;
+    let matchmakingScanTimer = null;
+    let matchmakingHeartbeatTimer = null;
+    let matchmakingEnteredAt = 0;
+    let isClaimingOpponent = false;
     let isMatchmaking = false;
 
     let activeRaidCode = null;
@@ -211,7 +217,7 @@
         return qs;
     }
 
-    const DUEL_EXPIRE_MS = 60000;
+    const DUEL_EXPIRE_MS = 600000;
     const MATCHMAKING_STALE_MS = 45000;
     const RAID_EXPIRE_MS = 1800000;
     const activeOnDisconnectRefs = new Set();
@@ -248,11 +254,25 @@
     }
 
     function detachActiveQueueListener() {
+        if (matchmakingScanTimer) {
+            clearInterval(matchmakingScanTimer);
+            matchmakingScanTimer = null;
+        }
+        if (matchmakingHeartbeatTimer) {
+            clearInterval(matchmakingHeartbeatTimer);
+            matchmakingHeartbeatTimer = null;
+        }
+        if (matchmakingScanRef && matchmakingScanListener) {
+            try { matchmakingScanRef.off('value', matchmakingScanListener); } catch (e) {}
+        }
+        matchmakingScanRef = null;
+        matchmakingScanListener = null;
         if (activeQueueRef && activeQueueListener) {
             try { activeQueueRef.off('value', activeQueueListener); } catch (e) {}
         }
         activeQueueRef = null;
         activeQueueListener = null;
+        isClaimingOpponent = false;
     }
 
     function clearRaidFeedbackTimer() {
@@ -547,7 +567,7 @@
         }
     }
 
-    async function createDuelRoom(opponentPreset = null) {
+    async function createDuelRoom(opponentPreset = null, options = {}) {
         if (!ensureLoggedInAndRtdb()) return null;
         const me = getCurrentPlayerIdentity();
         const code = generateRoomCode('');
@@ -585,14 +605,18 @@
             const dbRef = getActiveRtdb();
             const roomRef = dbRef.ref(`duels/${code}`);
             await roomRef.set(roomPayload);
-            if (!opponentPreset) {
-                registerOnDisconnectRemove(roomRef);
+            if (!options || !options.skipSubscribe) {
+                if (!opponentPreset) {
+                    registerOnDisconnectRemove(roomRef);
+                }
+                subscribeToDuelRoom(code);
             }
-            subscribeToDuelRoom(code);
             return code;
         } catch (e) {
             console.error('建立對戰房間失敗:', e);
-            if (typeof global.showToast === 'function') global.showToast('建立房間失敗：' + e.message, 'error');
+            if (!options || !options.silentError) {
+                if (typeof global.showToast === 'function') global.showToast('建立房間失敗：' + e.message, 'error');
+            }
             return null;
         }
     }
@@ -610,30 +634,56 @@
     async function joinDuelRoom(rawCode) {
         if (!ensureLoggedInAndRtdb()) return false;
         const me = getCurrentPlayerIdentity();
-        const code = String(rawCode || '').trim().toUpperCase();
+        const code = String(rawCode || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
         if (!code) return false;
 
         try {
             const dbRef = getActiveRtdb();
             const ref = dbRef.ref(`duels/${code}`);
-            let rejectReason = '';
             const nowMs = Date.now();
 
+            const preSnap = await ref.once('value');
+            if (!preSnap.exists()) {
+                if (typeof global.showToast === 'function') global.showToast(`找不到對戰房間「${code}」`, 'error');
+                return false;
+            }
+            const preVal = preSnap.val() || {};
+            const preCreatedAt = Number(preVal.createdAt) || 0;
+            if (preVal.status === 'waiting' && preCreatedAt > 0 && (nowMs - preCreatedAt) > DUEL_EXPIRE_MS) {
+                if (preVal.hostUid === me.uid) {
+                    await ref.remove().catch(() => {});
+                }
+                if (typeof global.showToast === 'function') global.showToast('該對戰房間已逾時（超過 10 分鐘未開局）並自動失效', 'warning');
+                return false;
+            }
+
+            if (preVal.hostUid === me.uid || preVal.guestUid === me.uid) {
+                subscribeToDuelRoom(code);
+                return true;
+            }
+
+            if (preVal.guestUid && preVal.guestUid !== '' && preVal.guestUid !== me.uid) {
+                if (typeof global.showToast === 'function') global.showToast('該對戰房間人數已滿！', 'warning');
+                return false;
+            }
+
+            let rejectReason = '';
             const txResult = await ref.transaction((data) => {
                 if (data === null) {
-                    return data;
+                    return undefined;
                 }
                 const createdAt = Number(data.createdAt) || 0;
-                const isWaitingExpired = data.status === 'waiting' && createdAt > 0 && (nowMs - createdAt) > DUEL_EXPIRE_MS;
+                const isWaitingExpired = data.status === 'waiting' && createdAt > 0 && (Date.now() - createdAt) > DUEL_EXPIRE_MS;
                 if (isWaitingExpired) {
                     rejectReason = 'expired';
                     return undefined;
                 }
-                if (data.hostUid !== me.uid && data.guestUid && data.guestUid !== me.uid) {
+                if (data.hostUid !== me.uid && data.guestUid && data.guestUid !== '' && data.guestUid !== me.uid) {
                     rejectReason = 'full';
                     return undefined;
                 }
                 if (data.hostUid !== me.uid && (!data.guestUid || data.guestUid === '')) {
+                    const ts = Date.now();
                     data.guestUid = me.uid;
                     data.guestName = me.name;
                     data.guestAvatar = me.avatar;
@@ -641,11 +691,11 @@
                     data.guestMemberTier = me.membershipTier || 'free';
                     data.guestMemberExpiresAt = me.membershipExpiresAt || 0;
                     data.status = 'playing';
-                    data.startedAt = nowMs;
-                    data.updatedAt = nowMs;
+                    data.startedAt = ts;
+                    data.updatedAt = ts;
                 }
                 return data;
-            });
+            }, undefined, false);
 
             const finalVal = txResult && txResult.snapshot ? txResult.snapshot.val() : null;
             if (!finalVal) {
@@ -654,12 +704,18 @@
             }
             if (!txResult.committed) {
                 if (rejectReason === 'expired') {
-                    await ref.remove().catch(() => {});
-                    if (typeof global.showToast === 'function') global.showToast('該對戰房間已超過 60 秒未開局並自動失效', 'warning');
+                    if (finalVal.hostUid === me.uid) {
+                        await ref.remove().catch(() => {});
+                    }
+                    if (typeof global.showToast === 'function') global.showToast('該對戰房間已逾時並自動失效', 'warning');
                     return false;
                 }
                 if (rejectReason === 'full') {
                     if (typeof global.showToast === 'function') global.showToast('該對戰房間人數已滿！', 'warning');
+                    return false;
+                }
+                if (finalVal.hostUid !== me.uid && finalVal.guestUid !== me.uid) {
+                    if (typeof global.showToast === 'function') global.showToast('加入對戰房間失敗，請再試一次', 'warning');
                     return false;
                 }
             }
@@ -668,7 +724,14 @@
             return true;
         } catch (e) {
             console.error('加入對戰房間失敗:', e);
-            if (typeof global.showToast === 'function') global.showToast('加入對戰失敗：' + e.message, 'error');
+            const msg = String(e && e.message ? e.message : e || '');
+            if (/permission_denied|permission denied/i.test(msg)) {
+                if (typeof global.showToast === 'function') {
+                    global.showToast('無權限加入對戰房間（請確認雙方已登入且 Firebase 即時資料庫規則已發布更新）', 'error');
+                }
+            } else if (typeof global.showToast === 'function') {
+                global.showToast('加入對戰失敗：' + msg, 'error');
+            }
             return false;
         }
     }
@@ -1142,11 +1205,93 @@
        🏆 排位即時配對佇列 (matchmakingQueue/{uid})
        ========================================================================== */
 
+    async function tryClaimMatchmakingCandidate(snap, dbRef, me, options = {}) {
+        if (!isMatchmaking || isClaimingOpponent || !snap || !dbRef || !me) return false;
+        const now = Date.now();
+        const candidates = [];
+
+        snap.forEach((child) => {
+            const v = child.val();
+            if (!v || child.key === me.uid) return;
+            const updatedAt = Number(v.updatedAt) || 0;
+            if (now - updatedAt > MATCHMAKING_STALE_MS) {
+                dbRef.ref(`matchmakingQueue/${child.key}`).remove().catch(() => {});
+                return;
+            }
+            if (v.matchedRoom && String(v.matchedRoom).trim() !== '') return;
+            candidates.push({ uid: child.key, ...v });
+        });
+
+        if (candidates.length === 0) return false;
+
+        candidates.sort((a, b) => {
+            const diffA = Math.abs((Number(a.rankPoints) || 0) - (Number(me.rankPoints) || 0));
+            const diffB = Math.abs((Number(b.rankPoints) || 0) - (Number(me.rankPoints) || 0));
+            if (diffA !== diffB) return diffA - diffB;
+            return (Number(a.createdAt || a.updatedAt) || 0) - (Number(b.createdAt || b.updatedAt) || 0);
+        });
+
+        const respectTieBreak = Boolean(options && options.respectTieBreak);
+        isClaimingOpponent = true;
+
+        try {
+            for (const opponent of candidates) {
+                if (!isMatchmaking) return false;
+                if (respectTieBreak && (Date.now() - matchmakingEnteredAt) < 1500 && String(me.uid) > String(opponent.uid)) {
+                    continue;
+                }
+
+                const roomCode = await createDuelRoom({
+                    uid: opponent.uid,
+                    name: opponent.name || '挑戰者',
+                    avatar: opponent.avatar || '',
+                    rankTier: opponent.rankTier || '青銅 III',
+                    membershipTier: opponent.membershipTier || 'free',
+                    membershipExpiresAt: Number(opponent.membershipExpiresAt) || 0
+                }, { skipSubscribe: true, silentError: true });
+                if (!roomCode) continue;
+
+                let claimTx = null;
+                try {
+                    const oppRef = dbRef.ref(`matchmakingQueue/${opponent.uid}`);
+                    claimTx = await oppRef.transaction((curr) => {
+                        if (!curr || (curr.matchedRoom && String(curr.matchedRoom).trim() !== '')) return undefined;
+                        if (Date.now() - (Number(curr.updatedAt) || 0) > MATCHMAKING_STALE_MS) return undefined;
+                        curr.matchedRoom = roomCode;
+                        curr.matchedByUid = me.uid;
+                        curr.updatedAt = Date.now();
+                        return curr;
+                    }, undefined, false);
+                } catch (txErr) {
+                    console.warn('配對認領對手交易失敗:', txErr);
+                }
+
+                if (claimTx && claimTx.committed) {
+                    const myQueueRef = dbRef.ref(`matchmakingQueue/${me.uid}`);
+                    cancelOnDisconnectRef(myQueueRef);
+                    detachActiveQueueListener();
+                    myQueueRef.remove().catch(() => {});
+                    isMatchmaking = false;
+                    subscribeToDuelRoom(roomCode);
+                    return true;
+                }
+
+                await dbRef.ref(`duels/${roomCode}`).remove().catch(() => {});
+            }
+            return false;
+        } finally {
+            isClaimingOpponent = false;
+        }
+    }
+
     async function startMatchmaking() {
         if (!ensureLoggedInAndRtdb()) return false;
         const me = getCurrentPlayerIdentity();
         if (isMatchmaking) return false;
+
+        detachActiveQueueListener();
         isMatchmaking = true;
+        matchmakingEnteredAt = Date.now();
 
         const body = getModalBody();
         if (body) {
@@ -1169,52 +1314,10 @@
         try {
             const dbRef = getActiveRtdb();
             const queueRef = dbRef.ref('matchmakingQueue');
-            const snap = await queueRef.once('value');
-            const now = Date.now();
-            const candidates = [];
-
-            snap.forEach((child) => {
-                const v = child.val();
-                if (!v || child.key === me.uid) return;
-                const updatedAt = Number(v.updatedAt) || 0;
-                if (now - updatedAt > MATCHMAKING_STALE_MS) {
-                    dbRef.ref(`matchmakingQueue/${child.key}`).remove().catch(() => {});
-                    return;
-                }
-                if (v.matchedRoom) return;
-                candidates.push({ uid: child.key, ...v });
-            });
-
-            for (const opponent of candidates) {
-                const roomCode = await createDuelRoom({
-                    uid: opponent.uid,
-                    name: opponent.name || '挑戰者',
-                    avatar: opponent.avatar || '',
-                    rankTier: opponent.rankTier || '青銅 III',
-                    membershipTier: opponent.membershipTier || 'free',
-                    membershipExpiresAt: Number(opponent.membershipExpiresAt) || 0
-                });
-                if (!roomCode) continue;
-
-                const oppRef = dbRef.ref(`matchmakingQueue/${opponent.uid}`);
-                const claimTx = await oppRef.transaction((curr) => {
-                    if (!curr || curr.matchedRoom) return undefined;
-                    if (Date.now() - (Number(curr.updatedAt) || 0) > MATCHMAKING_STALE_MS) return undefined;
-                    curr.matchedRoom = roomCode;
-                    curr.updatedAt = Date.now();
-                    return curr;
-                });
-
-                if (claimTx && claimTx.committed) {
-                    await dbRef.ref(`matchmakingQueue/${me.uid}`).remove().catch(() => {});
-                    isMatchmaking = false;
-                    return true;
-                }
-                // 該對手已被其他玩家搶先配對，清理多餘建立的空房並改試下一位
-                detachActiveDuelListener();
-                await dbRef.ref(`duels/${roomCode}`).remove().catch(() => {});
-                activeDuelCode = null;
-                activeDuelData = null;
+            const initialSnap = await queueRef.once('value');
+            const immediateMatched = await tryClaimMatchmakingCandidate(initialSnap, dbRef, me, { respectTieBreak: false });
+            if (immediateMatched || !isMatchmaking) {
+                return immediateMatched;
             }
 
             activeQueueRef = dbRef.ref(`matchmakingQueue/${me.uid}`);
@@ -1227,14 +1330,16 @@
                 membershipTier: me.membershipTier || 'free',
                 membershipExpiresAt: me.membershipExpiresAt || 0,
                 matchedRoom: '',
+                createdAt: matchmakingEnteredAt,
                 updatedAt: Date.now()
             });
             registerOnDisconnectRemove(activeQueueRef);
 
             activeQueueListener = (mySnap) => {
                 const val = mySnap.val();
-                if (!val || !val.matchedRoom) return;
-                const matchedCode = val.matchedRoom;
+                if (!val || !val.matchedRoom || !isMatchmaking) return;
+                const matchedCode = String(val.matchedRoom).trim();
+                if (!matchedCode) return;
                 const qRef = activeQueueRef;
                 cancelOnDisconnectRef(qRef);
                 detachActiveQueueListener();
@@ -1243,11 +1348,42 @@
                 joinDuelRoom(matchedCode);
             };
             activeQueueRef.on('value', activeQueueListener);
+
+            matchmakingScanRef = queueRef;
+            matchmakingScanListener = (allSnap) => {
+                if (!isMatchmaking || isClaimingOpponent) return;
+                tryClaimMatchmakingCandidate(allSnap, dbRef, me, { respectTieBreak: true }).catch(() => {});
+            };
+            matchmakingScanRef.on('value', matchmakingScanListener);
+
+            matchmakingScanTimer = setInterval(() => {
+                if (!isMatchmaking || isClaimingOpponent) return;
+                queueRef.once('value').then((s) => {
+                    if (isMatchmaking && !isClaimingOpponent) {
+                        return tryClaimMatchmakingCandidate(s, dbRef, me, { respectTieBreak: true });
+                    }
+                    return false;
+                }).catch(() => {});
+            }, 1500);
+
+            matchmakingHeartbeatTimer = setInterval(() => {
+                if (!isMatchmaking || !activeQueueRef) return;
+                activeQueueRef.update({ updatedAt: Date.now() }).catch(() => {});
+            }, 10000);
+
             return true;
         } catch (e) {
+            detachActiveQueueListener();
             isMatchmaking = false;
             console.error('排位配對失敗:', e);
-            if (typeof global.showToast === 'function') global.showToast('排位配對失敗：' + e.message, 'error');
+            const msg = String(e && e.message ? e.message : e || '');
+            if (/permission_denied|permission denied/i.test(msg)) {
+                if (typeof global.showToast === 'function') {
+                    global.showToast('排位配對失敗：Firebase 即時資料庫權限不足，請確認已登入並部署最新 realtime 規則', 'error');
+                }
+            } else if (typeof global.showToast === 'function') {
+                global.showToast('排位配對失敗：' + msg, 'error');
+            }
             renderMultiplayerHub();
             return false;
         }

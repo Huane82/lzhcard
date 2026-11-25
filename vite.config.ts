@@ -23,7 +23,7 @@ function copyStaticWwwAssets() {
           fs.cpSync(src, dest, {recursive: true});
         }
       }
-      const staticFiles = ['overlay.html', '404.html', 'realtime.txt'];
+      const staticFiles = ['overlay.html', '404.html', 'realtime.txt', 'manifest.json', 'sw.js'];
       for (const file of staticFiles) {
         const src = path.join(wwwRoot, file);
         const dest = path.join(distOut, file);

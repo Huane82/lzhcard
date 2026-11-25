@@ -67,9 +67,17 @@
     <meta property="og:description" content="具備 FSRS 現代認知記憶演算法、考前臨時熟悉演算法、Gemini AI 萬能解析、雲端同步與社群字庫商店的升級版 Anki 單字學習系統。" />
     <meta property="og:type" content="website" />
     <meta name="twitter:card" content="summary_large_image" />
+    <meta name="theme-color" content="#0f172a" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="LZHCard" />
+    <link rel="manifest" href="manifest.json" />
+    <link rel="apple-touch-icon" sizes="180x180" href="images/apple-touch-icon.png" />
     
     <!-- 電腦分頁圖示 (Favicon) 設定 -->
-    <link rel="icon" type="image/svg+xml" href="images/logo.png">
+    <link rel="icon" type="image/png" sizes="192x192" href="images/icon-192.png" />
+    <link rel="icon" type="image/svg+xml" href="images/logo.svg" />
 
     <!-- Tailwind CSS & Icons -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -381,7 +389,7 @@
                 <div class="min-w-0">
                     <h1 class="font-extrabold text-base sm:text-lg text-slate-900 dark:text-white leading-tight truncate">LZHCard</h1>
                     <div class="flex items-center space-x-1.5 min-w-0">
-                        <span class="text-[10px] sm:text-xs font-semibold px-1.5 py-0.2 rounded-full bg-brand-50 text-brand-600 dark:bg-brand-950 dark:text-brand-300 border border-brand-100 dark:border-brand-800 flex-shrink-0">v13.26.11.24</span>
+                        <span class="text-[10px] sm:text-xs font-semibold px-1.5 py-0.2 rounded-full bg-brand-50 text-brand-600 dark:bg-brand-950 dark:text-brand-300 border border-brand-100 dark:border-brand-800 flex-shrink-0">v13.26.11.25</span>
                         <span class="text-[11px] text-slate-500 dark:text-slate-400 truncate hidden xs:inline" data-i18n="appSubtitle">小考背單字神器</span>
                     </div>
                 </div>
@@ -2131,6 +2139,14 @@
                                 </button>
                             </div>
 
+                            <!-- 📲 PWA / iOS 加入主畫面按鈕 (僅網頁瀏覽器尚未安裝時顯示) -->
+                            <div id="settingsPwaInstallSlot" class="hidden">
+                                <button type="button" id="settingsPwaInstallBtn" onclick="if(typeof LzhPwaInstall!=='undefined') LzhPwaInstall.triggerInstall();" class="w-full py-2.5 px-3 bg-brand-50 hover:bg-brand-100 dark:bg-brand-950/40 dark:hover:bg-brand-900/60 text-brand-700 dark:text-brand-300 border border-brand-200 dark:border-brand-800 font-bold rounded-xl text-xs transition flex items-center justify-center gap-1.5 shadow-2xs cursor-pointer">
+                                    <i class="fa-solid fa-mobile-screen-button"></i>
+                                    <span>將 LZHCard 加入主畫面 (App 模式)</span>
+                                </button>
+                            </div>
+
                             <div class="flex items-center justify-between gap-2">
                                 <div class="min-w-0">
                                     <div class="text-xs font-bold text-slate-800 dark:text-slate-100" data-i18n="lblTheme">外觀主題設定</div>
@@ -2870,6 +2886,7 @@
     <script src="js/onboarding.js"></script>
     <script src="js/helpAndTour.js"></script>
     <script src="js/ui-sync.js"></script>
+    <script src="js/pwa-install.js"></script>
     
 </body>
 </html>

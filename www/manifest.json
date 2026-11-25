@@ -1,0 +1,33 @@
+{
+  "id": "/",
+  "name": "LZHCard - AI 單字記憶與競技對戰",
+  "short_name": "LZHCard",
+  "description": "具備 FSRS 現代認知記憶演算法、Gemini AI 解析、雲端同步與即時競技對戰的單字學習應用。",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0f172a",
+  "theme_color": "#0f172a",
+  "lang": "zh-TW",
+  "icons": [
+    {
+      "src": "images/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "images/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "images/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

@@ -21,26 +21,6 @@ const STREAK_SHIELD_COST = 80;
 const STREAK_SHIELD_MAX = 3;
 
 export const COIN_REDEEM_PACKS = {
-  pack_ai_text: {
-    id: "pack_ai_text",
-    name: "AI 單字填補 + 文章生成補充包",
-    costCoins: 60,
-    credits: { def_fill: 15, article_gen: 3, vision_ocr: 0, fast_refine: 0 },
-    trialDays: 0,
-    trialTier: "",
-    fullMembershipDays: 0,
-    fullMembershipTier: ""
-  },
-  pack_ai_vision: {
-    id: "pack_ai_vision",
-    name: "AI 拍照 OCR + 字幕精修補充包",
-    costCoins: 120,
-    credits: { def_fill: 0, article_gen: 0, vision_ocr: 15, fast_refine: 150 },
-    trialDays: 0,
-    trialTier: "",
-    fullMembershipDays: 0,
-    fullMembershipTier: ""
-  },
   pack_trial_starter_7d: {
     id: "pack_trial_starter_7d",
     name: "7 天 Starter 入門會員體驗卡",

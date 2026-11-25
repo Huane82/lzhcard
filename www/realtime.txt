@@ -59,7 +59,7 @@
       ".indexOn": ["createdAt", "status", "updatedAt"],
       "$roomCode": {
         ".read": "auth != null",
-        ".write": "auth != null && (!data.exists() || data.child('hostUid').val() === auth.uid || data.child('guestUid').val() === auth.uid || !data.child('guestUid').exists() || data.child('guestUid').val() === '' || root.child('users/' + auth.uid + '/role').val() === 'admin' || root.child('users/' + auth.uid + '/isAdmin').val() === true)"
+        ".write": "auth != null && (!data.exists() || data.child('hostUid').val() === auth.uid || data.child('guestUid').val() === auth.uid || !data.child('guestUid').exists() || data.child('guestUid').val() == null || data.child('guestUid').val() === '' || root.child('users/' + auth.uid + '/role').val() === 'admin' || root.child('users/' + auth.uid + '/isAdmin').val() === true)"
       }
     },
 
@@ -69,7 +69,7 @@
       ".indexOn": ["createdAt", "status", "updatedAt"],
       "$battleId": {
         ".read": "auth != null",
-        ".write": "auth != null && (!data.exists() || data.child('hostUid').val() === auth.uid || data.child('guestUid').val() === auth.uid || !data.child('guestUid').exists() || data.child('guestUid').val() === '' || root.child('users/' + auth.uid + '/role').val() === 'admin' || root.child('users/' + auth.uid + '/isAdmin').val() === true)"
+        ".write": "auth != null && (!data.exists() || data.child('hostUid').val() === auth.uid || data.child('guestUid').val() === auth.uid || !data.child('guestUid').exists() || data.child('guestUid').val() == null || data.child('guestUid').val() === '' || root.child('users/' + auth.uid + '/role').val() === 'admin' || root.child('users/' + auth.uid + '/isAdmin').val() === true)"
       }
     },
 
@@ -78,7 +78,7 @@
       ".read": "auth != null",
       ".indexOn": ["createdAt", "status", "updatedAt"],
       "$uid": {
-        ".write": "auth != null && ($uid === auth.uid || !newData.exists() || data.child('matchedRoom').val() == null || root.child('users/' + auth.uid + '/role').val() === 'admin' || root.child('users/' + auth.uid + '/isAdmin').val() === true)"
+        ".write": "auth != null && ($uid === auth.uid || !newData.exists() || !data.exists() || !data.child('matchedRoom').exists() || data.child('matchedRoom').val() == null || data.child('matchedRoom').val() === '' || root.child('users/' + auth.uid + '/role').val() === 'admin' || root.child('users/' + auth.uid + '/isAdmin').val() === true)"
       }
     },
 
@@ -98,6 +98,17 @@
       "$raidCode": {
         ".read": "auth != null",
         ".write": "auth != null && (!data.exists() || data.child('hostUid').val() === auth.uid || data.child('members/' + auth.uid).exists() || data.child('status').val() === 'active' || root.child('users/' + auth.uid + '/role').val() === 'admin' || root.child('users/' + auth.uid + '/isAdmin').val() === true)"
+      }
+    },
+
+    // 12. 雙方解除好友即時同步信號 (Friend Removals)
+    "friendRemovals": {
+      "$uid": {
+        ".read": "auth != null && ($uid === auth.uid || root.child('users/' + auth.uid + '/role').val() === 'admin' || root.child('users/' + auth.uid + '/isAdmin').val() === true)",
+        ".write": "auth != null && ($uid === auth.uid || root.child('users/' + auth.uid + '/role').val() === 'admin' || root.child('users/' + auth.uid + '/isAdmin').val() === true)",
+        "$removalId": {
+          ".write": "auth != null && ($uid === auth.uid || (newData.exists() && !data.exists() && newData.child('fromUid').val() === auth.uid) || root.child('users/' + auth.uid + '/role').val() === 'admin' || root.child('users/' + auth.uid + '/isAdmin').val() === true)"
+        }
       }
     }
   }

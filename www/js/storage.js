@@ -1075,6 +1075,8 @@ const StorageEngine = {
         nextReview: toFiniteNumber(card.nextReview, 0),
         freeLevel: toFiniteNumber(card.freeLevel, 1),
         freeStreak: toFiniteNumber(card.freeStreak, 0),
+        bossWrongCount: toFiniteNumber(card.bossWrongCount, 0),
+        lastBossWrongAt: toFiniteNumber(card.lastBossWrongAt, 0),
         diffLevel: resolvedDiffLevel,
         diffLevelManual: isManualDiff,
         updatedAt: toFiniteNumber(card.updatedAt, Date.now())
@@ -1113,6 +1115,8 @@ const StorageEngine = {
       if (c.nextReview !== 0) out.nextReview = c.nextReview;
       if (c.freeLevel !== 1) out.freeLevel = c.freeLevel;
       if (c.freeStreak !== 0) out.freeStreak = c.freeStreak;
+      if (c.bossWrongCount > 0) out.bossWrongCount = c.bossWrongCount;
+      if (c.lastBossWrongAt > 0) out.lastBossWrongAt = c.lastBossWrongAt;
       if (c.diffLevelManual === true && typeof c.diffLevel === 'number') {
         out.diffLevelManual = true;
         out.diffLevel = c.diffLevel;

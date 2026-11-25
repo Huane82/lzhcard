@@ -128,30 +128,6 @@
             fullMembershipTier: 'supporter_180'
         },
         {
-            id: 'pack_ai_text',
-            icon: '✨',
-            costCoins: 60,
-            titleKey: 'coinPackTextTitle',
-            titleFallback: 'AI 單字填補 + 文章生成補充包',
-            descKey: 'coinPackTextDesc',
-            descFallback: '+15 次 AI 填補釋義例句、+3 篇 AI 長文出題（無使用期限）',
-            credits: { def_fill: 15, article_gen: 3, vision_ocr: 0, fast_refine: 0 },
-            trialDays: 0,
-            fullMembershipDays: 0
-        },
-        {
-            id: 'pack_ai_vision',
-            icon: '📸',
-            costCoins: 120,
-            titleKey: 'coinPackVisionTitle',
-            titleFallback: 'AI 拍照識別 + 字幕精修補充包',
-            descKey: 'coinPackVisionDesc',
-            descFallback: '+15 張雲端 AI 拍照翻譯、+150 句字幕語境精修（無使用期限）',
-            credits: { def_fill: 0, article_gen: 0, vision_ocr: 15, fast_refine: 150 },
-            trialDays: 0,
-            fullMembershipDays: 0
-        },
-        {
             id: 'pack_trial_starter_7d',
             icon: '🎟️',
             costCoins: 80,
@@ -1845,11 +1821,11 @@
                     <div class="flex items-center justify-between gap-2">
                         <div class="text-xs font-extrabold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
                             <span>🎟️</span>
-                            <span>${escapeMemHtml(memTr('memCoinRedeemTitle', '使用儲值／分潤「商店金幣」兌換會員與 AI 額度補充包'))}</span>
+                            <span>${escapeMemHtml(memTr('memCoinRedeemTitle', '使用儲值／分潤「商店金幣」兌換會員與體驗卡'))}</span>
                         </div>
                         <span class="text-[11px] font-extrabold text-amber-600 dark:text-amber-400 shrink-0">${userCoins.toLocaleString()} 🪙</span>
                     </div>
-                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                         ${coinPacksHtml}
                     </div>
                 </div>
