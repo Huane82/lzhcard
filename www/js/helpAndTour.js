@@ -258,215 +258,150 @@
         return out;
     }
 
+    function getStarterCategoryName(targetLang) {
+        const lang = String(targetLang || 'en').trim();
+        if (lang === 'ja') return '新手入門日語包';
+        if (lang === 'zh-TW' || lang === 'zh') return '新手入門中文包';
+        return '新手入門字卡包';
+    }
+
+    function getStarterBatchDemoText(targetLang) {
+        const lang = String(targetLang || 'en').trim();
+        if (lang === 'ja') {
+            return [
+                '食べる,吃,v.,たべる',
+                '1."毎朝パンを食べます。"',
+                '2."我每天早上吃麵包。"',
+                '大切,重要的,na.,たいせつ',
+                '1."健康はとても大切です。"',
+                '2."健康非常重要。"',
+                '約束,約定,n.,やくそく',
+                '1."友達との約束を守ります。"',
+                '2."我遵守和朋友的約定。"'
+            ].join('\n');
+        }
+        if (lang === 'zh-TW' || lang === 'zh') {
+            return [
+                '韌性,resilience,n.,ㄖㄣˋ ㄒㄧㄥˋ',
+                '1."面對挑戰時，他展現了極強的心理韌性。"',
+                '2."He showed remarkable mental resilience when facing challenges."',
+                '專注,focus,v.,ㄓㄨㄢ ㄓㄨˋ',
+                '1."請專注於當下的每一個學習步驟。"',
+                '2."Please focus on every learning step in the present."',
+                '共鳴,resonance,n.,ㄍㄨㄥˋ ㄇㄧㄥˊ',
+                '1."這篇文章深刻引起許多讀者的共鳴。"',
+                '2."This essay deeply resonated with many readers."'
+            ].join('\n');
+        }
+        // 英文與自訂語言一律以英文示範字卡包為主
+        return [
+            'preview,預覽；提前看,v.,[ˈpriːvjuː]',
+            '1."You can preview the starter vocabulary pack before saving."',
+            '2."在儲存之前，你可以先預覽這份新手字卡包。"',
+            'resilient,有韌性的,adj.,[rɪˈzɪljənt]',
+            '1."She remained resilient despite every obstacle."',
+            '2."儘管面臨重重阻礙，她依然充滿韌性。"',
+            'transform,轉變；改造,v.,[trænsˈfɔːrm]',
+            '1."Daily reading habits can transform your memory."',
+            '2."每天的閱讀習慣能徹底轉變你的記憶力。"'
+        ].join('\n');
+    }
+
     const ONBOARDING_V2_STEPS = [
         {
-            targetId: 'homeQuickActionDock',
-            tab: 'home',
-            badgeKey: 'tourFullBadge1',
-            badgeFallback: '首頁速達 1 / 18',
-            titleKey: 'tourFullTitle1',
-            titleFallback: '1. 首頁高頻功能一鍵直達列',
-            descKey: 'tourFullDesc1',
-            descFallback: '頂部四格集中最高頻操作：「VIP / 儲值方案」、「快速新增字卡」、「懸浮翻譯視窗」與「懸浮視窗總開關（同步網頁球與桌面小工具啟閉狀態）」。'
+            targetId: 'batchModal',
+            fallbackTargetId: 'batchRawInput',
+            tab: 'list',
+            prepareStarterBatch: true,
+            badgeKey: 'tourNewBadge1',
+            badgeFallback: '1 / 8 · 新手包匯入',
+            titleKey: 'tourNewTitle1',
+            titleFallback: '1. 先從字庫匯入新手向字卡包',
+            descKey: 'tourNewDesc1',
+            descFallback: '已依你選擇的目標語言（若選自訂語言則以英文示範）預先在框框內備妥含釋義與例句的示範單字！統一格式為「目標單字,釋義,詞性,發音」與 1."例句" / 2."翻譯"。點擊「確認匯入至字庫」即可加入（按「下一步」也會自動幫你完成匯入）。'
         },
         {
             targetId: 'headerCategorySelector',
             tab: 'home',
-            badgeKey: 'tourFullBadge2',
-            badgeFallback: '智慧字庫 2 / 18',
-            titleKey: 'tourFullTitle2',
-            titleFallback: '2. 跨字庫連動與斷網自動去重',
-            descKey: 'tourFullDesc2',
-            descFallback: '右上角可多選勾選學習字庫。每個字卡與字庫皆具決定性 ID 與時間戳記，離線轉線上自動 Upsert 去重合併；跨字庫共用記憶進度，絕不重複背同一單字！'
+            ensureStarterImported: true,
+            closeBatchModal: true,
+            badgeKey: 'tourNewBadge2',
+            badgeFallback: '2 / 8 · 勾選字庫',
+            titleKey: 'tourNewTitle2',
+            titleFallback: '2. 回到首頁右上角勾選字卡包',
+            descKey: 'tourNewDesc2',
+            descFallback: '在首頁右上角的字庫選單中，勾選剛剛匯入的新手字卡包（支援多字庫同時複習與跨裝置差異化雲端同步）。'
         },
         {
             targetId: 'homeCardFlashcard',
+            fallbackTargetId: 'cardWord',
             tab: 'home',
-            badgeKey: 'tourFullBadge3',
-            badgeFallback: '雙軌卡片 3 / 18',
-            titleKey: 'tourFullTitle3',
-            titleFallback: '3. 卡片輪播：FSRS 排程 × 自由加練',
-            descKey: 'tourFullDesc3',
-            descFallback: '正式 FSRS 依遺忘曲線安排每日到期與新字複習；「自由加練」採 6 字焦點池與臨時等級，考前刷卡絕不影響正式排程！支援單張「還原上一張」與直向平板最佳化版面。'
+            ensureStarterImported: true,
+            ensureFlashcardReady: true,
+            badgeKey: 'tourNewBadge3',
+            badgeFallback: '3 / 8 · 刷字卡體驗',
+            titleKey: 'tourNewTitle3',
+            titleFallback: '3. 體驗刷字卡（自動標示字首／字根／字尾）',
+            descKey: 'tourNewDesc3',
+            descFallback: '點擊字卡翻面或進行記憶評分體驗刷卡！系統預設以三色底線標出字首（藍）、字根（綠）、字尾（琥珀），點擊詞素可直接查看詳解而不翻卡。'
         },
         {
-            targetId: 'homeCardQuiz',
+            targetId: 'ftScreenTapToggle',
+            fallbackTargetId: 'floatingTranslatorBall',
             tab: 'home',
-            badgeKey: 'tourFullBadge4',
-            badgeFallback: 'AI 考場 4 / 18',
-            titleKey: 'tourFullTitle4',
-            titleFallback: '4. 四大實戰 AI 考試模式',
-            descKey: 'tourFullDesc4',
-            descFallback: '包含句意挖空拼寫、三步驟中翻英重組批改、學測閱讀篇章（支援點擊任意單字即時查義）與 10 選 10 文意選填。全部僅更新臨時等級，安心大量刷題！'
+            floatingTab: 'screen',
+            badgeKey: 'tourNewBadge4',
+            badgeFallback: '4 / 8 · 懸浮球點譯',
+            titleKey: 'tourNewTitle4',
+            titleFallback: '4. 透過懸浮球勾選「螢幕點譯」',
+            descKey: 'tourNewDesc4',
+            descFallback: '展開懸浮球並切至「點詞」分頁，勾選「螢幕點譯」開關！開啟後即可隨時點擊畫面與卡片上的單字進行即時查詢與翻譯。'
         },
         {
-            targetId: 'bnav-list',
+            targetId: 'cardFrontSentence',
+            fallbackTargetId: 'cardSentence',
             tab: 'home',
-            badgeKey: 'tourFullBadge5',
-            badgeFallback: '字庫管理 5 / 18',
-            titleKey: 'tourFullTitle5',
-            titleFallback: '5. 字庫管理：7000 單分級與 AI 補齊',
-            descKey: 'tourFullDesc5',
-            descFallback: '支援批次匯入、自動標記 108 課綱 7000 單 L1～L6 等級、AI 自動補全音標詞性例句、智慧雙語斷句拆卡以及完整 JSON 離線備份還原。'
-        },
-        {
-            targetId: 'homeGamePortalContainer',
-            tab: 'home',
-            badgeKey: 'tourFullBadge6',
-            badgeFallback: '單人冒險 6 / 18',
-            titleKey: 'tourFullTitle6',
-            titleFallback: '6. 單人挑戰、每日寶箱與連勝護盾',
-            descKey: 'tourFullDesc6',
-            descFallback: '每天完成 10 次複習即可開啟「每日神秘寶箱」！還能挑戰「60 秒街機衝刺」與專剋錯 3 次頑固字的「深淵魔王懸賞」，搭配連勝冷凍護盾保住連勝紀錄。'
-        },
-        {
-            targetId: 'homeMultiplayerEntry',
-            fallbackTargetId: 'homeGamePortalContainer',
-            tab: 'home',
-            badgeKey: 'tourFullBadge7',
-            badgeFallback: '多人對戰 7 / 18',
-            titleKey: 'tourFullTitle7',
-            titleFallback: '7. 1v1 拔河排位、幽靈競速與四人打王',
-            descKey: 'tourFullDesc7',
-            descFallback: '內建即時「1v1 拔河排位賽」、「10 題幽靈影子競速」與「四人共鬥打王」（僅限邀請好友清單成員，防搶登安全護航）！累積賽季 RP 晉升段位。'
-        },
-        {
-            targetId: 'bnav-store',
-            tab: 'home',
-            badgeKey: 'tourFullBadge8',
-            badgeFallback: '商城會員 8 / 18',
-            titleKey: 'tourFullTitle8',
-            titleFallback: '8. 社群商城、紀錄抽屜與贊助方案',
-            descKey: 'tourFullDesc8',
-            descFallback: '在「商城」頁面點選左上角漢堡選單（☰）即可開啟個人紀錄抽屜（收藏頁／按讚頁／已購買歷史，已購買卡包終身免費重載！），全學習功能永久免費，亦可透過純外觀贊助支持開發者。'
+            closeFloatingPanel: true,
+            ensureSentenceVisible: true,
+            badgeKey: 'tourNewBadge5',
+            badgeFallback: '5 / 8 · 句子單字點擊',
+            titleKey: 'tourNewTitle5',
+            titleFallback: '5. 點擊字卡上的句子單字即時查看',
+            descKey: 'tourNewDesc5',
+            descFallback: '現在試著點擊字卡例句裡的任一個單字，即可立即查看釋義、聽發音或一鍵收錄至字庫！'
         },
         {
             targetId: 'bnav-stats',
             tab: 'home',
-            badgeKey: 'tourFullBadge9',
-            badgeFallback: '統計名片 9 / 18',
-            titleKey: 'tourFullTitle9',
-            titleFallback: '9. 學習統計、個人檔案與自訂名片',
-            descKey: 'tourFullDesc9',
-            descFallback: '「統計」頁追蹤日曆熱圖與記憶曲線；切換至「個人檔案」可換裝頭像框／橫幅稱號，並隨時打開左上角「☰ 設定」調整個人化細節。'
+            badgeKey: 'tourNewBadge6',
+            badgeFallback: '6 / 8 · 統計分析',
+            titleKey: 'tourNewTitle6',
+            titleFallback: '6. 統計分析 ＆ ✨ AI 學習診斷',
+            descKey: 'tourNewDesc6',
+            descFallback: '點擊底部「統計」可查看詞彙分佈與熟悉度；點統計頁左上角「☰」還可呼叫 ✨ AI 綜合分析你的考試與刷卡學習狀況。'
         },
         {
-            targetId: 'chatDrawerPanel',
-            fallbackTargetId: 'headerChatBtn',
+            targetId: 'headerChatBtn',
             tab: 'home',
-            openChat: true,
-            chatTab: 'leaderboard',
-            badgeKey: 'tourFullBadge10',
-            badgeFallback: '聊天社群 10 / 18',
-            titleKey: 'tourFullTitle10',
-            titleFallback: '10. 交流聊天室：公告、全服排行榜與好友私訊',
-            descKey: 'tourFullDesc10',
-            descFallback: '右上角進入聊天面板，可切換「公告」、「全站排行榜（排位積分／等級經驗，支援設定中開啟匿名顯示）」、「對話（公開頻道與好友私訊，長按可靜音／置頂／刪除）」與「好友」分頁。'
-        },
-        {
-            targetId: 'settingsStudyModeSlot',
-            fallbackTargetId: 'settingsAccBody_display',
-            tab: 'settings',
-            openSettings: true,
-            settingsAccordion: 'display',
-            interactiveModeSwitch: true,
-            badgeKey: 'tourFullBadge11',
-            badgeFallback: '實作互動 11 / 18',
-            titleKey: 'tourFullTitle11',
-            titleFallback: '11. 互動練習：切換 FSRS ⇄ 自由練習模式',
-            descKey: 'tourFullDesc11',
-            descFallback: '我們已幫你來到「個人檔案」並展開「字卡顯示設定」！下一步可直接在高亮框中點擊「⚡ 自由練習模式」或「🧠 FSRS 模式」實際體驗切換，或按「下一步」繼續。'
+            badgeKey: 'tourNewBadge7',
+            badgeFallback: '7 / 8 · 聊天與班級',
+            titleKey: 'tourNewTitle7',
+            titleFallback: '7. 聊天室與班級老師模式',
+            descKey: 'tourNewDesc7',
+            descFallback: '點擊右上角聊天室按鈕，除了排行榜、公開頻道與好友 1v1 私訊外，也可建立「班級老師模式」群組（最多 50 人，支援禁言、同步/限時挑戰與每日任務派發）。'
         },
         {
             targetId: 'settingsAccBody_display',
-            fallbackTargetId: 'settingsAudioSlot',
+            fallbackTargetId: 'settingsStudyModeSlot',
             tab: 'settings',
             openSettings: true,
             settingsAccordion: 'display',
-            badgeKey: 'tourFullBadge12',
-            badgeFallback: '顯示與語音 12 / 18',
-            titleKey: 'tourFullTitle12',
-            titleFallback: '12. 字卡顯示：正背面、音標、語音與例句',
-            descKey: 'tourFullDesc12',
-            descFallback: '在字卡顯示設定中可設定「正面外語／母語／雙語對照」、「音標位置（背面防日文破題）」、「自動播放發音」、「字卡正面顯示例句」及「每日 FSRS 覆蓋同步」。'
-        },
-        {
-            targetId: 'settingsAccBody_floating',
-            fallbackTargetId: 'settingsFloatingTranslatorSlot',
-            tab: 'settings',
-            openSettings: true,
-            settingsAccordion: 'floating',
-            badgeKey: 'tourFullBadge13',
-            badgeFallback: '跨平台懸浮 13 / 18',
-            titleKey: 'tourFullTitle13',
-            titleFallback: '13. 懸浮視窗、Android 外懸浮與 PC 桌面版',
-            descKey: 'tourFullDesc13',
-            descFallback: '這裡可獨立開關「App 內懸浮球」與「Android App 外系統懸浮球（含 7 大手機品牌權限教學）」；電腦版可一鍵開啟瀏覽器 PiP 置頂或打包「desktop-widget」獨立透明置頂小工具（Ctrl/Alt+T）！'
-        },
-        {
-            targetId: 'settingsDrawerPanel',
-            fallbackTargetId: 'settingsAccordionContainer',
-            tab: 'settings',
-            openSettings: true,
-            settingsAccordion: 'notifications',
-            badgeKey: 'tourFullBadge14',
-            badgeFallback: '完整設定 14 / 18',
-            titleKey: 'tourFullTitle14',
-            titleFallback: '14. 語言、導覽、系統、通知與隱私設定全覽',
-            descKey: 'tourFullDesc14',
-            descFallback: '• 語言設定：支援繁中／EN／日本語三語介面與自訂 AI 翻譯語言。\n• 說明與導覽：隨時重看本新手教學或開啟 FAQ 手冊。\n• 系統基本設定：Google 同步、深淺主題、API Key、匯出聊天紀錄與永久註銷。\n• 通知系統與隱私：推播開關、隱藏線上狀態／公開統計與排行榜匿名開關。'
-        },
-        {
-            targetId: 'floatingTranslatorPanelHost',
-            fallbackTargetId: 'floatingTranslatorBall',
-            tab: 'home',
-            openSettings: false,
-            floatingTab: 'camera',
-            badgeKey: 'tourFullBadge15',
-            badgeFallback: '拍照點詞 15 / 18',
-            titleKey: 'tourFullTitle15',
-            titleFallback: '15. 懸浮視窗：📷 拍照翻譯與多選快速入庫',
-            descKey: 'tourFullDesc15',
-            descFallback: '點擊展開懸浮面板「📷 拍照」分頁！支援即時鏡頭、相簿選圖或電腦 Ctrl+V 貼圖，拍完自動全螢幕精準框選單字——單點查釋義與平假名讀音，切至「選取入庫」可批次勾選並由 AI 補齊存入指定字庫。'
-        },
-        {
-            targetId: 'floatingTranslatorPanelHost',
-            fallbackTargetId: 'floatingTranslatorBall',
-            tab: 'home',
-            openSettings: false,
-            floatingTab: 'screen',
-            badgeKey: 'tourFullBadge16',
-            badgeFallback: '定格點詞 16 / 18',
-            titleKey: 'tourFullTitle16',
-            titleFallback: '16. 懸浮視窗：🌐 全螢幕定格點詞與螢幕劃記',
-            descKey: 'tourFullDesc16',
-            descFallback: '切至「🌐 點詞」分頁可開關全域點詞氣泡與多詞反白入庫，支援英／日／中混排精準斷詞；在 Android 外懸浮模式更能「先隱藏懸浮球再無遮擋全螢幕截圖定格點詞」！'
-        },
-        {
-            targetId: 'floatingTranslatorPanelHost',
-            fallbackTargetId: 'floatingTranslatorBall',
-            tab: 'home',
-            openSettings: false,
-            floatingTab: 'subtitle',
-            badgeKey: 'tourFullBadge17',
-            badgeFallback: '覆蓋字幕 17 / 18',
-            titleKey: 'tourFullTitle17',
-            titleFallback: '17. 懸浮視窗：🎬 螢幕覆蓋式即時雙語字幕',
-            descKey: 'tourFullDesc17',
-            descFallback: '切至「🎬 字幕」可使用幀差畫面 OCR、即時語音雙語字幕與 YouTube 0ms 時間軸，開啟「螢幕覆蓋式透明字幕」後可自由拖曳浮在影片或任何軟體上，點擊字幕單字還能立即查義入庫！'
-        },
-        {
-            targetId: 'floatingTranslatorPanelHost',
-            fallbackTargetId: 'floatingTranslatorBall',
-            tab: 'home',
-            openSettings: false,
-            floatingView: 'chat',
-            badgeKey: 'tourFullBadge18',
-            badgeFallback: '懸浮聊天 18 / 18',
-            titleKey: 'tourFullTitle18',
-            titleFallback: '18. 懸浮視窗：💬 懸浮好友聊天面板',
-            descKey: 'tourFullDesc18',
-            descFallback: '點擊懸浮面板頂部的「🌐 翻譯 ⇄ 💬 聊天」切換鈕即可展開懸浮好友聊天室！內外兩套懸浮視窗畫面 100% 統一，不論背單字或滑其他 App 都能即時收發訊息與查看已讀／上線狀態。'
+            badgeKey: 'tourNewBadge8',
+            badgeFallback: '8 / 8 · 字卡設定',
+            titleKey: 'tourNewTitle8',
+            titleFallback: '8. 字卡顯示設定（導覽完成）',
+            descKey: 'tourNewDesc8',
+            descFallback: '在設定的「字卡顯示設定」中可調整 FSRS／自由模式、正背面與音標位置、自動播放發音、正面顯示例句及三色字根字首開關。祝學習愉快！'
         }
     ];
 
@@ -478,6 +413,7 @@
     let tourInteractiveSwitched = false;
     let tourSnapshotFloatingOpen = false;
     let tourSnapshotFloatingEnabled = null;
+    let tourSnapshotShowSentenceFront = null;
 
     function abortTourListeners() {
         if (tourRepositionTimer) {
@@ -574,6 +510,74 @@
         }
     }
 
+    function ensureStarterPackImported() {
+        const targetLang = (typeof localStorage !== 'undefined' ? localStorage.getItem('lzhcard_target_lang') : 'en') || 'en';
+        const starterCat = getStarterCategoryName(targetLang);
+        const demoText = getStarterBatchDemoText(targetLang);
+
+        if (typeof global.wordList !== 'undefined' && Array.isArray(global.wordList)) {
+            const hasDeck = global.wordList.some(w => w && w.category === starterCat);
+            if (!hasDeck && typeof global.parseBatchText === 'function') {
+                const items = global.parseBatchText(demoText);
+                const now = Date.now();
+                const deckId = typeof global.generateDeterministicDeckId === 'function' ? global.generateDeterministicDeckId(starterCat) : undefined;
+                const resolvedLang = targetLang === 'custom' ? 'en' : targetLang;
+                items.forEach(item => {
+                    if (!item || !item.word) return;
+                    const card = {
+                        id: typeof global.generateDeterministicCardId === 'function' ? global.generateDeterministicCardId(starterCat, item.word) : ('w_' + now + '_' + Math.random().toString(36).slice(2, 7)),
+                        deckId,
+                        category: starterCat,
+                        word: item.word,
+                        pos: item.pos || '',
+                        phonetic: item.phonetic || '',
+                        meaning: item.meaning || '',
+                        sentence: item.sentence || '',
+                        translation: item.translation || '',
+                        lang: resolvedLang,
+                        level: 1,
+                        knowStreak: 0,
+                        state: 'new',
+                        stability: 0,
+                        difficulty: 5.5,
+                        reps: 0,
+                        lapses: 0,
+                        lastReview: 0,
+                        nextReview: 0,
+                        freeLevel: 1,
+                        freeStreak: 0,
+                        updatedAt: now
+                    };
+                    if (typeof global.migrateCardFSRS === 'function') global.migrateCardFSRS(card);
+                    global.wordList.unshift(card);
+                });
+                if (typeof global.saveStorage === 'function') global.saveStorage();
+            }
+            global.selectedCategories = [starterCat];
+            if (typeof global.updateCategorySelects === 'function') global.updateCategorySelects();
+            if (typeof global.updateUI === 'function') global.updateUI();
+        }
+    }
+
+    function ensureBatchStarterPrepared(step) {
+        if (!step || !step.prepareStarterBatch) return;
+        const targetLang = (typeof localStorage !== 'undefined' ? localStorage.getItem('lzhcard_target_lang') : 'en') || 'en';
+        const starterCat = getStarterCategoryName(targetLang);
+        const demoText = getStarterBatchDemoText(targetLang);
+
+        if (typeof global.openModal === 'function') global.openModal('batchModal');
+        if (typeof global.setCategorySelectorValue === 'function') {
+            global.setCategorySelectorValue('batch', starterCat);
+        }
+        const rawInput = document.getElementById('batchRawInput');
+        if (rawInput) {
+            rawInput.value = demoText;
+        }
+        if (typeof global.handleParseBatchText === 'function') {
+            global.handleParseBatchText();
+        }
+    }
+
     function ensureFloatingPanelState(step) {
         const ft = global.FloatingTranslator;
         if (!ft) return;
@@ -587,6 +591,10 @@
             } else if (step.floatingTab) {
                 if (typeof ft.setViewMode === 'function') ft.setViewMode('translator');
                 if (typeof ft.open === 'function') ft.open(step.floatingTab);
+            }
+        } else if (step && step.closeFloatingPanel) {
+            if (typeof ft.isOpen === 'function' && ft.isOpen() && typeof ft.collapsePanel === 'function') {
+                ft.collapsePanel();
             }
         } else if (typeof ft.isOpen === 'function' && ft.isOpen() && !tourSnapshotFloatingOpen) {
             if (typeof ft.collapsePanel === 'function') ft.collapsePanel();
@@ -887,8 +895,33 @@
             tourRepositionTimer = null;
         }
 
+        if (step.closeBatchModal && typeof global.closeModal === 'function') {
+            global.closeModal('batchModal');
+        }
+        if (step.ensureStarterImported) {
+            ensureStarterPackImported();
+        }
         if (step.tab && typeof global.switchTab === 'function') {
             global.switchTab(step.tab);
+        }
+        if (step.prepareStarterBatch) {
+            ensureBatchStarterPrepared(step);
+        }
+        if (step.ensureFlashcardReady && typeof global.nextCard === 'function') {
+            global.nextCard(false);
+        }
+        if (step.ensureSentenceVisible) {
+            if (typeof localStorage !== 'undefined' && localStorage.getItem('lzhcard_show_sentence_front') !== 'true') {
+                localStorage.setItem('lzhcard_show_sentence_front', 'true');
+            }
+            const ftToggle = document.getElementById('ftScreenTapToggle');
+            if (ftToggle && !ftToggle.checked) {
+                ftToggle.checked = true;
+                ftToggle.dispatchEvent(new Event('change'));
+            }
+            if (typeof global.renderFrontContextSentence === 'function' && typeof global.currentCard !== 'undefined') {
+                global.renderFrontContextSentence(global.currentCard);
+            }
         }
 
         ensureChatDrawerState(step);
@@ -903,7 +936,7 @@
                 }
             });
         }
-        if (step.openSettings || step.openChat || step.floatingTab || step.floatingView) {
+        if (step.openSettings || step.openChat || step.floatingTab || step.floatingView || step.prepareStarterBatch) {
             tourRepositionTimer = setTimeout(() => {
                 if (tourIsActive && tourCurrentIndex === index) {
                     positionTourPopover(index, tourPhase);
@@ -938,8 +971,10 @@
         tourSnapshotFloatingOpen = Boolean(ft && typeof ft.isOpen === 'function' && ft.isOpen());
         try {
             tourSnapshotFloatingEnabled = localStorage.getItem('lzhcard_floating_translator_enabled');
+            tourSnapshotShowSentenceFront = localStorage.getItem('lzhcard_show_sentence_front');
         } catch (e) {
             tourSnapshotFloatingEnabled = null;
+            tourSnapshotShowSentenceFront = null;
         }
 
         tourIsActive = true;
@@ -994,6 +1029,19 @@
         setInteractiveStatusBanner(false);
         ensureChatDrawerState(null);
         ensureSettingsDrawerState(false);
+        if (typeof global.closeModal === 'function') {
+            global.closeModal('batchModal');
+        }
+        try {
+            if (tourSnapshotShowSentenceFront === null) {
+                localStorage.removeItem('lzhcard_show_sentence_front');
+            } else {
+                localStorage.setItem('lzhcard_show_sentence_front', tourSnapshotShowSentenceFront);
+            }
+            if (typeof global.renderFrontContextSentence === 'function' && typeof global.currentCard !== 'undefined') {
+                global.renderFrontContextSentence(global.currentCard);
+            }
+        } catch (e) {}
 
         const ft = global.FloatingTranslator;
         if (ft) {
@@ -1150,6 +1198,52 @@
                 {
                     q: 'Q4：我不想讓別人看到我的學習數據，或想備份聊天與字庫資料該怎麼做？',
                     a: '打開左上設定抽屜滑至「4. 隱私設定與資料管理」：\n• 開啟「隱藏線上狀態與訊息已讀」：別人將無法看到你是否上線與已讀時間。\n• 關閉「公開我的學習統計資料」：別人點開你的個人公開名片或分享連結時，等級／掌握字數／勝率數據將全面顯示為上鎖保密狀態。\n• 你也能隨時使用「字庫 JSON 備份與還原」匯出完整單字進度，或點擊「匯出聊天紀錄（.txt / .json）」安全保存聊天室與私訊對話。'
+                }
+            ]
+        },
+        {
+            id: 'morphology_ai',
+            label: '🧩 字根字首 ＆ AI 工具',
+            heading: '【字根字首拆解、全局搜尋、批量格式與 AI 額度說明】',
+            faqs: [
+                {
+                    q: 'Q1：刷字卡時出現的藍色／綠色／琥珀色底線是什麼？怎麼切換開關？',
+                    a: 'LZHCard 會自動偵測英文單字的「字首（藍色底線）」、「字根（綠色底線）」與「字尾（琥珀色底線）」。刷卡時直接點擊底線片段即可打開字源意義小卡，系統已做點擊隔離處理，不會誤翻卡片；預設為開啟，亦可至「設定 → 字卡顯示設定 → 刷卡自動標示字首／字根／字尾」關閉。'
+                },
+                {
+                    q: 'Q2：字庫管理左上角「☰」與分析頁左上角「☰」各有什麼功能？',
+                    a: '• 字庫管理頁左上角「☰」提供兩大工具：\n  1) 字根字首字典與問答：優先貼出內建資料庫收錄的字根字首詳解；未收錄字根可點擊 ✨ AI 額度查詢並進行多輪自訂問答（消耗解析額度）。\n  2) 全局查字：橫跨玩家既有字庫與 7000 單分級庫（L1～L6），即時顯示難易度分級並可一鍵加入指定字庫；查無收錄可改用 ✨ AI 查詢（消耗解析額度）。\n• 分析（統計）頁左上角「☰」則可呼叫 ✨ AI 學習狀況診斷（消耗長文額度），整合考試錯題與刷卡留存數據給出改善建議。'
+                },
+                {
+                    q: 'Q3：新版批量匯入的統一格式是什麼？遇到非格式文字或考卷圖片怎麼辦？',
+                    a: '統一格式嚴格採用逗號分隔：「目標單字,釋義,詞性,發音」，換行代表下一個字（空白保留以支援片語）；中間欄位留空需保留逗號（例：happy,,adj.,[ˈhæpɪ]），末端欄位省略可直接不打（例：happy,開心 或 happy,,）。例句與翻譯則用 1."例句" 與 2."翻譯" 表示。\n若是文章筆記、混合格式或考卷截圖，請點擊批量匯入彈窗左上角「☰」，即可貼上任意文字或上傳圖片搭配自訂提示詞交由 ✨ AI 解析（純文字消耗解析額度／附圖片消耗識圖額度）。'
+                },
+                {
+                    q: 'Q4：考試模式有哪些針對日文與同語（母語＝目標語言）的進階設計？',
+                    a: '• 英文拼寫測驗支援切換「詞性／時態變化拼寫」，優先由玩家字庫衍生詞與內建變化題庫出題，不足時可選用 ✨ AI 生成變化題（消耗解析額度）。\n• 日文提供科學實證題型：包含「文脈漢字読み」、「助詞精準辨析」與「動詞/形容詞活用変換」。\n• 當目標語言與母語相同（例如繁中對繁中），考試頁面將開放「同語進階考題」，收錄經嚴格查證之歷屆學測／會考經典文言實詞古今異義，以及完全對齊中華民國教育部最新《國語一字多音審訂表》之標準讀音（絕不臆測，✨ AI 僅做標準答案後的深化舉例輔助）。'
+                }
+            ]
+        },
+        {
+            id: 'classroom_policy',
+            label: '🎓 班級方案與規範',
+            heading: '【班級老師模式、月訂閱制與自訂語言維護規範】',
+            faqs: [
+                {
+                    q: 'Q1：「班級老師模式」怎麼開啟？有哪些控場與教學工具？',
+                    a: '在聊天室建立群組時勾選開啟「班級老師模式」（每班上限 50 人）即可啟動教學空間：老師可一鍵全體禁言或個別禁言學生；支援發起自訂單字／勾選字庫／✨ AI 出題挑戰，可設定拼字或選擇題、題數與選項數量（2～6 個），並支援「老師同步跳題／立刻結束」與「限時自由作答」雙節奏，排行榜嚴格依「正確率優先、作答總時間次之」排序；老師亦可派發每日刷卡／做題任務並檢視成員進度（預設成員互看，可於設定切換為僅限老師查看）。'
+                },
+                {
+                    q: 'Q2：老師班級會員方案價格與 AI 共享規則為何？',
+                    a: '本平台全面採用月訂閱制（不設一年期買斷方案）。其中「老師班級方案」為每月 NT$ 490（iOS App Store NT$ 539／或 1,960 金幣），只要老師開通此方案，該班級群組內最多 50 名學生在班級活動期間即可共同享用 ✨ AI 出題與 AI 輔助額度；若老師未開通班級方案，則僅限個別擁有對應會員資格者可使用進階 AI 功能。'
+                },
+                {
+                    q: 'Q3：為什麼換手機或直接滑掉 App 都能不漏資料且更省雲端額度？',
+                    a: '系統於雲端架構導入「差異化字庫分片同步（Deck Manifest Diff）」與離線 Beacon 保護（sync/beacon），僅上傳有變動的字庫分片而非整包重寫，在大幅降低 Firestore 讀寫次數的同時，確保跨裝置登入即時銜接不掉進度。'
+                },
+                {
+                    q: 'Q4：系統支援哪些語言？選擇「自訂語言」有什麼說明？',
+                    a: 'LZHCard 內建繁體中文、英文與日文三語介面與專屬題庫。當您選用「自訂語言」時，新手示範包、快速收錄與教學範例皆以英文作為示範基準並配合 AI 彈性提示處理。如果您希望為特定語言購買長期的專屬語言包更新與維護服務，歡迎聯繫開發者（tomlin980415@gmail.com）依需求約定固定月費專案維護。'
                 }
             ]
         }

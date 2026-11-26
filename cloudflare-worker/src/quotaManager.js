@@ -6,14 +6,16 @@ import {
 
 export const FIREBASE_PROJECT_ID = "flashcards-5f514";
 
-export const TIER_ORDER = ["free", "supporter_30", "supporter_90", "supporter_180"];
+export const RTDB_BASE_URL = "https://flashcards-5f514-default-rtdb.asia-southeast1.firebasedatabase.app";
+
+export const TIER_ORDER = ["free", "supporter_30", "supporter_90", "supporter_180", "teacher_class"];
 
 export const TIER_CONFIGS = {
   free: {
     id: "free",
     priority: 1,
-    daily: { def_fill: 10, article_gen: 1, vision_ocr: 0, fast_refine: 0 },
-    monthly: { def_fill: 120, article_gen: 10, vision_ocr: 0, fast_refine: 0 }
+    daily: { def_fill: 0, article_gen: 0, vision_ocr: 0, fast_refine: 0 },
+    monthly: { def_fill: 0, article_gen: 0, vision_ocr: 0, fast_refine: 0 }
   },
   supporter_30: {
     id: "supporter_30",
@@ -32,12 +34,18 @@ export const TIER_CONFIGS = {
     priority: 4,
     daily: { def_fill: 300, article_gen: 25, vision_ocr: 50, fast_refine: 600 },
     monthly: { def_fill: 4500, article_gen: 400, vision_ocr: 750, fast_refine: 8000 }
+  },
+  teacher_class: {
+    id: "teacher_class",
+    priority: 5,
+    daily: { def_fill: 600, article_gen: 60, vision_ocr: 80, fast_refine: 1000 },
+    monthly: { def_fill: 12000, article_gen: 1200, vision_ocr: 1500, fast_refine: 15000 }
   }
 };
 
 export const GUEST_DAILY_LIMITS = {
-  def_fill: 5,
-  article_gen: 1,
+  def_fill: 0,
+  article_gen: 0,
   vision_ocr: 0,
   fast_refine: 0
 };
@@ -343,7 +351,7 @@ function encodeUsageMapField(counts) {
 
 export function resolveEffectiveTier(userFields, nowMs = Date.now()) {
   if (isUserAdminFromFields(userFields || {})) {
-    return "supporter_180";
+    return "teacher_class";
   }
 
   const memFields = (userFields?.membership?.mapValue?.fields) || {};
@@ -393,13 +401,13 @@ export function parseUserQuotaState(userDoc, nowMs = Date.now()) {
   return {
     isAdmin,
     tier,
-    priority: isAdmin ? 4 : tierCfg.priority,
+    priority: isAdmin ? 5 : tierCfg.priority,
     dailyDate,
     monthlyKey,
     limits: isAdmin
       ? {
-          id: "supporter_180",
-          priority: 4,
+          id: "teacher_class",
+          priority: 5,
           daily: { def_fill: 999999, article_gen: 999999, vision_ocr: 999999, fast_refine: 999999 },
           monthly: { def_fill: 999999, article_gen: 999999, vision_ocr: 999999, fast_refine: 999999 }
         }
@@ -458,7 +466,7 @@ async function checkGuestCacheQuota(request, feature, nowMs) {
       priority: 1,
       used: 0,
       limit,
-      reason: "此高耗能 AI 功能僅提供登入並訂閱入門／進階／專業方案，或填寫個人 Groq / Google API Key 使用！",
+      reason: "雲端 AI 功能僅提供會員或加入已開通「班級教師方案」之班級群組學員使用！（核心單字卡 FSRS 記憶與離線翻譯皆永久免費）",
       snapshot: null
     };
   }
@@ -484,7 +492,7 @@ async function checkGuestCacheQuota(request, feature, nowMs) {
       priority: 1,
       used,
       limit,
-      reason: `訪客今日「${feature}」免費額度已達上限 (${used}/${limit})，登入、升級方案或填寫個人 Groq / Google API Key 即可繼續使用！`,
+      reason: `訪客「${feature}」今日額度已達上限 (${used}/${limit})，請登入並開通會員方案或加入老師的班級群組！`,
       snapshot: null
     };
   }
@@ -534,10 +542,213 @@ async function checkGuestCacheQuota(request, feature, nowMs) {
   };
 }
 
-export async function authorizeAndConsumeQuota(request, featureName, env = null) {
+export async function verifyAndConsumeClassroomSponsorQuota(
+  classGroupId,
+  callerUid,
+  idToken,
+  feature,
+  fsAuth,
+  nowMs = Date.now()
+) {
+  const cleanGroupId = String(classGroupId || "").trim();
+  if (!cleanGroupId || !callerUid || !idToken) {
+    return { allowed: false, reason: "" };
+  }
+  if (!/^[a-zA-Z0-9_\-]{4,128}$/.test(cleanGroupId)) {
+    return { allowed: false, reason: "無效的班級群組識別碼。" };
+  }
+
+  let chatData = null;
+  try {
+    const rtdbRes = await fetch(
+      `${RTDB_BASE_URL}/chats/${encodeURIComponent(cleanGroupId)}.json?auth=${encodeURIComponent(idToken)}`
+    );
+    if (!rtdbRes.ok) {
+      return { allowed: false, reason: "無法驗證班級群組成員資格，請確認您仍在該班級群組中。" };
+    }
+    chatData = await rtdbRes.json();
+  } catch (e) {
+    return { allowed: false, reason: "班級資格連線驗證失敗，請稍後再試。" };
+  }
+
+  if (!chatData || chatData.teacherMode !== true) {
+    return { allowed: false, reason: "此群組未啟用班級老師模式，無法共享教師 AI 方案。" };
+  }
+  const membersMap = chatData.members && typeof chatData.members === "object" ? chatData.members : {};
+  if (membersMap[callerUid] !== true) {
+    return { allowed: false, reason: "您不在此班級群組成員名單中，無法使用班級 AI 額度。" };
+  }
+  const memberCount = Object.keys(membersMap).filter((k) => membersMap[k] === true).length;
+  if (memberCount > 50) {
+    return { allowed: false, reason: "班級人數已超過 50 人上限，請老師調整班級名單後再試。" };
+  }
+
+  const ownerUid = String(chatData.ownerUid || "").trim();
+  if (!ownerUid) {
+    return { allowed: false, reason: "此班級缺少建立者（老師）資訊。" };
+  }
+
+  const authHeader = (fsAuth && fsAuth.Authorization) || `Bearer ${idToken}`;
+  const ownerUrl = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/users/${encodeURIComponent(ownerUid)}`;
+  const ownerHeaders = {
+    "Content-Type": "application/json",
+    "Authorization": authHeader
+  };
+
+  let ownerDoc = null;
+  let ownerIsAdminsListed = false;
+  try {
+    const [ownerRes, ownerAdminExists] = await Promise.all([
+      fetch(ownerUrl, { headers: ownerHeaders }),
+      checkAdminsDocExists(ownerUid, authHeader)
+    ]);
+    ownerIsAdminsListed = ownerAdminExists;
+    if (ownerRes && ownerRes.ok) {
+      ownerDoc = await ownerRes.json();
+    }
+  } catch (e) {}
+
+  if (!ownerDoc && ownerIsAdminsListed) {
+    const adminOwnerState = parseUserQuotaState({ fields: { isAdmin: { booleanValue: true } } }, nowMs);
+    return {
+      allowed: true,
+      uid: callerUid,
+      sponsoredBy: ownerUid,
+      classGroupId: cleanGroupId,
+      consumeFrom: "teacher_class",
+      tier: "teacher_class",
+      priority: 5,
+      sponsorSnapshot: buildQuotaSnapshotPayload(adminOwnerState)
+    };
+  }
+
+  if (!ownerDoc) {
+    return { allowed: false, reason: "無法讀取班級老師的會員方案狀態（伺服器尚未完成管理權限授權）。" };
+  }
+
+  const ownerQuotaState = parseUserQuotaState(
+    ownerIsAdminsListed
+      ? { ...ownerDoc, fields: { ...(ownerDoc.fields || {}), isAdmin: { booleanValue: true } } }
+      : ownerDoc,
+    nowMs
+  );
+
+  if (ownerQuotaState.isAdmin || ownerIsAdminsListed) {
+    return {
+      allowed: true,
+      uid: callerUid,
+      sponsoredBy: ownerUid,
+      classGroupId: cleanGroupId,
+      consumeFrom: "teacher_class",
+      tier: "teacher_class",
+      priority: 5,
+      sponsorSnapshot: buildQuotaSnapshotPayload(ownerQuotaState)
+    };
+  }
+
+  const ownerBan = await enforceNotBanned(ownerUid, ownerDoc, fsAuth, nowMs);
+  if (ownerBan.banned) {
+    return { allowed: false, reason: "該班級老師帳號目前處於停用狀態，無法提供班級 AI 支援。" };
+  }
+
+  if (ownerQuotaState.tier !== "teacher_class") {
+    return {
+      allowed: false,
+      reason: "班級老師尚未開通「班級教師方案（NT$490/月）」或方案已到期，目前僅限個人已開通付費會員的學員使用雲端 AI 功能。"
+    };
+  }
+
+  const dailyLimit = ownerQuotaState.limits.daily[feature] || 0;
+  const monthlyLimit = ownerQuotaState.limits.monthly[feature] || 0;
+  const dailyUsed = ownerQuotaState.daily[feature] || 0;
+  const monthlyUsed = ownerQuotaState.monthly[feature] || 0;
+  const creditAvail = (ownerQuotaState.coinBoost && ownerQuotaState.coinBoost.credits && ownerQuotaState.coinBoost.credits[feature]) || 0;
+
+  let sponsorConsume = "tier";
+  if (dailyUsed >= dailyLimit || monthlyUsed >= monthlyLimit) {
+    if (creditAvail > 0) {
+      sponsorConsume = "credit";
+    } else {
+      return {
+        allowed: false,
+        reason: `老師「班級教師方案」的「${feature}」共享配額已用畢 (${monthlyUsed}/${monthlyLimit})。`
+      };
+    }
+  }
+
+  const nextDaily = { ...ownerQuotaState.daily };
+  const nextMonthly = { ...ownerQuotaState.monthly };
+  const nextCredits = { ...ownerQuotaState.coinBoost.credits };
+
+  if (sponsorConsume === "credit") {
+    nextCredits[feature] = Math.max(0, creditAvail - 1);
+  } else {
+    nextDaily[feature] = dailyUsed + 1;
+    nextMonthly[feature] = monthlyUsed + 1;
+  }
+
+  const nextOwnerState = {
+    ...ownerQuotaState,
+    daily: nextDaily,
+    monthly: nextMonthly,
+    coinBoost: {
+      ...ownerQuotaState.coinBoost,
+      credits: nextCredits
+    }
+  };
+
+  const patchFields = {
+    aiUsage: {
+      mapValue: {
+        fields: {
+          dailyDate: { stringValue: ownerQuotaState.dailyDate },
+          monthlyKey: { stringValue: ownerQuotaState.monthlyKey },
+          daily: encodeUsageMapField(nextDaily),
+          monthly: encodeUsageMapField(nextMonthly),
+          updatedAt: { integerValue: String(nowMs) }
+        }
+      }
+    }
+  };
+  const updateMasks = ["updateMask.fieldPaths=aiUsage"];
+  if (sponsorConsume === "credit") {
+    updateMasks.push("updateMask.fieldPaths=coinBoost");
+    patchFields.coinBoost = {
+      mapValue: {
+        fields: {
+          trialTier: { stringValue: ownerQuotaState.coinBoost.trialTier || "free" },
+          trialExpiresAt: { integerValue: String(ownerQuotaState.coinBoost.trialExpiresAt || 0) },
+          credits: encodeUsageMapField(nextCredits)
+        }
+      }
+    };
+  }
+
+  try {
+    await fetch(`${ownerUrl}?${updateMasks.join("&")}`, {
+      method: "PATCH",
+      headers: ownerHeaders,
+      body: JSON.stringify({ fields: patchFields })
+    });
+  } catch (e) {}
+
+  return {
+    allowed: true,
+    uid: callerUid,
+    sponsoredBy: ownerUid,
+    classGroupId: cleanGroupId,
+    consumeFrom: "teacher_class",
+    tier: "teacher_class",
+    priority: ownerQuotaState.priority,
+    sponsorSnapshot: buildQuotaSnapshotPayload(nextOwnerState)
+  };
+}
+
+export async function authorizeAndConsumeQuota(request, featureName, env = null, options = {}) {
   const feature = normalizeFeatureName(featureName);
   const nowMs = Date.now();
   const idToken = extractBearerToken(request);
+  const classGroupId = String((options && options.classGroupId) || request.headers.get("X-Class-Group-Id") || "").trim();
 
   if (!idToken) {
     return await checkGuestCacheQuota(request, feature, nowMs);
@@ -577,8 +788,8 @@ export async function authorizeAndConsumeQuota(request, featureName, env = null)
       uid: verified.uid,
       idToken,
       consumeFrom: "admin",
-      tier: "supporter_180",
-      priority: 4,
+      tier: "teacher_class",
+      priority: 5,
       snapshot: buildQuotaSnapshotPayload(adminState)
     };
   }
@@ -602,16 +813,16 @@ export async function authorizeAndConsumeQuota(request, featureName, env = null)
       uid: verified.uid,
       idToken,
       consumeFrom: "admin",
-      tier: "supporter_180",
-      priority: 4,
+      tier: "teacher_class",
+      priority: 5,
       snapshot: buildQuotaSnapshotPayload({
         ...quotaState,
         isAdmin: true,
-        tier: "supporter_180",
-        priority: 4,
+        tier: "teacher_class",
+        priority: 5,
         limits: {
-          id: "supporter_180",
-          priority: 4,
+          id: "teacher_class",
+          priority: 5,
           daily: { def_fill: 999999, article_gen: 999999, vision_ocr: 999999, fast_refine: 999999 },
           monthly: { def_fill: 999999, article_gen: 999999, vision_ocr: 999999, fast_refine: 999999 }
         }
@@ -644,11 +855,49 @@ export async function authorizeAndConsumeQuota(request, featureName, env = null)
     if (creditAvail > 0) {
       consumeFrom = "credit";
     } else {
+      // 個人配額不足或為免費方案時，若請求帶入班級群組 ID，驗證 RTDB 班級成員與老師的「班級教師方案」
+      if (classGroupId) {
+        const sponsorRes = await verifyAndConsumeClassroomSponsorQuota(
+          classGroupId,
+          verified.uid,
+          idToken,
+          feature,
+          fsAuth,
+          nowMs
+        );
+        if (sponsorRes.allowed) {
+          return {
+            allowed: true,
+            uid: verified.uid,
+            idToken,
+            consumeFrom: "teacher_class",
+            sponsoredBy: sponsorRes.sponsoredBy,
+            classGroupId: sponsorRes.classGroupId,
+            tier: quotaState.tier,
+            effectiveTier: "teacher_class",
+            priority: sponsorRes.priority,
+            snapshot: buildQuotaSnapshotPayload(quotaState),
+            classroomSponsor: sponsorRes.sponsorSnapshot
+          };
+        }
+        return {
+          allowed: false,
+          tier: quotaState.tier,
+          priority: quotaState.priority,
+          used: dailyUsed,
+          limit: dailyLimit,
+          monthlyUsed,
+          monthlyLimit,
+          reason: sponsorRes.reason || "此雲端 AI 功能僅限會員或已開通班級教師方案之班級成員使用。",
+          snapshot: buildQuotaSnapshotPayload(quotaState)
+        };
+      }
+
       const reason = dailyLimit === 0
-        ? `目前「免費方案」未包含雲端 ${feature === "vision_ocr" ? "AI 拍照識別" : "AI 字幕精修"}，已自動切換為免費本地／極速引擎！建議申請並填寫個人免費 Groq / Google API Key。`
+        ? "目前「免費方案」未包含雲端 AI 配額（核心單字卡與離線翻譯仍永久免費）。請開通會員方案、用商店金幣兌換，或加入已開通班級教師方案的班級群組！"
         : (monthlyUsed >= monthlyLimit
-            ? `本月「${feature}」AI 配額已用畢 (${monthlyUsed}/${monthlyLimit})，可升級方案、用商店金幣兌換或改用個人 Groq / Google API Key。`
-            : `今日「${feature}」AI 配額已用畢 (${dailyUsed}/${dailyLimit})，明日重置，或可使用金幣包／個人 Groq / Google API Key。`);
+            ? `本月「${feature}」AI 配額已用畢 (${monthlyUsed}/${monthlyLimit})，可升級方案或於商店以金幣兌換補充包。`
+            : `今日「${feature}」AI 配額已用畢 (${dailyUsed}/${dailyLimit})，明日重置，或於商店以金幣兌換補充包。`);
       return {
         allowed: false,
         tier: quotaState.tier,

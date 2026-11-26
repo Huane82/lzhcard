@@ -136,14 +136,6 @@
             localStorage.getItem('lzhcard_native_lang') ||
             'zh-TW';
         const theme = localStorage.getItem('theme_preference') || 'system';
-        const rawApiMode = localStorage.getItem('lzhcard_api_mode');
-        const rawGroqKey = localStorage.getItem('lzhcard_groq_key_v1') || '';
-        const rawGeminiKey = localStorage.getItem('flashcard_gemini_key_v1') || '';
-        const apiMode = (rawApiMode === 'shared' || rawApiMode === 'personal')
-            ? rawApiMode
-            : ((rawGroqKey.trim() || rawGeminiKey.trim()) ? 'personal' : 'shared');
-        const groqApiKey = apiMode === 'personal' ? rawGroqKey : '';
-        const apiKey = apiMode === 'personal' ? rawGeminiKey : '';
         const decks = getCurrentDecksList();
         const defaultDeck = getActivePrimaryDeckName(decks);
 
@@ -152,7 +144,7 @@
         if (global.MembershipEngine && typeof global.MembershipEngine.getQuotaSnapshot === 'function') {
             try {
                 const snap = global.MembershipEngine.getQuotaSnapshot();
-                membershipTier = snap.tier || 'free';
+                membershipTier = snap.classSponsored && snap.tier === 'free' ? 'teacher_class' : (snap.tier || 'free');
                 aiUsageObj = {
                     dailyDate: snap.dailyDate || '',
                     daily: snap.daily || {},
@@ -168,9 +160,6 @@
         return {
             nativeLang,
             theme,
-            apiMode,
-            apiKey,
-            groqApiKey,
             decksJson: JSON.stringify(decks),
             defaultDeck,
             inForeground: document.visibilityState === 'visible',

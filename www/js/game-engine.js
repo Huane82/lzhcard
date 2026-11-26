@@ -430,13 +430,16 @@
 
     function scheduleCloudProfileAndUserSync() {
         if (saveUserDebounceTimer) clearTimeout(saveUserDebounceTimer);
-        saveUserDebounceTimer = setTimeout(() => {
+        saveUserDebounceTimer = setTimeout(async () => {
             saveUserDebounceTimer = null;
             if (typeof global.saveUserData === 'function') {
-                global.saveUserData();
+                try { await global.saveUserData(); } catch (e) {}
             }
             if (typeof global.syncMyPublicProfile === 'function') {
-                global.syncMyPublicProfile(false);
+                try { await global.syncMyPublicProfile(false); } catch (e) {}
+            }
+            if (typeof global.invalidateLeaderboardCache === 'function') {
+                global.invalidateLeaderboardCache();
             }
         }, 700);
     }
@@ -513,9 +516,10 @@
 
         if (typeof global.updateUserCoinsUI === 'function') global.updateUserCoinsUI();
         if (typeof global.applyNavAvatarFrame === 'function') global.applyNavAvatarFrame();
-        if (typeof global.renderProfileSection === 'function' && global.currentTab === 'profile') {
+        if (typeof global.renderProfileSection === 'function' && (global.currentTab === 'profile' || document.getElementById('sec-profile'))) {
             global.renderProfileSection();
         }
+        renderHomePortal();
         scheduleCloudProfileAndUserSync();
 
         if (shieldUsed && typeof global.showToast === 'function') {

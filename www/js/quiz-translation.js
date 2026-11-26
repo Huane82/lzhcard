@@ -867,6 +867,12 @@ Return ONLY a valid raw JSON object (no markdown fences):
             } catch (e) {}
         }
 
+        if (global.ClassroomEngine && typeof global.ClassroomEngine.recordStudyActivity === 'function') {
+            try {
+                global.ClassroomEngine.recordStudyActivity({ type: 'quiz_questions', count: 1, isCorrect: Boolean(result.passed) });
+            } catch (e) {}
+        }
+
         renderUI();
     }
 

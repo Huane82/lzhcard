@@ -27,6 +27,7 @@ import {
   handleRedeemCoinsForQuota
 } from "./src/shopHandler.js";
 import { handleYoutubeSubtitles } from "./src/youtubeHandler.js";
+import { handleSyncBeacon } from "./src/syncHandler.js";
 
 export default {
   async fetch(request, env) {
@@ -39,7 +40,7 @@ export default {
       : {
           "Access-Control-Allow-Origin": "*",
           "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-          "Access-Control-Allow-Headers": "Content-Type, Authorization, X-AI-Feature, X-Client-Platform, X-User-Api-Key",
+          "Access-Control-Allow-Headers": "Content-Type, Authorization, X-AI-Feature, X-Client-Platform, X-Class-Group-Id",
           "Access-Control-Max-Age": "86400"
         };
 
@@ -155,6 +156,11 @@ export default {
       // 路由 9：語音字幕 MediaRecorder 音訊轉文字 (Groq Whisper -> Gemini 音訊)
       if (pathname.endsWith("/api/ai/stt") && request.method === "POST") {
         return await handleAudioStt(request, env, corsHeaders);
+      }
+
+      // 路由 10：滑掉背景或分頁關閉前之零遺失同步信標
+      if (pathname.endsWith("/sync/beacon") && request.method === "POST") {
+        return await handleSyncBeacon(request, env, corsHeaders);
       }
 
       // 預設路由：Gemini / Groq 智能路由 AI 解析與配額管控 (/ 或 /ai/proxy)

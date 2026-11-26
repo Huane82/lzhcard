@@ -934,9 +934,7 @@
     viewMode: 'translator', // 'translator' | 'chat'
     activeTab: 'camera', // 'camera' | 'screen' | 'subtitle'
     nativeLang: 'zh-TW',
-    apiMode: 'shared',
-    apiKey: '',
-    groqApiKey: '',
+    classGroupId: '',
     decks: ['我的單字本'],
     selectedDeck: '我的單字本',
     deckMenuOpen: false,
@@ -1138,64 +1136,29 @@
     return JSON.parse(s);
   }
 
-  async function callGroqDirect(promptText, model = 'llama-3.3-70b-versatile') {
-    const key = String(state.groqApiKey || '').trim();
-    if (!key) throw new Error('No Groq key');
-    const resp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${key}`
-      },
-      body: JSON.stringify({
-        model,
-        messages: [{ role: 'user', content: String(promptText || '') }],
-        temperature: 0.2
-      })
-    });
-    const data = await resp.json().catch(() => ({}));
-    if (!resp.ok) {
-      throw new Error(data?.error?.message || `Groq HTTP ${resp.status}`);
-    }
-    const txt = String(data?.choices?.[0]?.message?.content || '').trim();
-    if (!txt) throw new Error('Groq 未回傳結果');
-    return txt;
-  }
-
   async function callGemini(prompt, inlineData, featureName) {
     const hasMedia = Boolean(inlineData && inlineData.data);
     const feature = featureName || (hasMedia ? 'vision_ocr' : 'def_fill');
-    const groqKey = String(state.groqApiKey || '').trim();
-    const geminiKey = String(state.apiKey || '').trim();
-
-    // Priority 1: 本機個人 Groq / Gemini Key 直接呼叫官方 API，不扣系統次數
-    if (!hasMedia && groqKey) {
-      try {
-        return await callGroqDirect(prompt, 'llama-3.3-70b-versatile');
-      } catch (e) {
-        if (!geminiKey) throw e;
-      }
-    }
-
     const parts = [{ text: prompt }];
     if (hasMedia) {
       parts.push({ inlineData: { mimeType: inlineData.mimeType || 'image/jpeg', data: inlineData.data } });
     }
-    const useCustomGemini = Boolean(geminiKey);
-    const url = useCustomGemini
-      ? `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key=${encodeURIComponent(geminiKey)}`
-      : SHARED_WORKER_BASE;
-    const headers = { 'Content-Type': 'application/json' };
-    if (!useCustomGemini) {
-      headers['X-AI-Feature'] = feature;
-      if (state.chatSession && state.chatSession.idToken) {
-        headers['Authorization'] = `Bearer ${state.chatSession.idToken}`;
-      }
+    const headers = {
+      'Content-Type': 'application/json',
+      'X-AI-Feature': feature
+    };
+    if (state.chatSession && state.chatSession.idToken) {
+      headers['Authorization'] = `Bearer ${state.chatSession.idToken}`;
     }
-    const resp = await fetch(url, {
+    if (state.classGroupId) {
+      headers['X-Class-Group-Id'] = state.classGroupId;
+    }
+    const bodyPayload = { feature, contents: [{ parts }] };
+    if (state.classGroupId) bodyPayload.classGroupId = state.classGroupId;
+    const resp = await fetch(SHARED_WORKER_BASE, {
       method: 'POST',
       headers,
-      body: JSON.stringify(useCustomGemini ? { contents: [{ parts }] } : { feature, contents: [{ parts }] })
+      body: JSON.stringify(bodyPayload)
     });
     const data = await resp.json().catch(() => ({}));
     if (resp.status === 429) {
@@ -1221,53 +1184,30 @@
 
   async function callFastRefine(text, draft, sourceLang, contextLines) {
     const cfg = nativeCfg();
-    const groqKey = String(state.groqApiKey || '').trim();
-    const geminiKey = String(state.apiKey || '').trim();
-
-    // Priority 1: 本機個人 Groq / Gemini Key 直接於客戶端完成字幕精修，不扣系統次數
-    if (groqKey || geminiKey) {
-      const ctx = Array.isArray(contextLines) && contextLines.length
-        ? `前文語境：${contextLines.slice(-3).join(' / ')}\n`
-        : '';
-      const draftHint = draft ? `初稿：${draft}\n` : '';
-      const refinePrompt = `將以下 OCR 辨識或語音口語字幕自然翻成「${cfg.aiName}」：
-1. 自動忽略句首或句尾殘留的 OCR 亂碼符號（如 | ar Ss = 5），只針對語意連貫的句子翻譯；若整段純屬雜訊請回傳空字串。
-2. 遇到口語慣用語或俚語依語境自然意譯（如 new whip -> 新車／座駕）。
-僅輸出精修譯文：
-${ctx}${draftHint}原文：${String(text || '').trim()}`;
-      if (groqKey) {
-        try {
-          const out = await callGroqDirect(refinePrompt, 'llama-3.1-8b-instant');
-          if (out) return out;
-        } catch (e) {}
-      }
-      if (geminiKey) {
-        try {
-          const out = await callGemini(refinePrompt, null, 'fast_refine');
-          if (out) return out;
-        } catch (e) {}
-      }
-    }
-
-    // Priority 2: 未填寫個人 Key 時才依方案走系統共用 Worker 精修
-    if (state.fastRefineExhausted || state.membershipTier === 'free') {
+    const isPaidOrSponsored = Boolean(state.membershipTier && state.membershipTier !== 'free') || Boolean(state.classGroupId);
+    if (state.fastRefineExhausted || !isPaidOrSponsored) {
       return '';
     }
     const headers = { 'Content-Type': 'application/json' };
     if (state.chatSession && state.chatSession.idToken) {
       headers['Authorization'] = `Bearer ${state.chatSession.idToken}`;
     }
+    if (state.classGroupId) {
+      headers['X-Class-Group-Id'] = state.classGroupId;
+    }
+    const bodyPayload = {
+      text,
+      draftTranslation: draft || '',
+      sourceLang: sourceLang || 'auto',
+      targetLang: cfg.code,
+      targetLangName: cfg.aiName,
+      contextLines: contextLines || []
+    };
+    if (state.classGroupId) bodyPayload.classGroupId = state.classGroupId;
     const resp = await fetch(`${SHARED_WORKER_BASE}/ai/fast-refine`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({
-        text,
-        draftTranslation: draft || '',
-        sourceLang: sourceLang || 'auto',
-        targetLang: cfg.code,
-        targetLangName: cfg.aiName,
-        contextLines: contextLines || []
-      })
+      body: JSON.stringify(bodyPayload)
     });
     if (resp.status === 429) {
       state.fastRefineExhausted = true;
@@ -3291,7 +3231,7 @@ lang 為 en|ja|zh-TW；reading 英文填 IPA、日文必須填純平假名讀音
       }
     } catch (e) {
       if (e && e.code === 'QUOTA_EXCEEDED') {
-        window.AndroidOverlay?.showNativeToast('雲端 AI 拍照額度已達上限，請使用「螢幕定格點詞 (免費 ML Kit)」或升級方案／填寫個人 Key');
+        window.AndroidOverlay?.showNativeToast('雲端 AI 拍照額度已達上限或尚未開通會員，請使用「螢幕定格點詞 (免費 ML Kit)」或升級方案');
       } else {
         window.AndroidOverlay?.showNativeToast('圖片辨識失敗，請稍後再試');
       }
@@ -3586,9 +3526,7 @@ lang 為 en|ja|zh-TW；reading 英文填 IPA、日文必須填純平假名讀音
       if (!cfg) return;
       if (cfg.nativeLang) state.nativeLang = cfg.nativeLang;
       document.documentElement.classList.toggle('dark', Boolean(cfg.isDark));
-      if (cfg.apiMode) state.apiMode = cfg.apiMode;
-      if (cfg.apiKey !== undefined) state.apiKey = cfg.apiKey;
-      if (cfg.groqApiKey !== undefined) state.groqApiKey = cfg.groqApiKey;
+      if (cfg.classGroupId !== undefined) state.classGroupId = String(cfg.classGroupId || '');
       if (cfg.membershipTier) {
         if (cfg.membershipTier !== state.membershipTier) state.fastRefineExhausted = false;
         state.membershipTier = cfg.membershipTier;

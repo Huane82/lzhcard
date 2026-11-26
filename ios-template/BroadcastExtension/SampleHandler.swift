@@ -15,7 +15,6 @@ private struct TranslationRuntimeConfig {
     var model: String = "apple_translation"
     var sourceLang: String = "en"
     var targetLang: String = "zh-Hant"
-    var apiKey: String = ""
     var workerBaseUrl: String = "https://lzhcard.tomlin980415.workers.dev"
     var authToken: String = ""
     var regionMode: String = "auto"
@@ -233,7 +232,6 @@ class SampleHandler: RPBroadcastSampleHandler {
         if let mdl = dict["model"] as? String, !mdl.isEmpty { next.model = mdl }
         if let src = dict["sourceLang"] as? String, !src.isEmpty { next.sourceLang = src }
         if let dst = dict["targetLang"] as? String, !dst.isEmpty { next.targetLang = dst }
-        if let key = dict["apiKey"] as? String { next.apiKey = key.trimmingCharacters(in: .whitespacesAndNewlines) }
         if let worker = dict["workerBaseUrl"] as? String, !worker.isEmpty {
             next.workerBaseUrl = worker.trimmingCharacters(in: .whitespacesAndNewlines)
         }
@@ -291,7 +289,6 @@ class SampleHandler: RPBroadcastSampleHandler {
         if let mdl = defaults.string(forKey: "lzh_translate_model") { dict["model"] = mdl }
         if let src = defaults.string(forKey: "lzh_source_lang") { dict["sourceLang"] = src }
         if let dst = defaults.string(forKey: "lzh_target_lang") { dict["targetLang"] = dst }
-        if let key = defaults.string(forKey: "lzh_custom_api_key") { dict["apiKey"] = key }
         if let worker = defaults.string(forKey: "lzh_worker_base_url") { dict["workerBaseUrl"] = worker }
         if let tok = defaults.string(forKey: "lzh_auth_token") { dict["authToken"] = tok }
         if let rm = defaults.string(forKey: "lzh_region_mode") { dict["regionMode"] = rm }
@@ -779,80 +776,6 @@ class SampleHandler: RPBroadcastSampleHandler {
     #endif
 
     private func translateViaCloudApi(_ sourceText: String, config: TranslationRuntimeConfig, completion: @escaping (String?) -> Void) {
-        let customKey = config.apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        let provider = config.provider.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let model = config.model.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        let subtitlePrompt = """
-        你是一位即時雙語字幕譯者，請將以下 OCR 擷取文字翻譯成自然道地的繁體中文：
-        1. 自動忽略句首或句尾殘留的 OCR 亂碼、孤立符號或雜訊，只針對語意連貫的句子進行翻譯。
-        2. 若整段內容皆為無意義雜訊或無法辨識，請僅回傳空字串。
-        3. 遇到口語慣用語或俚語時，請依語境自然意譯，切勿死板逐字直譯。
-        4. 僅輸出最終繁體中文譯文，勿加引號或解釋。
-
-        原文：
-        \(sourceText)
-        """
-
-        if customKey.hasPrefix("gsk_") || (provider == "groq" && !customKey.isEmpty) {
-            let groqModel = model.isEmpty ? "llama-3.1-8b-instant" : model
-            guard let url = URL(string: "https://api.groq.com/openai/v1/chat/completions") else {
-                completion(nil)
-                return
-            }
-            var req = URLRequest(url: url)
-            req.httpMethod = "POST"
-            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            req.setValue("Bearer \(customKey)", forHTTPHeaderField: "Authorization")
-            let body: [String: Any] = [
-                "model": groqModel,
-                "temperature": 0.2,
-                "messages": [
-                    ["role": "user", "content": subtitlePrompt]
-                ]
-            ]
-            req.httpBody = try? JSONSerialization.data(withJSONObject: body)
-            cloudSession.dataTask(with: req) { data, _, _ in
-                var translated = ""
-                if let data = data,
-                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                   let choices = json["choices"] as? [[String: Any]],
-                   let msg = choices.first?["message"] as? [String: Any],
-                   let text = msg["content"] as? String {
-                    translated = text.trimmingCharacters(in: .whitespacesAndNewlines)
-                }
-                completion(translated.isEmpty ? nil : translated)
-            }.resume()
-            return
-        }
-
-        if customKey.hasPrefix("AIza") || (provider == "gemini" && !customKey.isEmpty) {
-            let gemModel = (model.isEmpty || !model.lowercased().contains("gemini")) ? "gemini-2.0-flash" : model
-            let endpoint = "https://generativelanguage.googleapis.com/v1beta/models/\(gemModel):generateContent?key=\(customKey)"
-            guard let url = URL(string: endpoint) else {
-                completion(nil)
-                return
-            }
-            var req = URLRequest(url: url)
-            req.httpMethod = "POST"
-            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            let body: [String: Any] = ["contents": [["parts": [["text": subtitlePrompt]]]]]
-            req.httpBody = try? JSONSerialization.data(withJSONObject: body)
-            cloudSession.dataTask(with: req) { data, _, _ in
-                var translated = ""
-                if let data = data,
-                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                   let cands = json["candidates"] as? [[String: Any]],
-                   let content = cands.first?["content"] as? [String: Any],
-                   let parts = content["parts"] as? [[String: Any]],
-                   let text = parts.first?["text"] as? String {
-                    translated = text.trimmingCharacters(in: .whitespacesAndNewlines)
-                }
-                completion(translated.isEmpty ? nil : translated)
-            }.resume()
-            return
-        }
-
         let workerBase = config.workerBaseUrl.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !workerBase.isEmpty, let url = URL(string: "\(workerBase)/ai/fast-refine") else {
             translateViaFreeTier1(sourceText, sourceLang: config.sourceLang, completion: completion)

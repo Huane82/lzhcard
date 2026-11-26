@@ -2,19 +2,11 @@
  * LZHCard - 多語系、顯示模式、主題與系統設定模組 (settings.js)
  */
 
-const API_KEY_STORAGE_NAME = typeof STORAGE_KEY_APIKEY !== 'undefined' ? STORAGE_KEY_APIKEY : 'flashcard_gemini_key_v1';
-
 /**
- * 🛡️ 確保跨頁彈窗（API Key 視窗、全域 Toast 提示）層級高於設定抽屜，避免被遮擋
+ * 🛡️ 確保跨頁彈窗（全域 Toast 提示）層級高於設定抽屜，避免被遮擋
  */
 function ensureHighZIndexOverlays() {
     if (typeof document === 'undefined') return;
-
-    const keyModalEl = document.getElementById('keyModal');
-    if (keyModalEl) {
-        keyModalEl.classList.remove('z-40', 'z-50');
-        keyModalEl.classList.add('z-[65]');
-    }
 
     const toastSelectors = ['#toastContainer', '#toast-container', '#toast', '#appToast', '[data-toast-container]'];
     toastSelectors.forEach((selector) => {
@@ -106,7 +98,6 @@ function syncSettingsUI() {
     const savedDisplayMode = localStorage.getItem('lzhcard_display_mode') || 'target_front';
     const savedPhoneticPos = localStorage.getItem('lzhcard_phonetic_pos') || 'front';
     const savedTheme = localStorage.getItem('theme_preference') || 'system';
-    const savedApiMode = localStorage.getItem('lzhcard_api_mode') || 'shared';
 
     const nativeSelect = document.getElementById('nativeLangSelect');
     if (nativeSelect) nativeSelect.value = savedNative;
@@ -122,27 +113,6 @@ function syncSettingsUI() {
 
     const themeSelect = document.getElementById('themeSelect');
     if (themeSelect) themeSelect.value = savedTheme;
-
-    // 同步 API Key 模式單選框與本機雙軌金鑰（Groq + Gemini，僅存本機不上傳雲端）
-    const radShared = document.getElementById('apiModeShared');
-    const radPersonal = document.getElementById('apiModePersonal');
-    const groqInput = document.getElementById('groqApiKeyInput');
-    const apiKeyInput = document.getElementById('geminiApiKeyInput');
-    const savedGroqKey = localStorage.getItem('lzhcard_groq_key_v1') || '';
-    const savedGeminiKey = localStorage.getItem(API_KEY_STORAGE_NAME) || '';
-    const rawApiMode = localStorage.getItem('lzhcard_api_mode');
-    const hasLocalKeys = Boolean(savedGroqKey.trim() || savedGeminiKey.trim());
-    const effectiveMode = rawApiMode === 'shared'
-        ? 'shared'
-        : (rawApiMode === 'personal' ? 'personal' : (hasLocalKeys ? 'personal' : 'shared'));
-    if (radShared) radShared.checked = (effectiveMode === 'shared');
-    if (radPersonal) radPersonal.checked = (effectiveMode === 'personal');
-    if (groqInput) groqInput.value = effectiveMode === 'personal' ? savedGroqKey : '';
-    if (apiKeyInput) apiKeyInput.value = effectiveMode === 'personal' ? savedGeminiKey : '';
-    switchApiMode(effectiveMode);
-    if (typeof updateSettingsApiModeBadge === 'function') {
-        updateSettingsApiModeBadge(effectiveMode);
-    }
 
     const customNativeInput = document.getElementById('customNativeInput');
     if (customNativeInput) {
@@ -181,6 +151,18 @@ function syncSettingsUI() {
     const sentenceFrontToggle = document.getElementById('showSentenceFrontToggle');
     if (sentenceFrontToggle) {
         sentenceFrontToggle.checked = localStorage.getItem('lzhcard_show_sentence_front') === 'true';
+    }
+
+    // 🧩 同步「刷字卡自動標示字根字首字尾」開關 (showMorphemesToggle，預設開啟)
+    const morphemesToggle = document.getElementById('showMorphemesToggle');
+    if (morphemesToggle) {
+        morphemesToggle.checked = localStorage.getItem('lzhcard_show_morphemes') !== 'false';
+    }
+
+    // 🌍 同步「自訂語言開發說明與專版付費維護」提示區塊
+    const customLangPolicyEl = document.getElementById('customLangPolicyNotice');
+    if (customLangPolicyEl) {
+        customLangPolicyEl.classList.toggle('hidden', savedNative !== 'custom' && savedTarget !== 'custom');
     }
 
     // 🌐 同步「懸浮翻譯視窗」統一開關 (floatingTranslatorToggle) 與首頁開關
@@ -306,6 +288,31 @@ function handleShowSentenceFrontChange(enableFrontSentence) {
             isEnabled
                 ? '📖 已開啟：字卡正面顯示例句（語境推理模式）'
                 : '🙈 已關閉字卡正面例句顯示',
+            'info'
+        );
+    }
+}
+
+function handleShowMorphemesChange(enableMorphemes) {
+    const isEnabled = Boolean(enableMorphemes);
+    localStorage.setItem('lzhcard_show_morphemes', isEnabled ? 'true' : 'false');
+
+    const toggle = document.getElementById('showMorphemesToggle');
+    if (toggle && toggle.checked !== isEnabled) {
+        toggle.checked = isEnabled;
+    }
+
+    if (typeof nextCard === 'function') {
+        nextCard(false);
+    }
+    persistSettingsImmediate({ showMorphemes: isEnabled });
+
+    ensureHighZIndexOverlays();
+    if (typeof showToast === 'function') {
+        showToast(
+            isEnabled
+                ? '🧩 已開啟：字卡正面自動標示字首／字根／字尾'
+                : '🙈 已關閉字根字首標示',
             'info'
         );
     }
@@ -509,6 +516,7 @@ if (typeof window !== 'undefined') {
     window.handlePrivacyToggleChange = handlePrivacyToggleChange;
     window.handleAutoPlayAudioChange = handleAutoPlayAudioChange;
     window.handleShowSentenceFrontChange = handleShowSentenceFrontChange;
+    window.handleShowMorphemesChange = handleShowMorphemesChange;
     window.handleFloatingTranslatorChange = handleFloatingTranslatorChange;
     window.getNotificationSettings = getNotificationSettings;
     window.handleNotificationSettingChange = handleNotificationSettingChange;
@@ -576,6 +584,9 @@ function initStudyPreferenceDefaults() {
     }
     if (localStorage.getItem('lzhcard_show_sentence_front') === null) {
         localStorage.setItem('lzhcard_show_sentence_front', 'false');
+    }
+    if (localStorage.getItem('lzhcard_show_morphemes') === null) {
+        localStorage.setItem('lzhcard_show_morphemes', 'true');
     }
     if (localStorage.getItem('lzhcard_floating_translator_enabled') === null) {
         localStorage.setItem('lzhcard_floating_translator_enabled', 'false');
@@ -694,126 +705,6 @@ function handlePhoneticPosChange(mode) {
         showToast(t(msgKey), 'info');
     }
     persistSettingsImmediate({ phoneticPos: mode });
-}
-
-function updateSettingsApiModeBadge(forcedMode = null) {
-    const badgeEl = document.getElementById('settingsApiModeBadgeText');
-    if (!badgeEl) return;
-    const rawMode = forcedMode || localStorage.getItem('lzhcard_api_mode') || 'shared';
-    const hasPersonalKey = Boolean(
-        (localStorage.getItem('lzhcard_groq_key_v1') || '').trim() ||
-        (localStorage.getItem(API_KEY_STORAGE_NAME) || '').trim()
-    );
-    if (rawMode === 'personal' && hasPersonalKey) {
-        badgeEl.textContent = '🔑 目前模式：個人 API Key（已儲存於本機）';
-        badgeEl.className = 'text-[11px] font-bold text-emerald-600 dark:text-emerald-400 mt-1';
-    } else if (rawMode === 'personal') {
-        badgeEl.textContent = '🔑 目前模式：個人 API Key（尚未填入，暫以雲端額度備援）';
-        badgeEl.className = 'text-[11px] font-bold text-amber-600 dark:text-amber-400 mt-1';
-    } else {
-        badgeEl.textContent = '☁️ 目前模式：雲端共用方案 API（依會員或免費額度運行）';
-        badgeEl.className = 'text-[11px] font-bold text-sky-600 dark:text-sky-400 mt-1';
-    }
-}
-
-/**
- * 🎛️ 切換 Groq / Gemini API 金鑰模式 UI 狀態（選擇雲端共用時隱藏個人 Key 欄位以免誤會）
- */
-function switchApiMode(mode) {
-    const isPersonal = (mode === 'personal');
-    const box = document.getElementById('personalKeyInputBox');
-    const sharedNotice = document.getElementById('sharedKeyModeNotice');
-    if (box) {
-        box.classList.toggle('hidden', !isPersonal);
-        box.classList.remove('opacity-75');
-    }
-    if (sharedNotice) {
-        sharedNotice.classList.toggle('hidden', isPersonal);
-    }
-    updateSettingsApiModeBadge(isPersonal ? 'personal' : 'shared');
-}
-
-/**
- * 🔑 儲存 Groq & Gemini API Key（嚴格僅儲存在本機裝置，不寫入 Firestore）
- */
-function handleSaveApiKey() {
-    const selectedMode = document.querySelector('input[name="apiMode"]:checked')?.value || 'shared';
-    const groqInput = document.getElementById('groqApiKeyInput');
-    const geminiInput = document.getElementById('geminiApiKeyInput');
-    const groqKey = groqInput ? groqInput.value.trim() : '';
-    const geminiKey = geminiInput ? geminiInput.value.trim() : '';
-
-    if (selectedMode === 'personal') {
-        if (!groqKey && !geminiKey) {
-            if (typeof showToast === 'function') showToast(t('toastEnterApiKey') || '請輸入個人 Groq 或 Gemini API Key！', 'warning');
-            return;
-        }
-        if (groqKey) {
-            localStorage.setItem('lzhcard_groq_key_v1', groqKey);
-        } else {
-            localStorage.removeItem('lzhcard_groq_key_v1');
-        }
-        if (geminiKey) {
-            localStorage.setItem(API_KEY_STORAGE_NAME, geminiKey);
-        } else {
-            localStorage.removeItem(API_KEY_STORAGE_NAME);
-        }
-    } else {
-        // 使用者選擇雲端公用 API：停用並清除個人金鑰以免誤判為「已啟用個人 API」
-        localStorage.removeItem('lzhcard_groq_key_v1');
-        localStorage.removeItem(API_KEY_STORAGE_NAME);
-        if (groqInput) groqInput.value = '';
-        if (geminiInput) geminiInput.value = '';
-    }
-
-    const finalMode = selectedMode === 'personal' ? 'personal' : 'shared';
-    localStorage.setItem('lzhcard_api_mode', finalMode);
-    if (typeof LZHEntitlements !== 'undefined' && typeof LZHEntitlements.backupPersonalKeysForUid === 'function') {
-        LZHEntitlements.backupPersonalKeysForUid();
-    }
-
-    const radShared = document.getElementById('apiModeShared');
-    const radPersonal = document.getElementById('apiModePersonal');
-    if (radShared) radShared.checked = (finalMode === 'shared');
-    if (radPersonal) radPersonal.checked = (finalMode === 'personal');
-    switchApiMode(finalMode);
-
-    if (typeof updateApiKeyStatusUI === 'function') {
-        updateApiKeyStatusUI();
-    }
-
-    if (typeof syncConfigToNativeOverlay === 'function') {
-        syncConfigToNativeOverlay();
-    }
-
-    if (typeof LZHEntitlements !== 'undefined' && typeof LZHEntitlements.notifyStateChange === 'function') {
-        LZHEntitlements.notifyStateChange('byok_key_saved', { finalMode });
-    }
-
-    if (typeof MembershipEngine !== 'undefined' && typeof MembershipEngine.renderMembershipModalBody === 'function') {
-        const memModal = document.getElementById('membershipModal');
-        if (memModal && !memModal.classList.contains('hidden')) {
-            MembershipEngine.renderMembershipModalBody();
-        }
-    }
-
-    persistSettingsImmediate({ apiMode: finalMode });
-
-    if (typeof updateSettingsApiModeBadge === 'function') {
-        updateSettingsApiModeBadge(finalMode);
-    }
-    if (typeof FloatingTranslator !== 'undefined' && typeof FloatingTranslator.syncApiModeFromGlobal === 'function') {
-        FloatingTranslator.syncApiModeFromGlobal(finalMode);
-    }
-
-    if (typeof closeModal === 'function') closeModal('keyModal');
-    if (typeof showToast === 'function') {
-        if (finalMode === 'personal') {
-            showToast(t('toastKeySaved') || '🔑 個人 API Key 已儲存於本機（不扣系統配額）！', 'success');
-        } else {
-            showToast(t('toastSharedApiSaved') || '☁️ 已切換為雲端共用方案 API（依會員方案額度運行）！', 'success');
-        }
-    }
 }
 
 /* ==========================================================================
@@ -1141,12 +1032,6 @@ function checkAndOpenOnboardingModal() {
 }
 
 window.addEventListener('lzh:state-updated', () => {
-    if (typeof updateApiKeyStatusUI === 'function') {
-        updateApiKeyStatusUI();
-    }
-    if (typeof updateSettingsApiModeBadge === 'function') {
-        updateSettingsApiModeBadge();
-    }
     if (typeof syncDailyFreeSyncUI === 'function') {
         syncDailyFreeSyncUI();
     }

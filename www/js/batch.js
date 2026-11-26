@@ -206,12 +206,13 @@ function updateBatchPlaceholders() {
     let quickAddPlaceholder = "";
 
     if (targetLang === 'ja') {
-        batchPlaceholder = `【日語輸入範例】（支援格式：單字 + 假名讀音 + 詞性 + 母語釋義）\n` +
-                           `1. 食べる たべる (動詞) 吃\n` +
-                           `2. 猫 ねこ (名詞) 貓咪\n` +
-                           `3. 綺麗 きれい (adj.) 美麗的\n` +
-                           `4. 勉強する : 學習\n` +
-                           `5. 乾杯 /かんぱい/ 乾杯！`;
+        batchPlaceholder =
+            `【統一格式：目標單字,釋義,詞性,發音】（換行才是下一個字，片語可含空白；中間欄位省略需保留逗號，末端可省略；例句/翻譯可選）\n` +
+            `食べる,吃,v.,たべる\n` +
+            `1."毎日朝ごはんを食べます。"\n` +
+            `2."我每天吃早餐。"\n` +
+            `綺麗,,adj.,きれい\n` +
+            `猫,貓咪`;
 
         quickAddPlaceholder = `例如: 食べる, 猫, 勉強する, 綺麗`;
 
@@ -226,11 +227,13 @@ function updateBatchPlaceholders() {
             `).join('');
         }
     } else if (targetLang === 'zh-TW' || targetLang === 'zh') {
-        batchPlaceholder = `【中文/國語輸入範例】（支援格式：詞彙 + 注音/拼音 + 詞性 + 外語釋義）\n` +
-                           `1. 韌性 ㄖㄣˋ ㄒㄧㄥˋ (n.) resilience\n` +
-                           `2. 努力 ㄋㄨˇ ㄌㄧˋ (v.) make effort\n` +
-                           `3. 學習 : study\n` +
-                           `4. 蘋果 (名詞) apple`;
+        batchPlaceholder =
+            `【統一格式：目標單字,釋義,詞性,發音】（換行才是下一個字；中間欄位省略需保留逗號，末端可省略；例句/翻譯可選）\n` +
+            `韌性,resilience,n.,ㄖㄣˋ ㄒㄧㄥˋ\n` +
+            `1."這株植物在寒冬中展現了驚人的韌性。"\n` +
+            `2."This plant showed remarkable resilience in winter."\n` +
+            `學習,,v.,ㄒㄩㄝˊ ㄒㄧˊ\n` +
+            `蘋果,apple`;
 
         quickAddPlaceholder = `例如: 韌性, 努力, 學習, 蘋果`;
 
@@ -245,11 +248,14 @@ function updateBatchPlaceholders() {
             `).join('');
         }
     } else {
-        batchPlaceholder = `【英文輸入範例】（支援格式：單字 + 音標 + 詞性 + 中文釋義）\n` +
-                           `1. resilient /rɪˈzɪl.jənt/ (adj.) 有彈性的\n` +
-                           `2. apple n. 蘋果\n` +
-                           `3. take off (phr.) 起飛；脫下\n` +
-                           `4. candidate : 候選人`;
+        batchPlaceholder =
+            `【統一格式：目標單字,釋義,詞性,發音】（換行才是下一個字，片語可含空白；中間欄位省略需保留逗號，末端可省略）\n` +
+            `happy,開心,adj.,[ˈhæpɪ]\n` +
+            `1."I'm so happy."\n` +
+            `2."我很開心。"\n` +
+            `resilient,,adj.,[rɪˈzɪljənt]\n` +
+            `take off,起飛；脫下\n` +
+            `candidate,,`;
 
         quickAddPlaceholder = `例如: resilient, fragile, candidate`;
 
@@ -596,87 +602,132 @@ async function handleLoadPreset(levelNum, ev) {
 /**
  * 🌐 批量貼上文字解析器 (支援 日語假名/中文注音、自動去除行首序號與多種分隔符，並自動過濾重複字)
  */
+/**
+ * 🧩 嚴格切分「目標單字,釋義,詞性,發音」逗號欄位（支援雙引號包夾內含逗號的欄位，並保留中間空白逗號欄位）
+ */
+function splitStrictBatchColumns(line) {
+    const cols = [];
+    let current = '';
+    let inQuotes = false;
+
+    for (let i = 0; i < line.length; i++) {
+        const ch = line[i];
+        if (ch === '"' || ch === '“' || ch === '”') {
+            if (inQuotes && line[i + 1] === ch) {
+                current += ch;
+                i++;
+            } else {
+                inQuotes = !inQuotes;
+            }
+        } else if (ch === ',' && !inQuotes) {
+            cols.push(current.trim());
+            current = '';
+        } else {
+            current += ch;
+        }
+    }
+    cols.push(current.trim());
+    return cols;
+}
+
+/**
+ * 📥 嚴格統一批量匯入解析器 (無舊版空白/冒號/Tab 回退；非統一格式請交給左上角 ☰ AI 解析)
+ * 規則：
+ * 1. 每行一筆：目標單字,釋義,詞性,發音（空白不會切分片語；中間欄位留空需保留逗號 e.g. happy,,adj.,[ˈhæpɪ]；末端可不打逗號）
+ * 2. 例句與翻譯：1."例句"（或 1.”例句”）、2."翻譯"（或 2.”翻譯”）；若省略直接不輸入
+ * 3. 支援因行寬過長而在引號 "..." / ”...” 內產生換行的自動續接合併
+ */
 function parseBatchText(text) {
     if (!text || typeof text !== 'string') return [];
 
-    const lines = text.split(/\r?\n/).map(line => line.trim()).filter(line => line.length > 0);
+    const rawLines = text.split(/\r?\n/);
     const results = [];
-    const seenWords = new Set();
+    const seenIndexMap = new Map();
+    let lastEntry = null;
+    let openQuoteField = null; // 'sentence' | 'translation' | null
 
-    const posUnit = '(?:n|v|vt|vi|adj|adv|prep|conj|pron|num|art|phr|名詞|代名詞|動詞|他動詞|自動詞|形容詞|形容動詞|副詞|助詞|感動詞|連體詞|接続詞)';
-    const strictPosRegex = new RegExp(
-        `(?:[\\(\\[\\{]\\s*${posUnit}(?:[\\s\\.\\,\\/\\\\&\\|]+${posUnit})*[\\.\\s]*[\\)\\]\\}])` +
-        `|(?:\\b${posUnit}\\.(?:[\\s\\,\\/\\\\&\\|]*${posUnit}\\.)*)` +
-        `|(?:\\b(?:名詞|代名詞|動詞|他動詞|自動詞|形容詞|形容動詞|副詞|助詞|感動詞|連體詞|接続詞)(?:[\\s\\,\\/\\\\&\\|]+(?:名詞|代名詞|動詞|他動詞|自動詞|形容詞|形容動詞|副詞|助詞|感動詞|連體詞|接続詞))*\\b)`,
-        'i'
-    );
+    const closingQuoteRegex = /["“”」』]\s*$/;
+    const openLine1Regex = /^[1１]\s*[\.．。]\s*["“”「『](.*)$/;
+    const openLine2Regex = /^[2２]\s*[\.．。]\s*["“”「『](.*)$/;
 
-    const jpRegex = /[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FAF]/;
-    const phoneticReadingRegex = /^[\u3040-\u309F\u30A0-\u30FF\u3100-\u312F\u02EA\u02EB\u02C5\u02C7\u02C9\u02CA\u02CBa-zA-Z\s\-\.\'\`]+$/;
+    for (let i = 0; i < rawLines.length; i++) {
+        const line = String(rawLines[i] || '').trim();
+        if (!line) continue;
 
-    lines.forEach(line => {
-        // 去除開頭列表序號（如 "1. "、"2、"、"3) "）
-        let tempLine = line.replace(/^\d+[\.\)、\)]\s+/, '');
-        let word = '';
-        let pos = '';
-        let phonetic = '';
-        let meaning = '';
-
-        const slashPhonetic = tempLine.match(/\/([^\/]+)\//);
-        if (slashPhonetic) {
-            phonetic = '/' + slashPhonetic[1] + '/';
-            tempLine = tempLine.replace(slashPhonetic[0], ' ');
-        }
-
-        const posMatch = tempLine.match(strictPosRegex);
-        if (posMatch) {
-            pos = posMatch[0].replace(/[\(\[\{\)\]\}]/g, '').trim();
-            tempLine = tempLine.replace(posMatch[0], ' ');
-        }
-
-        const delimRegex = /\t|:|＝|=| - | -- | — | – /;
-
-        if (delimRegex.test(tempLine)) {
-            const parts = tempLine.split(delimRegex).map(s => s.trim()).filter(Boolean);
-            word = parts[0] || '';
-            meaning = parts.slice(1).join(' ');
-        } else {
-            const spaceParts = tempLine.split(/\s+/).map(s => s.trim()).filter(Boolean);
-
-            if (spaceParts.length >= 2 && jpRegex.test(spaceParts[0]) && phoneticReadingRegex.test(spaceParts[1]) && !phonetic) {
-                word = spaceParts[0];
-                phonetic = spaceParts[1];
-                meaning = spaceParts.slice(2).join(' ');
+        // 1) 若上一行的 1."..." 或 2."..." 因太長換行而尚未閉合，優先視作續接句
+        if (openQuoteField && lastEntry) {
+            if (openLine2Regex.test(line) && openQuoteField === 'sentence') {
+                // 使用者忘記閉合 1." 便直接換行輸入 2."，自動切換
+                openQuoteField = null;
             } else {
-                const zhMatch = tempLine.match(/[\u4e00-\u9fa5]/);
-                if (zhMatch && !jpRegex.test(tempLine.substring(0, tempLine.indexOf(zhMatch[0])))) {
-                    const idx = tempLine.indexOf(zhMatch[0]);
-                    word = tempLine.substring(0, idx).trim();
-                    meaning = tempLine.substring(idx).trim();
-                } else {
-                    word = tempLine.trim();
-                    meaning = '';
+                const endsQuote = closingQuoteRegex.test(line);
+                const chunk = endsQuote ? line.replace(closingQuoteRegex, '').trim() : line;
+                if (chunk) {
+                    const prev = lastEntry[openQuoteField] || '';
+                    const needSpace = prev && /[A-Za-z0-9.,!?;:]$/.test(prev) && /^[A-Za-z0-9]/.test(chunk);
+                    lastEntry[openQuoteField] = prev ? (prev + (needSpace ? ' ' : '') + chunk) : chunk;
                 }
+                if (endsQuote) {
+                    openQuoteField = null;
+                }
+                continue;
             }
         }
 
-        word = word.trim().replace(/\s+/g, ' ');
-        meaning = meaning.trim();
-        phonetic = phonetic.trim();
+        // 2) 檢查是否為 1."..." 例句行
+        const m1 = line.match(openLine1Regex);
+        if (m1) {
+            if (!lastEntry) continue;
+            const body = m1[1] || '';
+            const endsQuote = closingQuoteRegex.test(body);
+            lastEntry.sentence = (endsQuote ? body.replace(closingQuoteRegex, '') : body).trim();
+            openQuoteField = endsQuote ? null : 'sentence';
+            continue;
+        }
+
+        // 3) 檢查是否為 2."..." 翻譯行
+        const m2 = line.match(openLine2Regex);
+        if (m2) {
+            if (!lastEntry) continue;
+            const body = m2[1] || '';
+            const endsQuote = closingQuoteRegex.test(body);
+            lastEntry.translation = (endsQuote ? body.replace(closingQuoteRegex, '') : body).trim();
+            openQuoteField = endsQuote ? null : 'translation';
+            continue;
+        }
+
+        // 4) 嚴格逗號分隔：目標單字,釋義,詞性,發音（空白保留以支援片語）
+        const cols = splitStrictBatchColumns(line);
+        const word = String(cols[0] || '').trim().replace(/\s+/g, ' ');
+        const meaning = String(cols[1] || '').trim();
+        const pos = String(cols[2] || '').trim();
+        const phonetic = String(cols[3] || '').trim();
 
         const normKey = normalizeWordKey(word);
-        if (normKey && !seenWords.has(normKey)) {
-            seenWords.add(normKey);
-            results.push({
-                word: word,
-                pos: pos,
-                phonetic: phonetic,
-                meaning: meaning,
+        if (!normKey) continue;
+
+        if (seenIndexMap.has(normKey)) {
+            const existing = results[seenIndexMap.get(normKey)];
+            if (meaning && !existing.meaning) existing.meaning = meaning;
+            if (pos && !existing.pos) existing.pos = pos;
+            if (phonetic && !existing.phonetic) existing.phonetic = phonetic;
+            lastEntry = existing;
+            openQuoteField = null;
+        } else {
+            const entry = {
+                word,
+                pos,
+                phonetic,
+                meaning,
                 sentence: '',
                 translation: ''
-            });
+            };
+            seenIndexMap.set(normKey, results.length);
+            results.push(entry);
+            lastEntry = entry;
+            openQuoteField = null;
         }
-    });
+    }
 
     return results;
 }
@@ -839,6 +890,10 @@ function resetBatchModal() {
 
     const progressBar = document.getElementById('batchProgressBar');
     if (progressBar) progressBar.style.width = '0%';
+
+    if (typeof resetBatchAiParserState === 'function') {
+        resetBatchAiParserState();
+    }
 }
 
 function handleConfirmBatchImport() {
@@ -1418,24 +1473,40 @@ if (typeof window !== 'undefined') {
     window.handleConfirmSplitDeck = handleConfirmSplitDeck;
 }
 
-function handleRenameCategory() {
+async function handleRenameCategory() {
     const activeCats = window.selectedCategories || [];
     let targetCat = activeCats[0] || 'ALL';
     const defaultCatName = safeT('defaultCategoryName', null, '預設字庫');
 
     if (targetCat === 'ALL' || activeCats.length > 1 || activeCats.length === 0) {
         const cats = typeof getAllCategories === 'function' ? getAllCategories() : [];
-        const inputCat = prompt(safeT('promptSelectRenameDeck', { list: cats.join('、 ') }, `請輸入要重命名的字庫名稱：\n(${cats.join('、 ')})`));
-        if (!inputCat || !inputCat.trim()) return;
-        targetCat = inputCat.trim();
-        
+        if (cats.length === 0) return;
+
+        let chosen = null;
+        if (typeof window.lzhChoice === 'function') {
+            chosen = await window.lzhChoice(
+                safeT('promptSelectRenameDeck', { list: cats.join('、 ') }, '請選擇要重命名的字庫：'),
+                cats.map(c => ({ value: c, label: c })),
+                { title: '重命名字庫' }
+            );
+        } else if (typeof window.lzhPrompt === 'function') {
+            chosen = await window.lzhPrompt(
+                safeT('promptSelectRenameDeck', { list: cats.join('、 ') }, `請輸入要重命名的字庫名稱：\n(${cats.join('、 ')})`),
+                cats[0]
+            );
+        }
+        if (!chosen || !String(chosen).trim()) return;
+        targetCat = String(chosen).trim();
+
         if (!cats.includes(targetCat)) {
             if (typeof showToast === 'function') showToast(safeT('toastCategoryNotFound', { name: targetCat }, `未找到字庫「${targetCat}」`), 'warning');
             return;
         }
     }
 
-    const newName = prompt(safeT('promptNewDeckName', { name: targetCat }, `請輸入「${targetCat}」的新名稱：`), targetCat);
+    const newName = (typeof window.lzhPrompt === 'function')
+        ? await window.lzhPrompt(safeT('promptNewDeckName', { name: targetCat }, `請輸入「${targetCat}」的新名稱：`), targetCat, { title: '輸入新字庫名稱' })
+        : null;
     if (!newName || !newName.trim() || newName.trim() === targetCat) return;
 
     const cleanNewName = newName.trim();
@@ -1472,7 +1543,7 @@ function handleRenameCategory() {
 /**
  * 📦 批量變更 / 移動字庫（移動後若與目標字庫有重複字會自動合併刪除）
  */
-function handleBatchChangeCategory() {
+async function handleBatchChangeCategory() {
     if (typeof selectedWordIds === 'undefined' || selectedWordIds.size === 0) {
         if (typeof showToast === 'function') showToast(safeT('toastSelectMoveWords', null, '請先勾選要移動的單字！'), 'warning');
         return;
@@ -1485,7 +1556,9 @@ function handleBatchChangeCategory() {
 
     const promptText = safeT('promptMoveTarget', { count: selectedWordIds.size }, `將已選取的 ${selectedWordIds.size} 筆單字移至新的字庫名稱：`);
 
-    const newCategory = prompt(promptText, currentCatName);
+    const newCategory = (typeof window.lzhPrompt === 'function')
+        ? await window.lzhPrompt(promptText, currentCatName, { title: '移動字庫' })
+        : null;
     if (!newCategory || !newCategory.trim()) return;
 
     const catName = newCategory.trim();
@@ -1609,21 +1682,22 @@ async function handleBatchAiFillLibraryWords() {
             const promptChoiceMsg = safeT(
                 'promptBatchAiModeChoice',
                 { total: targetWords.length, incomplete: incompleteWords.length },
-                `選取的 ${targetWords.length} 筆單字中，有 ${incompleteWords.length} 筆缺漏或非母語欄位。\n\n` +
-                `請輸入數字選擇處理方式：\n` +
-                `1 ➜ 僅補齊缺漏／非母語欄位 (${incompleteWords.length} 筆)\n` +
-                `2 ➜ 開啟「強制覆蓋模式」(依目前目標語言與母語重新解析全選 ${targetWords.length} 筆)\n\n` +
-                `點擊【取消】將關閉並退出。`
+                `選取的 ${targetWords.length} 筆單字中，有 ${incompleteWords.length} 筆缺漏或非母語欄位，請選擇處理方式：`
             );
-            const choice = prompt(promptChoiceMsg, "1");
+            const choice = (typeof window.lzhChoice === 'function')
+                ? await window.lzhChoice(promptChoiceMsg, [
+                    { value: '1', label: `1 · 僅補齊缺漏／非母語欄位 (${incompleteWords.length} 筆)` },
+                    { value: '2', label: `2 · 強制覆蓋重新解析全選 ${targetWords.length} 筆` }
+                ], { title: '✨ AI 批次補齊模式' })
+                : '1';
 
-            if (choice === null) return;
+            if (!choice) return;
 
-            const trimmedChoice = choice.trim();
-            if (trimmedChoice === "2") {
+            const trimmedChoice = String(choice).trim();
+            if (trimmedChoice === '2') {
                 forceOverwrite = true;
                 targetBatch = targetWords;
-            } else if (trimmedChoice === "1") {
+            } else if (trimmedChoice === '1') {
                 forceOverwrite = false;
                 targetBatch = incompleteWords;
             } else {
@@ -1864,3 +1938,277 @@ const handleBatchAiFill = handleBatchAiFillLibraryWords;
 const handleExportJSON = exportJSON;
 const handleSplitCategory = handleConfirmSplitDeck;
 const handleRemoveDuplicateWords = () => autoDeduplicateWordList({ silent: false });
+
+// =========================================================================
+// ✨ 批量匯入左上角 ☰ AI 自由格式文字與多圖辨識解析器
+// =========================================================================
+let batchAiParserImages = [];
+
+function resetBatchAiParserState() {
+    batchAiParserImages = [];
+    const drawer = document.getElementById('batchAiParserDrawer');
+    if (drawer) drawer.classList.add('hidden');
+    const rawTextEl = document.getElementById('batchAiRawTextInput');
+    if (rawTextEl) rawTextEl.value = '';
+    const promptEl = document.getElementById('batchAiPromptInput');
+    if (promptEl) promptEl.value = '';
+    const fileEl = document.getElementById('batchAiImageInput');
+    if (fileEl) fileEl.value = '';
+    renderBatchAiImageList();
+}
+
+function toggleBatchAiParserDrawer(forceState) {
+    const drawer = document.getElementById('batchAiParserDrawer');
+    if (!drawer) return;
+    const willOpen = typeof forceState === 'boolean' ? forceState : drawer.classList.contains('hidden');
+    drawer.classList.toggle('hidden', !willOpen);
+
+    if (willOpen) {
+        const mainInput = document.getElementById('batchRawInput');
+        const aiTextInput = document.getElementById('batchAiRawTextInput');
+        if (aiTextInput && !aiTextInput.value.trim() && mainInput && mainInput.value.trim()) {
+            aiTextInput.value = mainInput.value.trim();
+        }
+    }
+}
+
+function renderBatchAiImageList() {
+    const listEl = document.getElementById('batchAiImageList');
+    if (!listEl) return;
+    if (!batchAiParserImages.length) {
+        listEl.innerHTML = '';
+        listEl.classList.add('hidden');
+        return;
+    }
+    listEl.classList.remove('hidden');
+    const esc = (s) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    listEl.innerHTML = batchAiParserImages.map((img, idx) => `
+        <div class="relative w-16 h-16 rounded-xl overflow-hidden border border-brand-200 dark:border-slate-600 bg-white dark:bg-slate-800 shrink-0 shadow-xs">
+            <img src="${esc(img.dataUrl)}" alt="${esc(img.name)}" class="w-full h-full object-cover" />
+            <button type="button" onclick="removeBatchAiParserImage(${idx})" aria-label="移除圖片"
+                class="absolute top-0.5 right-0.5 w-5 h-5 rounded-full bg-rose-600 text-white text-[10px] font-bold flex items-center justify-center shadow">
+                ✕
+            </button>
+        </div>
+    `).join('');
+}
+
+function removeBatchAiParserImage(idx) {
+    batchAiParserImages.splice(idx, 1);
+    renderBatchAiImageList();
+}
+
+function compressImageFileToPayload(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onerror = () => reject(new Error('讀取圖片失敗'));
+        reader.onload = () => {
+            const dataUrl = String(reader.result || '');
+            const img = new Image();
+            img.onload = () => {
+                try {
+                    const maxDim = 1400;
+                    let w = img.width || 1024;
+                    let h = img.height || 1024;
+                    if (w > maxDim || h > maxDim) {
+                        if (w >= h) {
+                            h = Math.round((h * maxDim) / w);
+                            w = maxDim;
+                        } else {
+                            w = Math.round((w * maxDim) / h);
+                            h = maxDim;
+                        }
+                    }
+                    const canvas = document.createElement('canvas');
+                    canvas.width = w;
+                    canvas.height = h;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0, w, h);
+                    const outDataUrl = canvas.toDataURL('image/jpeg', 0.85);
+                    const base64 = outDataUrl.split(',')[1] || '';
+                    resolve({
+                        name: file.name || 'image.jpg',
+                        mimeType: 'image/jpeg',
+                        dataUrl: outDataUrl,
+                        base64
+                    });
+                } catch (err) {
+                    const base64 = dataUrl.split(',')[1] || '';
+                    resolve({
+                        name: file.name || 'image',
+                        mimeType: file.type || 'image/jpeg',
+                        dataUrl,
+                        base64
+                    });
+                }
+            };
+            img.onerror = () => {
+                const base64 = dataUrl.split(',')[1] || '';
+                resolve({
+                    name: file.name || 'image',
+                    mimeType: file.type || 'image/jpeg',
+                    dataUrl,
+                    base64
+                });
+            };
+            img.src = dataUrl;
+        };
+        reader.readAsDataURL(file);
+    });
+}
+
+async function handleBatchAiParserFiles(fileList) {
+    const files = Array.from(fileList || []).filter(f => f && /^image\//i.test(f.type || 'image/'));
+    if (!files.length) return;
+    const remainingSlots = Math.max(0, 4 - batchAiParserImages.length);
+    if (remainingSlots <= 0) {
+        if (typeof showToast === 'function') showToast('最多可同時上傳 4 張圖片', 'warning');
+        return;
+    }
+    for (const file of files.slice(0, remainingSlots)) {
+        try {
+            const payload = await compressImageFileToPayload(file);
+            if (payload && payload.base64) {
+                batchAiParserImages.push(payload);
+            }
+        } catch (e) {}
+    }
+    renderBatchAiImageList();
+}
+
+async function runBatchAiFreeParser() {
+    const rawTextEl = document.getElementById('batchAiRawTextInput');
+    const mainRawEl = document.getElementById('batchRawInput');
+    const promptEl = document.getElementById('batchAiPromptInput');
+    const runBtn = document.getElementById('batchAiRunParserBtn');
+
+    const rawText = String((rawTextEl && rawTextEl.value) || (mainRawEl && mainRawEl.value) || '').trim();
+    const customPrompt = String((promptEl && promptEl.value) || '').trim();
+    const hasImages = batchAiParserImages.length > 0;
+
+    if (!rawText && !hasImages) {
+        if (typeof showToast === 'function') showToast('請先輸入任意文字或上傳圖片', 'warning');
+        return;
+    }
+
+    if (typeof callGeminiApi !== 'function') {
+        if (typeof showToast === 'function') showToast('雲端 AI 服務尚未載入', 'error');
+        return;
+    }
+
+    const feature = hasImages ? 'vision_ocr' : 'def_fill';
+    if (typeof MembershipEngine !== 'undefined' && typeof MembershipEngine.canConsumeAiQuota === 'function') {
+        const q = MembershipEngine.canConsumeAiQuota(feature);
+        if (!q.allowed) {
+            if (typeof MembershipEngine.showQuotaUpgradePrompt === 'function') {
+                MembershipEngine.showQuotaUpgradePrompt(feature);
+            } else if (typeof showToast === 'function') {
+                showToast('雲端 AI 額度不足或需升級方案！', 'warning');
+            }
+            return;
+        }
+    }
+
+    const nativeLang = localStorage.getItem('lzhcard_native_lang') || 'zh-TW';
+    const targetLang = localStorage.getItem('lzhcard_target_lang') || 'en';
+    const effectiveTargetLang = targetLang === 'custom' ? 'en' : targetLang;
+
+    const systemInstruction = `你是專業語言單字卡整理助理。
+目標學習語言代碼：${effectiveTargetLang}（若為 custom 則以英文為主）
+使用者母語代碼：${nativeLang}
+${customPrompt ? `使用者額外提示詞要求：${customPrompt}\n` : ''}
+請從使用者提供的文字或圖片中擷取所有重點單字或片語（例如使用者可能要求僅摘錄選項中的單字，請務必遵照提示詞要求），並嚴格只回傳純 JSON 陣列（不要加上 \`\`\`json 標記或任何解說文字），每個元素格式如下：
+[
+  {
+    "word": "目標單字或片語",
+    "meaning": "母語釋義（若原文已有則保留或翻譯，沒有可協助簡潔補上）",
+    "pos": "詞性縮寫（如 n. / v. / adj. / adv. / phr.）",
+    "phonetic": "音標或讀音（如 [ˈhæpɪ] 或平假名，若無可簡潔補上或留空字串）",
+    "sentence": "目標語言自然例句（若無可補一句或留空字串）",
+    "translation": "該例句的母語翻譯（若無可補或留空字串）"
+  }
+]`;
+
+    const fullPrompt = rawText
+        ? `${systemInstruction}\n\n【待解析內容】：\n${rawText}`
+        : `${systemInstruction}\n\n請解析所附圖片內容。`;
+
+    const origHtml = runBtn ? runBtn.innerHTML : '';
+    if (runBtn) {
+        runBtn.disabled = true;
+        runBtn.innerHTML = `<i class="fa-solid fa-spinner fa-spin mr-1"></i> ✨ AI 解析中...`;
+    }
+
+    try {
+        const inlineDataList = batchAiParserImages.map(img => ({
+            mimeType: img.mimeType || 'image/jpeg',
+            data: img.base64
+        }));
+
+        const aiRaw = await callGeminiApi(fullPrompt, {
+            feature,
+            inlineDataList
+        });
+
+        let parsed = null;
+        if (typeof safeParseJSON === 'function') {
+            parsed = safeParseJSON(aiRaw);
+        } else {
+            const m = String(aiRaw || '').match(/\[[\s\S]*\]/);
+            if (m) parsed = JSON.parse(m[0]);
+        }
+
+        if (!Array.isArray(parsed) || parsed.length === 0) {
+            throw new Error('AI 未能辨識出有效的單字項目');
+        }
+
+        const deduped = [];
+        const seen = new Set();
+        parsed.forEach(item => {
+            if (!item || !item.word) return;
+            const cleanWord = String(item.word).trim().replace(/\s+/g, ' ');
+            const key = normalizeWordKey(cleanWord);
+            if (!key || seen.has(key)) return;
+            seen.add(key);
+            deduped.push({
+                word: cleanWord,
+                pos: String(item.pos || '').trim(),
+                phonetic: String(item.phonetic || '').trim(),
+                meaning: String(item.meaning || '').trim(),
+                sentence: String(item.sentence || '').trim(),
+                translation: String(item.translation || '').trim()
+            });
+        });
+
+        if (deduped.length === 0) {
+            throw new Error('辨識結果為空');
+        }
+
+        window.parsedBatchList = deduped;
+        renderBatchPreview();
+        toggleBatchAiParserDrawer(false);
+        if (typeof showToast === 'function') {
+            showToast(`✨ AI 成功擷取 ${deduped.length} 筆單字進入預覽清單！`, 'success');
+        }
+    } catch (err) {
+        console.error('[Batch AI Free Parser Error]:', err);
+        if (typeof showToast === 'function') {
+            showToast(`✨ AI 解析失敗：${err.message}`, 'error');
+        }
+    } finally {
+        if (runBtn) {
+            runBtn.disabled = false;
+            runBtn.innerHTML = origHtml;
+        }
+    }
+}
+
+if (typeof window !== 'undefined') {
+    window.parseBatchText = parseBatchText;
+    window.resetBatchAiParserState = resetBatchAiParserState;
+    window.toggleBatchAiParserDrawer = toggleBatchAiParserDrawer;
+    window.removeBatchAiParserImage = removeBatchAiParserImage;
+    window.handleBatchAiParserFiles = handleBatchAiParserFiles;
+    window.runBatchAiFreeParser = runBatchAiFreeParser;
+}
+

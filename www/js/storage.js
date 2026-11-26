@@ -279,13 +279,14 @@ function syncDuplicateWordsProgress(sourceCard, decks = wordList) {
 
 const StorageEngine = {
   LOCAL_DECKS_KEY: 'flashcards_decks',
-  LOCAL_APIKEY_KEY: 'flashcard_gemini_key_v1',
   LOCAL_DIRTY_KEY: 'lzhcard_dirty_sync',
   LOCAL_DELETED_KEY: 'lzhcard_deleted_keys',
   LOCAL_TOMBSTONES_KEY: 'lzhcard_tombstones',
   LOCAL_QUIZ_SCORE_KEY: 'lzhcard_quiz_score',
   LOCAL_OWNER_KEY: 'lzhcard_active_uid',
   LOCAL_SETTINGS_DIRTY_KEY: 'lzhcard_settings_dirty',
+  LOCAL_MANIFEST_KEY: 'lzhcard_deck_manifest_v2',
+  SYNC_BEACON_URL: 'https://lzhcard.tomlin980415.workers.dev/sync/beacon',
   TOMBSTONE_TTL_MS: 90 * 24 * 60 * 60 * 1000,
   MAX_DECK_TOMBSTONES: 400,
   MAX_CARD_TOMBSTONES: 1200,
@@ -304,6 +305,11 @@ const StorageEngine = {
   _deletedKeysCacheUid: undefined,
   _tombstonesCache: null,
   _tombstonesCacheUid: undefined,
+  _cachedIdToken: '',
+  _cachedIdTokenUid: '',
+  _syncedManifestByUid: {},
+  _syncedMetaHashByUid: {},
+  _remoteChunkModeByUid: {},
   _hasLoadedOnce: false,
   _loadedUid: undefined,
   _loadedOffline: false,
@@ -361,7 +367,6 @@ const StorageEngine = {
       displayMode: 'target_front',
       phoneticPos: 'front',
       theme: 'system',
-      apiMode: 'shared',
       studyMode: 'fsrs',
       autoPlayAudio: false,
       showSentenceFront: false,
@@ -383,17 +388,18 @@ const StorageEngine = {
     localStorage.setItem('lzhcard_display_mode', defaults.displayMode);
     localStorage.setItem('lzhcard_phonetic_pos', defaults.phoneticPos);
     localStorage.setItem('theme_preference', defaults.theme);
-    localStorage.setItem('lzhcard_api_mode', defaults.apiMode);
     localStorage.setItem('lzhcard_study_mode', defaults.studyMode);
     localStorage.setItem('lzhcard_auto_audio', 'false');
     localStorage.setItem('lzhcard_show_sentence_front', 'false');
+    localStorage.setItem('lzhcard_show_morphemes', 'true');
     localStorage.setItem('lzhcard_floating_translator_enabled', 'false');
     localStorage.setItem('lzhcard_notif_friend_msg', 'true');
     localStorage.setItem('lzhcard_notif_announcements', 'true');
     localStorage.setItem('lzhcard_notif_friend_requests', 'true');
     localStorage.setItem('lzhcard_notif_team_invites', 'true');
-    localStorage.removeItem(this.LOCAL_APIKEY_KEY);
+    localStorage.removeItem('flashcard_gemini_key_v1');
     localStorage.removeItem('lzhcard_groq_key_v1');
+    localStorage.removeItem('lzhcard_api_mode');
 
     if (options && options.resetOnboardingFlags !== false) {
       localStorage.removeItem('lzhcard_onboarding_completed');
@@ -413,7 +419,6 @@ const StorageEngine = {
       if (typeof syncChatNotificationMuteIndicators === 'function') syncChatNotificationMuteIndicators();
       if (typeof applyLanguageUI === 'function') applyLanguageUI();
       if (typeof applyTheme === 'function') applyTheme(defaults.theme);
-      if (typeof updateApiKeyStatusUI === 'function') updateApiKeyStatusUI();
       if (typeof renderFrontContextSentence === 'function' && typeof currentCard !== 'undefined') {
         renderFrontContextSentence(currentCard);
       }
@@ -435,7 +440,7 @@ const StorageEngine = {
   },
 
   clearCrossAccountLocalCache() {
-    localStorage.removeItem(this.LOCAL_APIKEY_KEY);
+    localStorage.removeItem('flashcard_gemini_key_v1');
     localStorage.removeItem('lzhcard_groq_key_v1');
     localStorage.removeItem('lzhcard_ios_screen_translate_cfg_v1');
     localStorage.removeItem('lzhcard_native_lang');
@@ -449,6 +454,7 @@ const StorageEngine = {
     localStorage.removeItem('lzhcard_study_mode');
     localStorage.removeItem('lzhcard_auto_audio');
     localStorage.removeItem('lzhcard_show_sentence_front');
+    localStorage.removeItem('lzhcard_show_morphemes');
     localStorage.removeItem('lzhcard_floating_translator_enabled');
     localStorage.removeItem('lzhcard_notif_friend_msg');
     localStorage.removeItem('lzhcard_notif_announcements');
@@ -460,12 +466,14 @@ const StorageEngine = {
     if (typeof window !== 'undefined') {
       window.isManualFreePractice = false;
       window.selectedCategories = ['ALL'];
+      if (window.userData && typeof window.userData !== 'object') {
+        window.userData = {};
+      }
       if (window.userData && typeof window.userData === 'object') {
         window.userData.settings = {};
       }
     }
     if (typeof syncSettingsUI === 'function') syncSettingsUI();
-    if (typeof updateApiKeyStatusUI === 'function') updateApiKeyStatusUI();
   },
 
   cancelPendingSync() {
@@ -1372,10 +1380,10 @@ const StorageEngine = {
       displayMode: localStorage.getItem('lzhcard_display_mode') || 'target_front',
       phoneticPos: localStorage.getItem('lzhcard_phonetic_pos') || 'front',
       theme: localStorage.getItem('theme_preference') || 'system',
-      apiMode: localStorage.getItem('lzhcard_api_mode') || 'shared',
       studyMode: (localStorage.getItem('lzhcard_study_mode') === 'free' || (typeof window !== 'undefined' && window.isManualFreePractice)) ? 'free' : 'fsrs',
       autoPlayAudio: localStorage.getItem('lzhcard_auto_audio') === 'true',
       showSentenceFront: localStorage.getItem('lzhcard_show_sentence_front') === 'true',
+      showMorphemes: localStorage.getItem('lzhcard_show_morphemes') !== 'false',
       notifFriendMsg: localStorage.getItem('lzhcard_notif_friend_msg') !== 'false',
       notifAnnouncements: localStorage.getItem('lzhcard_notif_announcements') !== 'false',
       notifFriendRequests: localStorage.getItem('lzhcard_notif_friend_requests') !== 'false',
@@ -1410,6 +1418,9 @@ const StorageEngine = {
     if (typeof settings.showSentenceFront === 'boolean') {
       localStorage.setItem('lzhcard_show_sentence_front', settings.showSentenceFront ? 'true' : 'false');
     }
+    if (typeof settings.showMorphemes === 'boolean') {
+      localStorage.setItem('lzhcard_show_morphemes', settings.showMorphemes ? 'true' : 'false');
+    }
     if (typeof settings.notifFriendMsg === 'boolean') {
       localStorage.setItem('lzhcard_notif_friend_msg', settings.notifFriendMsg ? 'true' : 'false');
     }
@@ -1421,10 +1432,6 @@ const StorageEngine = {
     }
     if (typeof settings.notifTeamInvites === 'boolean') {
       localStorage.setItem('lzhcard_notif_team_invites', settings.notifTeamInvites ? 'true' : 'false');
-    }
-
-    if (settings.apiMode === 'personal' || settings.apiMode === 'shared') {
-      localStorage.setItem('lzhcard_api_mode', settings.apiMode);
     }
 
     if (settings.onboardingCompleted === true) {
@@ -1451,7 +1458,6 @@ const StorageEngine = {
     if (typeof syncChatNotificationMuteIndicators === 'function') syncChatNotificationMuteIndicators();
     if (typeof applyLanguageUI === 'function') applyLanguageUI();
     if (typeof applyTheme === 'function') applyTheme(settings.theme || 'system');
-    if (typeof updateApiKeyStatusUI === 'function') updateApiKeyStatusUI();
     if (typeof refreshFSRSUIBadges === 'function') refreshFSRSUIBadges();
     if (typeof updateStudyQueueUI === 'function') updateStudyQueueUI();
     if (typeof renderFrontContextSentence === 'function' && typeof currentCard !== 'undefined') {
@@ -1484,11 +1490,8 @@ const StorageEngine = {
     }
 
     try {
-      const isSharedApiMode = localStorage.getItem('lzhcard_api_mode') === 'shared';
-      const currentApiKey = isSharedApiMode ? '' : String(localStorage.getItem(this.LOCAL_APIKEY_KEY) || '');
       const payload = {
         settings: currentSettings,
-        apiKey: currentApiKey,
         updatedAt: firebase.firestore.FieldValue.serverTimestamp()
       };
       await db.collection('users').doc(uid).set(payload, { merge: true });
@@ -1501,8 +1504,107 @@ const StorageEngine = {
     }
   },
 
-  async fetchRemoteUserDocAndDecks(uid) {
+  async refreshCachedIdToken(uid = this.getCurrentUid()) {
+    try {
+      const user = (typeof firebase !== 'undefined' && firebase.auth && firebase.auth().currentUser)
+        || (typeof auth !== 'undefined' && auth && auth.currentUser)
+        || null;
+      if (user && !user.isAnonymous && typeof user.getIdToken === 'function') {
+        const tok = await user.getIdToken(false);
+        if (tok) {
+          this._cachedIdToken = tok;
+          this._cachedIdTokenUid = user.uid || uid || '';
+        }
+        return tok || '';
+      }
+    } catch (e) {}
+    return '';
+  },
+
+  readSyncedManifestState(uid = this.getCurrentUid()) {
+    const key = this.getScopedKey(this.LOCAL_MANIFEST_KEY, uid || 'guest');
+    if (this._syncedManifestByUid[uid || 'guest']) {
+      return this._syncedManifestByUid[uid || 'guest'];
+    }
+    try {
+      const raw = localStorage.getItem(key);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object') {
+          const state = {
+            deckHashes: parsed.deckHashes && typeof parsed.deckHashes === 'object' ? parsed.deckHashes : {},
+            metaHash: typeof parsed.metaHash === 'string' ? parsed.metaHash : '',
+            chunkMode: typeof parsed.chunkMode === 'string' ? parsed.chunkMode : ''
+          };
+          this._syncedManifestByUid[uid || 'guest'] = state;
+          return state;
+        }
+      }
+    } catch (e) {}
+    return { deckHashes: {}, metaHash: '', chunkMode: '' };
+  },
+
+  writeSyncedManifestState(uid, state) {
+    const scope = uid || 'guest';
+    const cleanState = {
+      deckHashes: state && state.deckHashes && typeof state.deckHashes === 'object' ? state.deckHashes : {},
+      metaHash: state && typeof state.metaHash === 'string' ? state.metaHash : '',
+      chunkMode: state && typeof state.chunkMode === 'string' ? state.chunkMode : ''
+    };
+    this._syncedManifestByUid[scope] = cleanState;
+    try {
+      localStorage.setItem(this.getScopedKey(this.LOCAL_MANIFEST_KEY, scope), JSON.stringify(cleanState));
+    } catch (e) {}
+  },
+
+  buildDeckChunksAndManifest(compactDecks) {
+    const byDeck = new Map();
+    const arr = Array.isArray(compactDecks) ? compactDecks : [];
+    arr.forEach(card => {
+      if (!card || typeof card !== 'object') return;
+      const dId = card.deckId || generateDeterministicDeckId(card.category);
+      if (!byDeck.has(dId)) byDeck.set(dId, []);
+      byDeck.get(dId).push(card);
+    });
+
+    const deckManifest = {};
+    const deckChunks = [];
+    let hasOversizedDeck = false;
+
+    byDeck.forEach((cards, deckId) => {
+      const sorted = cards.slice().sort((a, b) => String(a.id || '').localeCompare(String(b.id || '')));
+      const serialized = JSON.stringify(sorted);
+      const byteSize = typeof Blob !== 'undefined' ? new Blob([serialized]).size : serialized.length * 2;
+      if (byteSize > 720000) {
+        hasOversizedDeck = true;
+      }
+      const hash = hashStringStableHex(serialized);
+      let maxUpdated = 0;
+      sorted.forEach(c => {
+        const ts = toFiniteNumber(c.updatedAt, 0);
+        if (ts > maxUpdated) maxUpdated = ts;
+      });
+      deckManifest[deckId] = {
+        hash,
+        count: sorted.length,
+        updatedAt: maxUpdated
+      };
+      deckChunks.push({
+        deckId,
+        hash,
+        cardCount: sorted.length,
+        updatedAt: maxUpdated,
+        decks: sorted,
+        byteSize
+      });
+    });
+
+    return { deckManifest, deckChunks, hasOversizedDeck };
+  },
+
+  async fetchRemoteUserDocAndDecks(uid, cachedLocalDecks = null) {
     if (!uid || typeof db === 'undefined') return null;
+    this.refreshCachedIdToken(uid);
     const docRef = db.collection('users').doc(uid);
     const doc = await docRef.get();
     if (!doc.exists) {
@@ -1512,7 +1614,76 @@ const StorageEngine = {
     const data = doc.data() || {};
     let remoteDecks = [];
 
-    if (typeof data.deckChunkCount === 'number' && data.deckChunkCount > 0) {
+    // 策略 A：新版每字庫獨立分片 + Manifest 差異讀取（未變動字庫 0 讀取）
+    if (data.deckChunkCount === -1 && data.deckManifest && typeof data.deckManifest === 'object') {
+      this._remoteChunkModeByUid[uid] = 'manifest_v2';
+      const remoteManifest = data.deckManifest;
+      const localList = Array.isArray(cachedLocalDecks) ? cachedLocalDecks : await this.getLocalDecks(uid);
+      const localState = this.readSyncedManifestState(uid);
+      const localByDeck = new Map();
+      localList.forEach(c => {
+        if (!c || typeof c !== 'object') return;
+        const dId = c.deckId || generateDeterministicDeckId(c.category);
+        if (!localByDeck.has(dId)) localByDeck.set(dId, []);
+        localByDeck.get(dId).push(c);
+      });
+
+      const manifestKeys = Object.keys(remoteManifest);
+      const decksToFetch = [];
+
+      manifestKeys.forEach(deckId => {
+        const rMeta = remoteManifest[deckId] || {};
+        const lHash = localState.deckHashes[deckId];
+        const lCards = localByDeck.get(deckId);
+        if (lHash && rMeta.hash && lHash === rMeta.hash && Array.isArray(lCards) && lCards.length === Number(rMeta.count || 0)) {
+          remoteDecks.push(...lCards);
+        } else {
+          decksToFetch.push(deckId);
+        }
+      });
+
+      if (decksToFetch.length > 0) {
+        if (decksToFetch.length > 6 && decksToFetch.length === manifestKeys.length) {
+          const chunksSnap = await docRef.collection('deckChunks').get();
+          chunksSnap.docs.forEach(cd => {
+            const cData = cd.data() || {};
+            if (Array.isArray(cData.decks)) {
+              remoteDecks.push(...cData.decks);
+            }
+          });
+        } else {
+          const chunkDocs = await Promise.all(
+            decksToFetch.map(deckId => docRef.collection('deckChunks').doc(deckId).get().catch(() => null))
+          );
+          chunkDocs.forEach((docSnap, idx) => {
+            if (docSnap && docSnap.exists) {
+              const cData = docSnap.data() || {};
+              if (Array.isArray(cData.decks)) {
+                remoteDecks.push(...cData.decks);
+              }
+            } else {
+              const fallbackLocal = localByDeck.get(decksToFetch[idx]);
+              if (Array.isArray(fallbackLocal) && fallbackLocal.length > 0) {
+                remoteDecks.push(...fallbackLocal);
+              }
+            }
+          });
+        }
+      }
+
+      const nextSyncedDeckHashes = {};
+      manifestKeys.forEach(k => {
+        if (remoteManifest[k] && remoteManifest[k].hash) {
+          nextSyncedDeckHashes[k] = remoteManifest[k].hash;
+        }
+      });
+      this.writeSyncedManifestState(uid, {
+        ...localState,
+        deckHashes: nextSyncedDeckHashes,
+        chunkMode: 'manifest_v2'
+      });
+    } else if (typeof data.deckChunkCount === 'number' && data.deckChunkCount > 0) {
+      this._remoteChunkModeByUid[uid] = 'legacy_chunk';
       const chunksSnap = await docRef.collection('deckChunks').get();
       const chunkDocs = chunksSnap.docs
         .map(d => ({ id: d.id, ...d.data() }))
@@ -1527,8 +1698,10 @@ const StorageEngine = {
         }
       });
     } else if (Array.isArray(data.decks)) {
+      this._remoteChunkModeByUid[uid] = 'inline';
       remoteDecks = data.decks;
     } else if (Array.isArray(data.wordList)) {
+      this._remoteChunkModeByUid[uid] = 'legacy_wordlist';
       remoteDecks = data.wordList;
     }
 
@@ -1601,7 +1774,7 @@ const StorageEngine = {
 
       if (uid && typeof db !== 'undefined' && db) {
         try {
-          const fetched = await this.fetchRemoteUserDocAndDecks(uid);
+          const fetched = await this.fetchRemoteUserDocAndDecks(uid, localDecks);
 
           // 若等待雲端回應期間又切換了帳號，直接中止這次過期的載入
           if (this.getCurrentUid() !== uid) return wordList;
@@ -1675,18 +1848,9 @@ const StorageEngine = {
               this.applyDefaultSettings({ syncUI: true, resetOnboardingFlags: true });
             }
 
-            const effectiveApiModeAfterSync = localStorage.getItem('lzhcard_api_mode') || (data.settings && data.settings.apiMode) || 'shared';
-            if (effectiveApiModeAfterSync !== 'shared') {
-              if (data.apiKey && !localStorage.getItem(this.LOCAL_APIKEY_KEY)) {
-                localStorage.setItem(this.LOCAL_APIKEY_KEY, data.apiKey);
-              }
-              if (typeof LZHEntitlements !== 'undefined' && typeof LZHEntitlements.restorePersonalKeysForUid === 'function') {
-                LZHEntitlements.restorePersonalKeysForUid(uid);
-              }
-            } else if (effectiveApiModeAfterSync === 'shared') {
-              localStorage.removeItem(this.LOCAL_APIKEY_KEY);
-              localStorage.removeItem('lzhcard_groq_key_v1');
-            }
+            localStorage.removeItem('flashcard_gemini_key_v1');
+            localStorage.removeItem('lzhcard_groq_key_v1');
+            localStorage.removeItem('lzhcard_api_mode');
 
             const hasLegacyWordListField = Array.isArray(data.wordList);
             if (migrated || deduped || needsCloudSync || hasLegacyWordListField || isSettingsDirty || (localQuiz.updatedAt || 0) > (remoteQuiz.updatedAt || 0)) {
@@ -1697,10 +1861,9 @@ const StorageEngine = {
             }
 
             if (typeof syncSettingsUI === 'function') syncSettingsUI();
-            if (typeof updateApiKeyStatusUI === 'function') updateApiKeyStatusUI();
             if (typeof syncConfigToNativeOverlay === 'function') syncConfigToNativeOverlay();
             if (typeof LZHEntitlements !== 'undefined' && typeof LZHEntitlements.notifyStateChange === 'function') {
-              LZHEntitlements.notifyStateChange('storage_loaded_settings', { finalMode: effectiveApiModeAfterSync });
+              LZHEntitlements.notifyStateChange('storage_loaded_settings', {});
             }
 
             if (typeof checkAndOpenOnboardingModal === 'function') {
@@ -1823,7 +1986,7 @@ const StorageEngine = {
         ? [...wordList]
         : await this.getLocalDecks(uid);
 
-      const fetched = await this.fetchRemoteUserDocAndDecks(uid);
+      const fetched = await this.fetchRemoteUserDocAndDecks(uid, currentLocal);
       if (this.getCurrentUid() !== uid || !fetched) return false;
 
       const remoteDecks = fetched.exists ? fetched.remoteDecks : [];
@@ -1946,8 +2109,6 @@ const StorageEngine = {
           }
           this._hasPendingFlush = false;
 
-          const isSharedApiMode = localStorage.getItem('lzhcard_api_mode') === 'shared';
-          const currentApiKey = isSharedApiMode ? '' : String(localStorage.getItem(this.LOCAL_APIKEY_KEY) || '');
           const currentSettings = this.getLocalSettings();
           const sanitizedDecks = this.sanitizeDecksForStorage(wordList);
           const compactDecks = this.compactDecksForCloud(sanitizedDecks);
@@ -1957,86 +2118,129 @@ const StorageEngine = {
           const userDocRef = db.collection('users').doc(uid);
           const chunksColRef = userDocRef.collection('deckChunks');
 
+          const { deckManifest, deckChunks, hasOversizedDeck } = this.buildDeckChunksAndManifest(compactDecks);
+          const prevSyncState = this.readSyncedManifestState(uid);
+          const prevDeckHashes = prevSyncState.deckHashes || {};
+          const remoteMode = this._remoteChunkModeByUid[uid] || prevSyncState.chunkMode || '';
+
           const basePayload = deepSanitizeForFirestore({
-            apiKey: currentApiKey,
             settings: currentSettings,
             quizScore: currentQuizScore,
             deletedDecks: tombstones.deletedDecks,
             deletedCards: tombstones.deletedCards
           });
-          basePayload.updatedAt = firebase.firestore.FieldValue.serverTimestamp();
-          if (firebase?.firestore?.FieldValue?.delete) {
-            basePayload.wordList = firebase.firestore.FieldValue.delete();
-          }
 
-          const compactBytes = new Blob([JSON.stringify({
-            decks: compactDecks,
-            apiKey: currentApiKey,
-            settings: currentSettings,
-            quizScore: currentQuizScore,
-            deletedDecks: tombstones.deletedDecks,
-            deletedCards: tombstones.deletedCards
-          })]).size;
-
-          // 策略 1：精簡後若在 750 KB 以內，先寫入主文件，再批次清理舊分片
-          if (compactBytes <= 750000) {
-            await userDocRef.set({
+          if (!hasOversizedDeck) {
+            const metaHash = hashStringStableHex(JSON.stringify({
               ...basePayload,
-              decks: compactDecks,
-              deckChunkCount: 0
-            }, { merge: true });
+              deckManifest
+            }));
+            const dirtyDeckChunks = deckChunks.filter(c => prevDeckHashes[c.deckId] !== c.hash);
+            const activeDeckIds = new Set(Object.keys(deckManifest));
+            const removedDeckIds = Object.keys(prevDeckHashes).filter(id => !activeDeckIds.has(id));
+            const needsMigration = remoteMode && remoteMode !== 'manifest_v2';
 
-            try {
-              const oldChunksSnap = await chunksColRef.get();
-              if (!oldChunksSnap.empty) {
-                const delOps = oldChunksSnap.docs.map(d => ({ type: 'delete', ref: d.ref }));
-                await this.commitBatchOpsInChunks(delOps, 400);
-              }
-            } catch (cleanErr) {}
-          } else {
-            // 策略 2：資料超過 750 KB，分批寫入 350 KB 子集合分片 -> 更新主文件 -> 刪除多餘舊分片
-            const chunks = this.splitIntoChunks(compactDecks, this.CHUNK_TARGET_BYTES);
+            if (!needsMigration && metaHash === prevSyncState.metaHash && dirtyDeckChunks.length === 0 && removedDeckIds.length === 0) {
+              this._retryCount = 0;
+              this._needsReconnectSync = false;
+              localStorage.removeItem(this.getScopedKey(this.LOCAL_DIRTY_KEY, uid));
+              localStorage.removeItem(this.getScopedKey(this.LOCAL_SETTINGS_DIRTY_KEY, uid));
+              continue;
+            }
 
-            try {
-              const existingSnap = await chunksColRef.get();
-              const writeOps = chunks.map((chunkItems, idx) => ({
+            if (dirtyDeckChunks.length > 0) {
+              const writeOps = dirtyDeckChunks.map(chunk => ({
                 type: 'set',
-                ref: chunksColRef.doc(`chunk_${idx}`),
+                ref: chunksColRef.doc(chunk.deckId),
                 data: {
-                  index: idx,
-                  decks: chunkItems,
+                  deckId: chunk.deckId,
+                  hash: chunk.hash,
+                  cardCount: chunk.cardCount,
+                  decks: chunk.decks,
                   updatedAt: firebase.firestore.FieldValue.serverTimestamp()
                 }
               }));
               await this.commitBatchOpsInChunks(writeOps, 400);
-
-              await userDocRef.set({
-                ...basePayload,
-                decks: [],
-                deckChunkCount: chunks.length
-              }, { merge: true });
-
-              const deleteOps = [];
-              existingSnap.docs.forEach(docSnap => {
-                const idx = parseInt(String(docSnap.id).replace('chunk_', ''), 10);
-                if (Number.isNaN(idx) || idx >= chunks.length) {
-                  deleteOps.push({ type: 'delete', ref: docSnap.ref });
-                }
-              });
-              if (deleteOps.length > 0) {
-                await this.commitBatchOpsInChunks(deleteOps, 400);
-              }
-            } catch (chunkWriteErr) {
-              if (compactBytes <= 980000) {
-                await userDocRef.set({
-                  ...basePayload,
-                  decks: compactDecks,
-                  deckChunkCount: 0
-                }, { merge: true });
-              } else {
-                throw chunkWriteErr;
-              }
             }
+
+            if (needsMigration || metaHash !== prevSyncState.metaHash || dirtyDeckChunks.length > 0 || removedDeckIds.length > 0) {
+              const mainDocPayload = {
+                ...basePayload,
+                deckManifest,
+                deckChunkCount: -1,
+                decks: [],
+                updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+              };
+              if (firebase?.firestore?.FieldValue?.delete) {
+                mainDocPayload.wordList = firebase.firestore.FieldValue.delete();
+                mainDocPayload.apiKey = firebase.firestore.FieldValue.delete();
+              }
+              await userDocRef.set(mainDocPayload, { merge: true });
+            }
+
+            if (removedDeckIds.length > 0 || needsMigration) {
+              try {
+                const deleteOps = removedDeckIds.map(id => ({ type: 'delete', ref: chunksColRef.doc(id) }));
+                if (needsMigration) {
+                  const existingSnap = await chunksColRef.get();
+                  existingSnap.docs.forEach(docSnap => {
+                    if (docSnap.id.startsWith('chunk_') || !activeDeckIds.has(docSnap.id)) {
+                      if (!deleteOps.some(op => op.ref.id === docSnap.id)) {
+                        deleteOps.push({ type: 'delete', ref: docSnap.ref });
+                      }
+                    }
+                  });
+                }
+                if (deleteOps.length > 0) {
+                  await this.commitBatchOpsInChunks(deleteOps, 400);
+                }
+              } catch (cleanErr) {}
+            }
+
+            const nextHashes = {};
+            Object.keys(deckManifest).forEach(k => { nextHashes[k] = deckManifest[k].hash; });
+            this._remoteChunkModeByUid[uid] = 'manifest_v2';
+            this.writeSyncedManifestState(uid, {
+              deckHashes: nextHashes,
+              metaHash,
+              chunkMode: 'manifest_v2'
+            });
+          } else {
+            // 超大單字庫 (>720KB 單一分類) 安全退回依位元組分片寫入
+            basePayload.updatedAt = firebase.firestore.FieldValue.serverTimestamp();
+            if (firebase?.firestore?.FieldValue?.delete) {
+              basePayload.wordList = firebase.firestore.FieldValue.delete();
+              basePayload.apiKey = firebase.firestore.FieldValue.delete();
+            }
+            const chunks = this.splitIntoChunks(compactDecks, this.CHUNK_TARGET_BYTES);
+            const existingSnap = await chunksColRef.get();
+            const writeOps = chunks.map((chunkItems, idx) => ({
+              type: 'set',
+              ref: chunksColRef.doc(`chunk_${idx}`),
+              data: {
+                index: idx,
+                decks: chunkItems,
+                updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+              }
+            }));
+            await this.commitBatchOpsInChunks(writeOps, 400);
+            await userDocRef.set({
+              ...basePayload,
+              decks: [],
+              deckChunkCount: chunks.length
+            }, { merge: true });
+
+            const deleteOps = [];
+            existingSnap.docs.forEach(docSnap => {
+              const idx = parseInt(String(docSnap.id).replace('chunk_', ''), 10);
+              if (Number.isNaN(idx) || idx >= chunks.length) {
+                deleteOps.push({ type: 'delete', ref: docSnap.ref });
+              }
+            });
+            if (deleteOps.length > 0) {
+              await this.commitBatchOpsInChunks(deleteOps, 400);
+            }
+            this._remoteChunkModeByUid[uid] = 'legacy_chunk';
           }
 
           if (!this._hasPendingFlush) {
@@ -2285,17 +2489,96 @@ const StorageEngine = {
         this.flushCloudSave();
       }, 400);
     }
+  },
+  sendKeepaliveSyncBeacon(reason = 'pagehide') {
+    try {
+      const uid = this.getCurrentUid();
+      if (!uid || !this._hasLoadedOnce || this._loadedUid !== uid) return false;
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) return false;
+      const dirtyKey = this.getScopedKey(this.LOCAL_DIRTY_KEY, uid);
+      const settingsDirtyKey = this.getScopedKey(this.LOCAL_SETTINGS_DIRTY_KEY, uid);
+      const hasDirty = Boolean(
+        this._cloudSaveTimer ||
+        localStorage.getItem(dirtyKey) === 'true' ||
+        localStorage.getItem(settingsDirtyKey) === 'true'
+      );
+      if (!hasDirty) return false;
+
+      const token = (this._cachedIdTokenUid === uid && this._cachedIdToken) ? this._cachedIdToken : '';
+      if (!token || typeof fetch !== 'function') return false;
+
+      const currentSettings = this.getLocalSettings();
+      const sanitizedDecks = this.sanitizeDecksForStorage(typeof wordList !== 'undefined' ? wordList : []);
+      const compactDecks = this.compactDecksForCloud(sanitizedDecks);
+      const currentQuizScore = this.getLocalQuizScore(uid);
+      const tombstones = (this._tombstonesCache && this._tombstonesCacheUid === uid)
+        ? this._tombstonesCache
+        : { deletedDecks: {}, deletedCards: {} };
+
+      const { deckManifest, deckChunks, hasOversizedDeck } = this.buildDeckChunksAndManifest(compactDecks);
+      if (hasOversizedDeck) return false;
+
+      const prevSyncState = this.readSyncedManifestState(uid);
+      const prevDeckHashes = prevSyncState.deckHashes || {};
+      const dirtyDeckChunks = deckChunks.filter(c => prevDeckHashes[c.deckId] !== c.hash);
+      const activeDeckIds = new Set(Object.keys(deckManifest));
+      const deletedChunkIds = Object.keys(prevDeckHashes).filter(id => !activeDeckIds.has(id));
+
+      const baseMeta = deepSanitizeForFirestore({
+        settings: currentSettings,
+        quizScore: currentQuizScore,
+        deletedDecks: tombstones.deletedDecks || {},
+        deletedCards: tombstones.deletedCards || {},
+        deckManifest
+      });
+
+      const sendOneBeacon = (payload) => {
+        try {
+          fetch(this.SYNC_BEACON_URL, {
+            method: 'POST',
+            keepalive: true,
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${token}`
+            },
+            body: JSON.stringify(payload)
+          }).catch(() => {});
+        } catch (e) {}
+      };
+
+      const fullPayload = { dirtyChunks: dirtyDeckChunks, deletedChunkIds, meta: baseMeta, reason };
+      const fullJson = JSON.stringify(fullPayload);
+
+      // 瀏覽器 keepalive 單次限制為 64KB，超過時拆分逐字庫發送確保必達
+      if (fullJson.length <= 56000) {
+        sendOneBeacon(fullPayload);
+      } else {
+        dirtyDeckChunks.forEach(chunk => {
+          const singleChunkJson = JSON.stringify({ dirtyChunks: [chunk], reason });
+          if (singleChunkJson.length <= 58000) {
+            sendOneBeacon({ dirtyChunks: [chunk], reason });
+          }
+        });
+        sendOneBeacon({ dirtyChunks: [], deletedChunkIds, meta: baseMeta, reason });
+      }
+      return true;
+    } catch (e) {
+      return false;
+    }
   }
 };
 
 if (typeof document !== 'undefined') {
   document.addEventListener('visibilitychange', () => {
     const dirtyKey = StorageEngine.getScopedKey(StorageEngine.LOCAL_DIRTY_KEY);
+    const settingsDirtyKey = StorageEngine.getScopedKey(StorageEngine.LOCAL_SETTINGS_DIRTY_KEY);
     if (document.visibilityState === 'hidden') {
-      if (StorageEngine._cloudSaveTimer || localStorage.getItem(dirtyKey) === 'true') {
+      if (StorageEngine._cloudSaveTimer || localStorage.getItem(dirtyKey) === 'true' || localStorage.getItem(settingsDirtyKey) === 'true') {
+        StorageEngine.sendKeepaliveSyncBeacon('visibility_hidden');
         StorageEngine.flushCloudSave();
       }
     } else if (document.visibilityState === 'visible') {
+      StorageEngine.refreshCachedIdToken();
       if (typeof navigator === 'undefined' || navigator.onLine !== false) {
         if (StorageEngine._needsReconnectSync || StorageEngine._loadedOffline || localStorage.getItem(dirtyKey) === 'true') {
           StorageEngine.syncOnReconnect('visibility');
@@ -2308,10 +2591,27 @@ if (typeof document !== 'undefined') {
 if (typeof window !== 'undefined') {
   window.addEventListener('pagehide', () => {
     const dirtyKey = StorageEngine.getScopedKey(StorageEngine.LOCAL_DIRTY_KEY);
-    if (StorageEngine._cloudSaveTimer || localStorage.getItem(dirtyKey) === 'true') {
+    const settingsDirtyKey = StorageEngine.getScopedKey(StorageEngine.LOCAL_SETTINGS_DIRTY_KEY);
+    if (StorageEngine._cloudSaveTimer || localStorage.getItem(dirtyKey) === 'true' || localStorage.getItem(settingsDirtyKey) === 'true') {
+      StorageEngine.sendKeepaliveSyncBeacon('pagehide');
       StorageEngine.flushCloudSave();
     }
   });
+
+  try {
+    const capApp = window.Capacitor?.Plugins?.App;
+    if (capApp && typeof capApp.addListener === 'function') {
+      capApp.addListener('appStateChange', (state) => {
+        if (state && state.isActive === false) {
+          StorageEngine.sendKeepaliveSyncBeacon('capacitor_background');
+          StorageEngine.flushCloudSave();
+        } else if (state && state.isActive === true) {
+          StorageEngine.refreshCachedIdToken();
+          StorageEngine.syncOnReconnect('capacitor_resume');
+        }
+      });
+    }
+  } catch (e) {}
 
   window.addEventListener('offline', () => {
     StorageEngine._needsReconnectSync = true;
@@ -2344,7 +2644,6 @@ async function loadStorage() {
   if (typeof updateCategorySelects === 'function') updateCategorySelects();
   if (typeof updateUI === 'function') updateUI();
   if (typeof nextCard === 'function') nextCard();
-  if (typeof updateApiKeyStatusUI === 'function') updateApiKeyStatusUI();
 }
 
 async function saveStorage(immediate = false) {

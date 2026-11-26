@@ -1,67 +1,15 @@
 /**
- * LZHCard - AI 萬能多語系解析模組 (AI Core Engine - 配額驗證 + 雙軌路由 + BYOK)
+ * LZHCard - AI 萬能多語系解析模組 (AI Core Engine - 雲端會員配額 & 班級共享通道)
  */
-
-window.cachedWorkingModel = null;
 
 // 🌐 Cloudflare Worker 共用後端中繼站網址
 const SHARED_BACKEND_URL = "https://lzhcard.tomlin980415.workers.dev";
 
-// ⚠️ 模型優先序列
-const GEMINI_MODELS = [
-    "gemini-3.5-flash-lite",
-    "gemini-3.6-flash",
-    "gemini-3.8-flash"
-];
-
-// 🛡️ 個人 API 流量控制（14 RPM 順暢流控不撞牆）
-const GLOBAL_AI_MAX_RPM = 14;
-const GLOBAL_AI_WINDOW_MS = 60 * 1000;
-window.geminiApiCallTimestamps = window.geminiApiCallTimestamps || [];
-
-/**
- * ⏳ 個人 API Key 自動排隊機制
- */
-async function waitForRateLimitSlot() {
-    while (true) {
-        const now = Date.now();
-        window.geminiApiCallTimestamps = window.geminiApiCallTimestamps.filter(
-            ts => now - ts < GLOBAL_AI_WINDOW_MS
-        );
-
-        if (window.geminiApiCallTimestamps.length < GLOBAL_AI_MAX_RPM) {
-            window.geminiApiCallTimestamps.push(now);
-            return;
-        }
-
-        const oldestCall = window.geminiApiCallTimestamps[0];
-        const waitMs = GLOBAL_AI_WINDOW_MS - (now - oldestCall) + 100;
-
-        console.log(`[AI Rate Limiter] 個人配額達 14 RPM，自動排隊 ${Math.ceil(waitMs / 1000)} 秒...`);
-        await new Promise(resolve => setTimeout(resolve, waitMs));
-    }
-}
-
-const GROQ_KEY_STORAGE_NAME = 'lzhcard_groq_key_v1';
-const GEMINI_KEY_STORAGE_NAME = 'flashcard_gemini_key_v1';
-const GROQ_CHAT_MODELS = [
-    'llama-3.3-70b-versatile',
-    'llama-3.1-8b-instant'
-];
-
-function getApiMode() {
-    const rawMode = localStorage.getItem('lzhcard_api_mode');
-    if (rawMode === 'shared') return 'shared';
-    if (rawMode === 'personal') {
-        return (isStoredKeyValid(localStorage.getItem(GROQ_KEY_STORAGE_NAME)) || isStoredKeyValid(localStorage.getItem(GEMINI_KEY_STORAGE_NAME)))
-            ? 'personal'
-            : 'shared';
-    }
-    if (isStoredKeyValid(localStorage.getItem(GROQ_KEY_STORAGE_NAME)) || isStoredKeyValid(localStorage.getItem(GEMINI_KEY_STORAGE_NAME))) {
-        return 'personal';
-    }
-    return 'shared';
-}
+try {
+    localStorage.removeItem('lzhcard_groq_key_v1');
+    localStorage.removeItem('flashcard_gemini_key_v1');
+    localStorage.removeItem('lzhcard_api_mode');
+} catch (e) {}
 
 function safeT(key, params, fallbackStr) {
     if (typeof t === 'function') {
@@ -78,55 +26,6 @@ function safeT(key, params, fallbackStr) {
     }
     return fallbackStr;
 }
-
-function isStoredKeyValid(rawKey) {
-    if (!rawKey) return false;
-    const trimmed = String(rawKey).trim();
-    return Boolean(trimmed && trimmed !== 'undefined' && trimmed !== 'null');
-}
-
-function getValidGroqKey() {
-    if (localStorage.getItem('lzhcard_api_mode') === 'shared') return null;
-    const rawKey = localStorage.getItem(GROQ_KEY_STORAGE_NAME);
-    if (!isStoredKeyValid(rawKey)) {
-        if (rawKey !== null) localStorage.removeItem(GROQ_KEY_STORAGE_NAME);
-        return null;
-    }
-    return rawKey.trim();
-}
-
-function getValidApiKey() {
-    if (localStorage.getItem('lzhcard_api_mode') === 'shared') return null;
-    const rawKey = localStorage.getItem(GEMINI_KEY_STORAGE_NAME);
-    if (!isStoredKeyValid(rawKey)) {
-        if (rawKey !== null) localStorage.removeItem(GEMINI_KEY_STORAGE_NAME);
-        return null;
-    }
-    return rawKey.trim();
-}
-
-function hasAnyPersonalKey() {
-    if (localStorage.getItem('lzhcard_api_mode') === 'shared') return false;
-    return Boolean(getValidGroqKey() || getValidApiKey());
-}
-
-function updateApiKeyStatusUI() {
-    const icon = document.getElementById('apiKeyIcon');
-    if (!icon) return;
-
-    const hasPersonal = hasAnyPersonalKey();
-    const mode = localStorage.getItem('lzhcard_api_mode') || 'shared';
-
-    if (hasPersonal || mode === 'shared') {
-        icon.classList.remove('text-amber-500');
-        icon.classList.add('text-emerald-500');
-    } else {
-        icon.classList.remove('text-emerald-500');
-        icon.classList.add('text-amber-500');
-    }
-}
-
-window.addEventListener('DOMContentLoaded', updateApiKeyStatusUI);
 
 const AI_PRIVACY_CONSENT_KEY = 'lzhcard_ai_privacy_consent_v1';
 let _aiConsentPendingResolve = null;
@@ -304,74 +203,20 @@ function buildGeminiContents(promptText, options = {}) {
     return [{ parts }];
 }
 
-function extractPromptTextForGroq(promptText, options = {}) {
-    if (promptText !== undefined && promptText !== null && String(promptText).trim().length > 0) {
-        return String(promptText);
+function resolveClassroomGroupIdForAi(options = {}) {
+    if (options && typeof options.classGroupId === 'string' && options.classGroupId.trim()) {
+        return options.classGroupId.trim();
     }
-    if (options && Array.isArray(options.parts)) {
-        return options.parts
-            .filter(p => p && typeof p.text === 'string')
-            .map(p => p.text)
-            .join('\n');
-    }
+    try {
+        if (typeof window !== 'undefined' && window.ClassroomEngine && typeof window.ClassroomEngine.getSponsorGroupId === 'function') {
+            return String(window.ClassroomEngine.getSponsorGroupId() || '').trim();
+        }
+    } catch (e) {}
     return '';
 }
 
-async function fetchGroqDirectly(groqKey, promptText, options = {}) {
-    const cleanKey = groqKey.trim();
-    const silent = Boolean(options && options.silent);
-    const contentText = extractPromptTextForGroq(promptText, options);
-    const models = (options && options.groqModel)
-        ? [options.groqModel, ...GROQ_CHAT_MODELS.filter(m => m !== options.groqModel)]
-        : GROQ_CHAT_MODELS;
-
-    let lastError = null;
-    for (const model of models) {
-        try {
-            const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${cleanKey}`
-                },
-                body: JSON.stringify({
-                    model,
-                    messages: [
-                        { role: 'user', content: contentText }
-                    ],
-                    temperature: typeof options.temperature === 'number' ? options.temperature : 0.2
-                })
-            });
-
-            if (res.ok) {
-                const data = await res.json();
-                return String(data?.choices?.[0]?.message?.content || '');
-            }
-
-            if (res.status === 401 || res.status === 403) {
-                localStorage.removeItem(GROQ_KEY_STORAGE_NAME);
-                updateApiKeyStatusUI();
-                if (typeof LZHEntitlements !== 'undefined' && typeof LZHEntitlements.notifyStateChange === 'function') {
-                    LZHEntitlements.notifyStateChange('byok_key_invalid', { provider: 'groq' });
-                }
-                if (!silent) {
-                    if (typeof showToast === 'function') showToast(safeT('toastInvalidApiKey', null, 'Groq API Key 無效，請重新設定'), 'error');
-                    if (typeof openModal === 'function') openModal('keyModal');
-                }
-                throw new Error('Groq API Key 無效');
-            }
-
-            lastError = `Groq 模型 ${model} 回應異常 (${res.status})`;
-        } catch (e) {
-            if (e && e.message === 'Groq API Key 無效') throw e;
-            lastError = e && e.message ? e.message : 'Groq 連線失敗';
-        }
-    }
-    throw new Error(lastError || 'Groq 呼叫失敗');
-}
-
 /**
- * 🌐 全域底層 API 呼叫函式 (Priority 1: 本機個人 Groq/Gemini BYOK 0 扣額度 -> Priority 2: 雲端共用配額制)
+ * 🌐 全域底層 AI 呼叫函式（經 Cloudflare Worker 驗證會員配額或班級教師共享配額）
  */
 async function callGeminiApi(promptText, options = {}) {
     const silent = Boolean(options && options.silent);
@@ -385,106 +230,19 @@ async function callGeminiApi(promptText, options = {}) {
             throw new Error('使用者選擇僅使用離線與本機功能');
         }
     }
-    const hasMedia = hasInlineMediaPayload(options);
-    const groqKey = getValidGroqKey();
-    const geminiKey = getValidApiKey();
-
-    // Priority 1: 本機個人 BYOK Key（Groq 純文字優先 -> Gemini 全能支援，完全不扣系統配額）
-    if (!hasMedia && groqKey) {
-        await waitForRateLimitSlot();
-        try {
-            return await fetchGroqDirectly(groqKey, promptText, options);
-        } catch (groqErr) {
-            if (geminiKey) {
-                try {
-                    return await fetchGeminiDirectly(geminiKey, promptText, options);
-                } catch (gemErr) {
-                    if (silent) return await fetchViaSharedProxy(promptText, options);
-                    throw gemErr;
-                }
-            }
-            if (silent) {
-                return await fetchViaSharedProxy(promptText, options);
-            }
-            throw groqErr;
-        }
-    }
-
-    if (geminiKey) {
-        await waitForRateLimitSlot();
-        try {
-            return await fetchGeminiDirectly(geminiKey, promptText, options);
-        } catch (err) {
-            if (silent) {
-                return await fetchViaSharedProxy(promptText, options);
-            }
-            throw err;
-        }
-    }
-
-    // Priority 2: 兩者皆未填寫個人 Key -> 改走系統共用 Worker 並套用方案額度限制
     return await fetchViaSharedProxy(promptText, options);
-}
-
-async function fetchGeminiDirectly(apiKey, promptText, options = {}) {
-    const cleanKey = apiKey.trim();
-    const silent = Boolean(options && options.silent);
-    const contentsPayload = buildGeminiContents(promptText, options);
-
-    const modelList = window.cachedWorkingModel
-        ? [window.cachedWorkingModel, ...GEMINI_MODELS.filter(m => m !== window.cachedWorkingModel)]
-        : GEMINI_MODELS;
-
-    let lastError = null;
-
-    for (const model of modelList) {
-        const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(cleanKey)}`;
-
-        try {
-            const res = await fetch(apiUrl, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ contents: contentsPayload })
-            });
-
-            if (res.ok) {
-                const data = await res.json();
-                window.cachedWorkingModel = model;
-                return data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-            }
-
-            if (res.status === 401 || res.status === 403) {
-                localStorage.removeItem(GEMINI_KEY_STORAGE_NAME);
-                updateApiKeyStatusUI();
-                if (typeof LZHEntitlements !== 'undefined' && typeof LZHEntitlements.notifyStateChange === 'function') {
-                    LZHEntitlements.notifyStateChange('byok_key_invalid', { provider: 'gemini' });
-                }
-                if (!silent) {
-                    if (typeof showToast === 'function') showToast(safeT('toastInvalidApiKey', null, 'Gemini API Key 無效，請重新設定'), "error");
-                    if (typeof openModal === 'function') openModal('keyModal');
-                }
-                throw new Error("Gemini API Key 無效");
-            }
-
-            lastError = `模型 ${model} 回應異常 (${res.status})`;
-        } catch (e) {
-            console.error(`[AI Engine] 嘗試模型 ${model} 失敗:`, e);
-            lastError = e.message;
-        }
-    }
-
-    throw new Error(lastError || "無法連線至 AI 伺服器");
 }
 
 async function fetchViaSharedProxy(promptText, options = {}) {
     const silent = Boolean(options && options.silent);
     const feature = resolveAiFeatureName(options);
+    const classGroupId = resolveClassroomGroupIdForAi(options);
 
-    // 若使用者已登入且本機快取明確已知無餘額，且不須向後端驗證（或後端為 0 配額如 Free vision_ocr），先快速阻斷節省網路往返
-    if (typeof MembershipEngine !== 'undefined' && typeof MembershipEngine.canConsumeAiQuota === 'function') {
-        const check = MembershipEngine.canConsumeAiQuota(feature);
+    // 若未帶入班級共享群組且本地快取已知無資格，快速阻斷節省網路往返
+    if (!classGroupId && typeof MembershipEngine !== 'undefined' && typeof MembershipEngine.canConsumeAiQuota === 'function') {
+        const check = MembershipEngine.canConsumeAiQuota(feature, { classGroupId });
         if (!check.allowed && check.dailyLimit === 0) {
-            const errMsg = safeT('toastQuotaFeaturePaidOnly', { feat: feature }, '此雲端 AI 進階功能需入門／進階／專業方案，已自動切換為免費離線或極速模式！');
+            const errMsg = safeT('toastQuotaFeaturePaidOnly', { feat: feature }, '此雲端 AI 進階功能需會員方案或由班級教師方案提供！');
             if (!silent && typeof MembershipEngine.showQuotaUpgradePrompt === 'function') {
                 MembershipEngine.showQuotaUpgradePrompt(feature);
             }
@@ -501,23 +259,33 @@ async function fetchViaSharedProxy(promptText, options = {}) {
     if (idToken) {
         headers['Authorization'] = `Bearer ${idToken}`;
     }
+    if (classGroupId) {
+        headers['X-Class-Group-Id'] = classGroupId;
+    }
+
+    const bodyPayload = {
+        feature,
+        contents: contentsPayload
+    };
+    if (classGroupId) {
+        bodyPayload.classGroupId = classGroupId;
+    }
 
     try {
         const res = await fetch(SHARED_BACKEND_URL, {
             method: 'POST',
             headers,
-            body: JSON.stringify({
-                feature,
-                contents: contentsPayload
-            })
+            body: JSON.stringify(bodyPayload)
         });
 
         if (res.ok) {
             const data = await res.json();
-            if (data && data._quota && typeof MembershipEngine !== 'undefined' && typeof MembershipEngine.syncQuotaFromServer === 'function') {
-                MembershipEngine.syncQuotaFromServer(data._quota);
-            } else if (typeof MembershipEngine !== 'undefined' && typeof MembershipEngine.consumeLocalQuota === 'function') {
-                MembershipEngine.consumeLocalQuota(feature);
+            if (!data._classroomSponsor) {
+                if (data && data._quota && typeof MembershipEngine !== 'undefined' && typeof MembershipEngine.syncQuotaFromServer === 'function') {
+                    MembershipEngine.syncQuotaFromServer(data._quota);
+                } else if (typeof MembershipEngine !== 'undefined' && typeof MembershipEngine.consumeLocalQuota === 'function') {
+                    MembershipEngine.consumeLocalQuota(feature);
+                }
             }
             return data.candidates?.[0]?.content?.parts?.[0]?.text || '';
         } else if (res.status === 429) {
@@ -531,10 +299,10 @@ async function fetchViaSharedProxy(promptText, options = {}) {
                 if (typeof MembershipEngine !== 'undefined' && typeof MembershipEngine.showQuotaUpgradePrompt === 'function') {
                     MembershipEngine.showQuotaUpgradePrompt(feature);
                 } else if (typeof showToast === 'function') {
-                    showToast(errData.error || "共用 AI 配額已達上限，建議升級方案或於設定填入個人 API Key！", "warning");
+                    showToast(errData.error || "雲端 AI 配額已達上限或需升級會員方案！", "warning");
                 }
             }
-            throw createQuotaExceededError(errData.error || "共用 AI 配額已達上限 (429)", feature, errData);
+            throw createQuotaExceededError(errData.error || "雲端 AI 配額已達上限 (429)", feature, errData);
         } else {
             const errData = await res.json().catch(() => ({}));
             if (res.status === 403 && errData && errData.code === 'ACCOUNT_BANNED') {
@@ -557,44 +325,15 @@ async function fetchViaSharedProxy(promptText, options = {}) {
 }
 
 async function requestFastRefineWithAuth(payload) {
-    const cleanPayload = payload || {};
-    const groqKey = getValidGroqKey();
-    const geminiKey = getValidApiKey();
-
-    // Priority 1: 本機個人 Groq / Gemini Key 直接於客戶端完成字幕語境精修，不扣任何系統次數
-    if (groqKey || geminiKey) {
-        const targetLangName = String(cleanPayload.targetLangName || cleanPayload.targetLang || 'Traditional Chinese');
-        const ctx = Array.isArray(cleanPayload.contextLines) && cleanPayload.contextLines.length
-            ? `前文語境參考：${cleanPayload.contextLines.slice(-3).join(' / ')}\n`
-            : '';
-        const draftHint = cleanPayload.draftTranslation
-            ? `初稿參考：${cleanPayload.draftTranslation}\n`
-            : '';
-        const refinePrompt = `你是即時雙語字幕精修引擎。請結合前文語境，將下列口語／影片台詞自然翻成「${targetLangName}」，只輸出精修譯文（禁止解釋或引號）：\n${ctx}${draftHint}原文：${String(cleanPayload.text || '').trim()}`;
-
-        if (groqKey) {
-            try {
-                const resText = await fetchGroqDirectly(groqKey, refinePrompt, {
-                    silent: true,
-                    groqModel: 'llama-3.1-8b-instant',
-                    temperature: 0.15
-                });
-                if (resText && resText.trim()) return resText.trim();
-            } catch (e) {}
-        }
-
-        if (geminiKey) {
-            try {
-                const resText = await fetchGeminiDirectly(geminiKey, refinePrompt, { silent: true });
-                if (resText && resText.trim()) return resText.trim();
-            } catch (e) {}
-        }
-    }
-
-    // Priority 2: 未設定個人 Key 時才經由 Worker 驗證會員身分與扣額度
+    const cleanPayload = { ...(payload || {}) };
+    const classGroupId = resolveClassroomGroupIdForAi(cleanPayload);
     const idToken = await getOptionalFirebaseIdToken();
     const headers = { 'Content-Type': 'application/json' };
     if (idToken) headers['Authorization'] = `Bearer ${idToken}`;
+    if (classGroupId) {
+        headers['X-Class-Group-Id'] = classGroupId;
+        cleanPayload.classGroupId = classGroupId;
+    }
 
     const resp = await fetch(`${SHARED_BACKEND_URL}/ai/fast-refine`, {
         method: 'POST',
@@ -755,7 +494,7 @@ function getLanguageConfig() {
     };
 
     const targetName = targetLang === 'custom'
-        ? (customTarget || 'Auto-Detect Target Language')
+        ? (customTarget || 'English')
         : (langNameMap[targetLang] || 'English');
 
     const nativeName = nativeLang === 'custom'

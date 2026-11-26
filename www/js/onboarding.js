@@ -4,7 +4,7 @@
 
 let currentTourIndex = 0;
 
-// 🎯 備援 9 步驟導覽 (若 helpAndTour.js 未載入時使用)
+// 🎯 備援導覽步驟 (若 helpAndTour.js 未載入時使用)
 const TOUR_STEPS = [
     {
         targetId: 'headerCategorySelector',
@@ -13,27 +13,15 @@ const TOUR_STEPS = [
         tab: 'home'
     },
     {
-        targetId: 'headerChatBtn',
-        titleKey: 'tourChatTitle',
-        descKey: 'tourChatDesc',
-        tab: 'home'
-    },
-    {
-        targetId: 'sec-home',
+        targetId: 'homeCardFlashcard',
         titleKey: 'tourHomeTitle',
         descKey: 'tourHomeDesc',
         tab: 'home'
     },
     {
-        targetId: 'bnav-list',
-        titleKey: 'tourListTitle',
-        descKey: 'tourListDesc',
-        tab: 'home'
-    },
-    {
-        targetId: 'bnav-store',
-        titleKey: 'tourStoreTitle',
-        descKey: 'tourStoreDesc',
+        targetId: 'floatingTranslatorBall',
+        titleKey: 'tourNewTitle4',
+        descKey: 'tourNewDesc4',
         tab: 'home'
     },
     {
@@ -43,22 +31,15 @@ const TOUR_STEPS = [
         tab: 'home'
     },
     {
-        targetId: 'bnav-settings',
-        titleKey: 'tourSettingsTitle',
-        descKey: 'tourSettingsDesc',
+        targetId: 'headerChatBtn',
+        titleKey: 'tourChatTitle',
+        descKey: 'tourChatDesc',
         tab: 'home'
     },
     {
-        targetId: 'settingsAudioSlot',
-        titleKey: 'lblAutoPlayAudio',
-        descKey: 'descAutoPlayAudio',
-        tab: 'home',
-        openSettings: true
-    },
-    {
-        targetId: 'settingsFrontSentenceSlot',
-        titleKey: 'lblShowSentenceFront',
-        descKey: 'descShowSentenceFront',
+        targetId: 'settingsAccBody_display',
+        titleKey: 'settingsCatDisplay',
+        descKey: 'descDisplayMode',
         tab: 'home',
         openSettings: true
     }
@@ -74,23 +55,6 @@ function handleObNativeChange(langCode) {
     }
     if (typeof syncSettingsUI === 'function') {
         syncSettingsUI();
-    }
-}
-
-/**
- * 🛠️ 控制新手設定 Modal 中個人 API Key 輸入框的顯隱狀態，並即時記憶選擇
- */
-function toggleObApiKeyBox() {
-    const isPersonal = Boolean(document.getElementById('obApiModePersonal')?.checked);
-    const box = document.getElementById('obApiKeyBox');
-    if (box) {
-        box.classList.toggle('hidden', !isPersonal);
-    }
-    if (document.getElementById('obApiModePersonal') || document.getElementById('obApiModeShared')) {
-        const mode = isPersonal ? 'personal' : 'shared';
-        localStorage.setItem('lzhcard_api_mode', mode);
-        if (typeof updateSettingsApiModeBadge === 'function') updateSettingsApiModeBadge(mode);
-        if (typeof updateApiKeyStatusUI === 'function') updateApiKeyStatusUI();
     }
 }
 
@@ -115,8 +79,6 @@ function confirmOnboardingLanguageStep() {
     const step2 = document.getElementById('obStep2');
     if (step1) step1.classList.add('hidden');
     if (step2) step2.classList.remove('hidden');
-
-    toggleObApiKeyBox();
 }
 
 /**
@@ -269,11 +231,12 @@ function startOnboardingFlow() {
     const cardSelect = document.getElementById('obCardDisplayMode');
     const sentencePosSelect = document.getElementById('obSentencePos');
     const autoAudioSelect = document.getElementById('obAutoPlayAudio');
-    const groqKeyInput = document.getElementById('obGroqApiKey');
-    const keyInput = document.getElementById('obApiKey');
 
     if (nativeSelect) nativeSelect.value = savedNative;
-    if (targetSelect) targetSelect.value = localStorage.getItem('lzhcard_target_lang') || 'en';
+    const savedTarget = localStorage.getItem('lzhcard_target_lang') || 'en';
+    if (targetSelect) targetSelect.value = savedTarget;
+    const obCustomNotice = document.getElementById('obCustomLangNotice');
+    if (obCustomNotice) obCustomNotice.classList.toggle('hidden', savedTarget !== 'custom');
     if (cardSelect) cardSelect.value = localStorage.getItem('lzhcard_display_mode') || 'target_front';
 
     // 🔒 若使用者先前已設定過則保留原設定；未設定過才套用預設（句子在背面、自動語音關閉）
@@ -286,21 +249,6 @@ function startOnboardingFlow() {
     if (autoAudioSelect) {
         autoAudioSelect.value = (savedAutoAudio === 'true') ? 'true' : 'false';
     }
-    
-    const savedMode = localStorage.getItem('lzhcard_api_mode') || 'shared';
-    const radShared = document.getElementById('obApiModeShared');
-    const radPersonal = document.getElementById('obApiModePersonal');
-    if (radShared) radShared.checked = (savedMode === 'shared');
-    if (radPersonal) radPersonal.checked = (savedMode === 'personal');
-
-    const savedGroq = localStorage.getItem('lzhcard_groq_key_v1') || '';
-    const savedGemini = (typeof getValidApiKey === 'function')
-        ? (getValidApiKey() || '')
-        : (localStorage.getItem('flashcard_gemini_key_v1') || '');
-    if (groqKeyInput) groqKeyInput.value = savedMode === 'personal' ? savedGroq : '';
-    if (keyInput) keyInput.value = savedMode === 'personal' ? savedGemini : '';
-
-    toggleObApiKeyBox();
 
     if (typeof openModal === 'function') openModal('onboardingSetupModal');
 }
@@ -344,10 +292,6 @@ async function saveOnboardingSetupAndContinue() {
     const cardMode = document.getElementById('obCardDisplayMode')?.value || 'target_front';
     const sentencePos = document.getElementById('obSentencePos')?.value || 'back';
     const autoAudioVal = document.getElementById('obAutoPlayAudio')?.value || 'false';
-    const groqKey = document.getElementById('obGroqApiKey')?.value?.trim() || '';
-    const apiKey = document.getElementById('obApiKey')?.value?.trim() || '';
-
-    const apiMode = document.querySelector('input[name="obApiMode"]:checked')?.value || 'shared';
     const showFrontBool = sentencePos === 'front';
     const autoAudioBool = autoAudioVal === 'true';
 
@@ -356,40 +300,12 @@ async function saveOnboardingSetupAndContinue() {
     localStorage.setItem('lzhcard_display_mode', cardMode);
     localStorage.setItem('lzhcard_show_sentence_front', showFrontBool ? 'true' : 'false');
     localStorage.setItem('lzhcard_auto_audio', autoAudioBool ? 'true' : 'false');
-    localStorage.setItem('lzhcard_api_mode', apiMode);
-
-    if (apiMode === 'personal') {
-        if (groqKey) {
-            localStorage.setItem('lzhcard_groq_key_v1', groqKey);
-        } else {
-            localStorage.removeItem('lzhcard_groq_key_v1');
-        }
-        if (apiKey) {
-            localStorage.setItem('flashcard_gemini_key_v1', apiKey);
-        } else {
-            localStorage.removeItem('flashcard_gemini_key_v1');
-        }
-    } else {
-        localStorage.removeItem('lzhcard_groq_key_v1');
-        localStorage.removeItem('flashcard_gemini_key_v1');
-    }
-
-    if (typeof LZHEntitlements !== 'undefined' && typeof LZHEntitlements.backupPersonalKeysForUid === 'function') {
-        LZHEntitlements.backupPersonalKeysForUid();
-    }
 
     markOnboardingSetupSeen(false);
 
     if (typeof applyLanguageUI === 'function') applyLanguageUI();
     if (typeof syncSettingsUI === 'function') syncSettingsUI();
-    if (typeof updateApiKeyStatusUI === 'function') updateApiKeyStatusUI();
     if (typeof syncConfigToNativeOverlay === 'function') syncConfigToNativeOverlay();
-    if (typeof FloatingTranslator !== 'undefined' && typeof FloatingTranslator.syncApiModeFromGlobal === 'function') {
-        FloatingTranslator.syncApiModeFromGlobal(apiMode);
-    }
-    if (typeof LZHEntitlements !== 'undefined' && typeof LZHEntitlements.notifyStateChange === 'function') {
-        LZHEntitlements.notifyStateChange('byok_key_saved', { finalMode: apiMode });
-    }
     if (typeof updateUI === 'function') updateUI();
     if (typeof renderFrontContextSentence === 'function' && typeof currentCard !== 'undefined') {
         renderFrontContextSentence(currentCard);
@@ -404,7 +320,6 @@ async function saveOnboardingSetupAndContinue() {
             displayMode: cardMode,
             showSentenceFront: showFrontBool,
             autoPlayAudio: autoAudioBool,
-            apiMode,
             onboardingCompleted: true
         });
     } else {

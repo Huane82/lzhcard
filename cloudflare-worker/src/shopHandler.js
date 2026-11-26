@@ -72,6 +72,20 @@ export const COIN_REDEEM_PACKS = {
     frameId: "supporter_celestial_crown",
     bannerId: "supporter_imperial_aurora",
     titleId: "supporter_crown"
+  },
+  redeem_teacher_30d: {
+    id: "redeem_teacher_30d",
+    name: "30 天班級教師方案 (含50人共享)",
+    costCoins: 1960,
+    credits: { def_fill: 0, article_gen: 0, vision_ocr: 0, fast_refine: 0 },
+    trialDays: 0,
+    trialTier: "",
+    fullMembershipDays: 30,
+    fullMembershipTier: "teacher_class",
+    priceNtdValue: 490,
+    frameId: "supporter_celestial_crown",
+    bannerId: "supporter_imperial_aurora",
+    titleId: "supporter_crown"
   }
 };
 

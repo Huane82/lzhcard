@@ -1334,6 +1334,13 @@ function closeChatDrawer() {
 let _currentLeaderboardMetric = 'rank'; // 'rank' | 'level'
 let _leaderboardCache = { fetchedAt: 0, list: [] };
 
+function invalidateLeaderboardCache() {
+    _leaderboardCache = { fetchedAt: 0, list: [] };
+}
+if (typeof window !== 'undefined') {
+    window.invalidateLeaderboardCache = invalidateLeaderboardCache;
+}
+
 function setLeaderboardMetric(metric) {
     _currentLeaderboardMetric = metric === 'level' ? 'level' : 'rank';
     const rankBtn = document.getElementById('lbMetricRankBtn');
@@ -1983,7 +1990,12 @@ async function sendFriendRequestByEmail(emailInput = null, btnElem = null) {
     if (!rtdb) return;
 
     try {
-        const targetEmail = (emailInput || prompt(typeof t === 'function' ? t('promptEnterFriendEmail') : '請輸入對方的電子郵件 (Email)：') || '').trim().toLowerCase();
+        let targetEmail = emailInput ? String(emailInput) : '';
+        if (!targetEmail && typeof window.lzhPrompt === 'function') {
+            const entered = await window.lzhPrompt(typeof t === 'function' ? t('promptEnterFriendEmail') : '請輸入對方的電子郵件 (Email)：', '', { title: '新增好友', placeholder: 'example@gmail.com' });
+            targetEmail = entered || '';
+        }
+        targetEmail = targetEmail.trim().toLowerCase();
         if (!targetEmail || !targetEmail.includes('@')) {
             if (targetEmail && typeof showToast === 'function') showToast(typeof t === 'function' ? t('toastInvalidEmail') : '請輸入有效的電子郵件格式！', 'warning');
             return;
@@ -2019,7 +2031,12 @@ async function sendFriendRequestByNicknameOrEmail(rawInput = null, btnElem = nul
         return false;
     }
 
-    const entered = (rawInput || prompt('請輸入對方的「暱稱」或「電子郵件 (Email)」：') || '').trim();
+    let entered = rawInput ? String(rawInput) : '';
+    if (!entered && typeof window.lzhPrompt === 'function') {
+        const val = await window.lzhPrompt('請輸入對方的「暱稱」或「電子郵件 (Email)」：', '', { title: '暱稱 / Email 加好友', placeholder: '輸入暱稱或 Email' });
+        entered = val || '';
+    }
+    entered = entered.trim();
     if (!entered) return false;
 
     if (entered.includes('@')) {
@@ -2402,9 +2419,15 @@ async function createGroupPrompt() {
         if (typeof showToast === 'function') showToast(typeof t === 'function' ? t('toastLoginRequiredGroup') : '請先登入帳號才能建立群組！', 'warning');
         return;
     }
-
-    const groupName = (prompt(typeof t === 'function' ? t('promptNewGroupName') : '請輸入新群組名稱：') || '').trim();
-    if (!groupName) return;
+    if (typeof ClassroomEngine !== 'undefined' && typeof ClassroomEngine.openCreateGroupModal === 'function') {
+        ClassroomEngine.openCreateGroupModal();
+        return;
+    }
+    const groupName = (typeof window.lzhPrompt === 'function'
+        ? await window.lzhPrompt(typeof t === 'function' ? t('promptNewGroupName') : '請輸入新群組名稱：', '', { title: '建立新群組' })
+        : '') || '';
+    const trimmedName = groupName.trim();
+    if (!trimmedName) return;
 
     const currentUid = firebase.auth().currentUser.uid;
     const myName = (window.userData && window.userData.nickname) ? window.userData.nickname : (typeof t === 'function' ? t('defaultPlayerName') : '玩家');
@@ -2418,17 +2441,17 @@ async function createGroupPrompt() {
 
         await newChatRef.set({
             type: 'group',
-            name: groupName,
+            name: trimmedName,
             ownerUid: currentUid,
             members: membersMap,
-            lastMessage: typeof t === 'function' ? t('msgGroupCreated', { name: myName, group: groupName }) : `${myName} 建立了群組「${groupName}」`,
+            lastMessage: typeof t === 'function' ? t('msgGroupCreated', { name: myName, group: trimmedName }) : `${myName} 建立了群組「${trimmedName}」`,
             lastSenderUid: currentUid,
             createdAt: Date.now(),
             updatedAt: Date.now()
         });
 
-        if (typeof showToast === 'function') showToast(typeof t === 'function' ? t('toastGroupCreated', { name: groupName }) : `🎉 已成功建立群組「${groupName}」！`, 'success');
-        openChatWindow(newChatRef.key, groupName);
+        if (typeof showToast === 'function') showToast(typeof t === 'function' ? t('toastGroupCreated', { name: trimmedName }) : `🎉 已成功建立群組「${trimmedName}」！`, 'success');
+        openChatWindow(newChatRef.key, trimmedName);
     } catch (e) {
         console.error("建立群組失敗:", e);
     }
@@ -2541,7 +2564,9 @@ async function renderChatThreads(isAdminInspector = false) {
 
     html += threads.map(c => {
         const isGroup = c.type === 'group';
-        const icon = isGroup ? 'fa-users text-purple-500' : 'fa-user-lock text-emerald-500';
+        const isTeacherClass = isGroup && c.teacherMode === true;
+        const memberCount = isGroup && c.members && typeof c.members === 'object' ? Object.keys(c.members).filter(k => c.members[k] === true).length : 0;
+        const icon = isTeacherClass ? 'fa-chalkboard-user text-indigo-600 dark:text-indigo-400' : (isGroup ? 'fa-users text-purple-500' : 'fa-user-lock text-emerald-500');
         const displayName = c.name || (typeof t === 'function' ? t('defaultChatTitle') : '對話');
         const hasUnread = isThreadUnread(c, currentUid);
         const pinned = isChatPinned(c.id);
@@ -2560,7 +2585,10 @@ async function renderChatThreads(isAdminInspector = false) {
                         <div class="flex items-center space-x-1.5">
                             ${pinned ? `<i class="fa-solid fa-thumbtack text-[10px] text-brand-500 shrink-0" title="已釘選"></i>` : ''}
                             <h4 class="font-bold text-xs text-slate-800 dark:text-slate-100 truncate">${escapeHTML(displayName)}</h4>
-                            <span class="text-[9px] px-1.5 py-0.2 rounded font-semibold shrink-0 ${isGroup ? 'bg-purple-50 text-purple-600 dark:bg-purple-950/40' : 'bg-emerald-50 text-emerald-600 dark:bg-emerald-950/40'}">${isGroup ? (typeof t === 'function' ? t('badgeGroup') : '群組') : (typeof t === 'function' ? t('badgePrivate') : '私訊')}</span>
+                            ${isTeacherClass
+                                ? `<span class="text-[9px] px-1.5 py-0.2 rounded font-bold shrink-0 bg-indigo-50 text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">🎓 班級 ${memberCount}/50</span>`
+                                : `<span class="text-[9px] px-1.5 py-0.2 rounded font-semibold shrink-0 ${isGroup ? 'bg-purple-50 text-purple-600 dark:bg-purple-950/40' : 'bg-emerald-50 text-emerald-600 dark:bg-emerald-950/40'}">${isGroup ? (typeof t === 'function' ? t('badgeGroup') : '群組') : (typeof t === 'function' ? t('badgePrivate') : '私訊')}</span>`
+                            }
                             ${muted ? `<i class="fa-solid fa-bell-slash text-[10px] text-slate-400 shrink-0" title="已關閉通知"></i>` : ''}
                         </div>
                         <p class="text-[11px] text-slate-400 line-clamp-1 mt-0.5">${escapeHTML(c.lastMessage || (typeof t === 'function' ? t('clickToChat') : '點擊開始對話...'))}</p>
@@ -2690,15 +2718,27 @@ async function openChatWindow(chatId, encodedName = '') {
             ((currentActiveChatData && currentActiveChatData.type === 'group') || String(chatId).startsWith('chat_group_'))
         );
         if (isUserGroup) {
+            const isTeacherClass = currentActiveChatData?.teacherMode === true;
+            const memberCount = currentActiveChatData?.members && typeof currentActiveChatData.members === 'object'
+                ? Object.keys(currentActiveChatData.members).filter(k => currentActiveChatData.members[k] === true).length
+                : 1;
+            const canInvite = !isTeacherClass || currentActiveChatData?.ownerUid === currentUid;
             actionsEl.innerHTML = `
-                <button type="button" onclick="openFriendOnlyInviteModal({ mode: 'group', groupId: '${escapeHTML(chatId)}', groupName: decodeURIComponent('${encodeURIComponent(displayName)}') })" class="px-2.5 py-1 bg-purple-600 hover:bg-purple-700 text-white text-[11px] font-bold rounded-lg transition shadow-2xs flex items-center gap-1 cursor-pointer">
-                    <i class="fa-solid fa-user-plus text-[10px]"></i>
-                    <span>邀請好友</span>
-                </button>
+                ${isTeacherClass ? `<span class="px-2 py-0.5 rounded-lg bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 text-[10px] font-bold tabular-nums">${memberCount}/50</span>` : ''}
+                ${canInvite ? `
+                    <button type="button" onclick="openFriendOnlyInviteModal({ mode: 'group', groupId: '${escapeHTML(chatId)}', groupName: decodeURIComponent('${encodeURIComponent(displayName)}') })" class="px-2.5 py-1 bg-purple-600 hover:bg-purple-700 text-white text-[11px] font-bold rounded-lg transition shadow-2xs flex items-center gap-1 cursor-pointer">
+                        <i class="fa-solid fa-user-plus text-[10px]"></i>
+                        <span>邀請好友</span>
+                    </button>
+                ` : ''}
             `;
         } else {
             actionsEl.innerHTML = '';
         }
+    }
+
+    if (typeof ClassroomEngine !== 'undefined' && typeof ClassroomEngine.openGroupWorkspace === 'function') {
+        ClassroomEngine.openGroupWorkspace(chatId, currentActiveChatData);
     }
 
     if (!rtdb || !chatId) return;
@@ -2721,6 +2761,9 @@ async function openChatWindow(chatId, encodedName = '') {
 }
 
 function backToChatThreads() {
+    if (typeof ClassroomEngine !== 'undefined' && typeof ClassroomEngine.detachGroupListeners === 'function') {
+        ClassroomEngine.detachGroupListeners();
+    }
     const rtdb = getRtdb();
     if (activeChatListener && currentActiveChatId && rtdb) {
         rtdb.ref(`chats/${currentActiveChatId}/messages`).off('value', activeChatListener);
@@ -2911,6 +2954,13 @@ async function handleSendMessage(e) {
         : (firebase.auth().currentUser?.displayName || firebase.auth().currentUser?.email?.split('@')[0] || (typeof t === 'function' ? t('defaultPlayerName') : '使用者'));
     
     const currentUid = firebase.auth().currentUser.uid;
+    if (typeof ClassroomEngine !== 'undefined' && typeof ClassroomEngine.isMutedInGroup === 'function') {
+        const activeChat = currentActiveChatData || userChatThreads.find(c => c.id === currentActiveChatId) || null;
+        if (ClassroomEngine.isMutedInGroup(activeChat, currentUid)) {
+            if (typeof showToast === 'function') showToast('🔇 目前被老師設為禁言中，無法發送聊天訊息。', 'warning');
+            return;
+        }
+    }
     const now = new Date();
     const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
 
@@ -3985,6 +4035,17 @@ async function sendFriendOnlyInvite(targetUid, btnElem = null) {
         || '好友';
 
     try {
+        if (ctx.mode === 'group' && ctx.groupId) {
+            const targetChat = userChatThreads.find(c => c && c.id === ctx.groupId);
+            if (targetChat && targetChat.teacherMode === true) {
+                const membersObj = targetChat.members || {};
+                const memberCount = Object.keys(membersObj).filter(k => membersObj[k] === true).length;
+                if (memberCount >= 50) {
+                    if (typeof showToast === 'function') showToast('此班級群組已達 50 人上限，無法再邀請更多學生！', 'warning');
+                    return false;
+                }
+            }
+        }
         await rtdb.ref('groupInvites').push().set({
             inviteType: ctx.mode,
             groupId: ctx.mode === 'group' ? ctx.groupId : '',
@@ -4022,6 +4083,20 @@ async function handleAcceptGroupInvite(invId, targetId, encodedName = '', invite
     try { decodedName = decodeURIComponent(encodedName || ''); } catch (e) { decodedName = encodedName || ''; }
 
     try {
+        if (inviteType !== 'raid' && targetId) {
+            const roomSnap = await rtdb.ref(`chats/${targetId}`).once('value');
+            const roomVal = roomSnap.val();
+            if (roomVal && roomVal.teacherMode === true) {
+                const maxMembers = Number(roomVal.maxMembers) || 50;
+                const membersObj = roomVal.members || {};
+                const count = Object.keys(membersObj).filter(k => membersObj[k] === true).length;
+                if (!membersObj[currentUid] && count >= maxMembers) {
+                    if (typeof showToast === 'function') showToast(`此班級群組已額滿（上限 ${maxMembers} 人）`, 'warning');
+                    return false;
+                }
+            }
+        }
+
         await rtdb.ref(`groupInvites/${invId}`).update({ status: 'accepted' });
 
         if (inviteType === 'raid') {

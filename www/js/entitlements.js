@@ -1,91 +1,24 @@
 /**
  * LZHCard - 全域權益判定、雙向事件匯流排與自訂確認對話框 (js/entitlements.js)
- * 權重順位：1. 管理員身分 -> 2. 有效本機 BYOK 金鑰 -> 3. 有效付費會員 / 金幣體驗卡 -> 4. 免費方案
+ * 權重順位：1. 管理員身分 -> 2. 有效付費會員 / 金幣體驗卡 -> 3. 班級教師 AI 共享 -> 4. 免費方案
  */
 (function (global) {
     'use strict';
 
-    const GROQ_KEY_STORAGE = 'lzhcard_groq_key_v1';
-    const GEMINI_KEY_STORAGE = 'flashcard_gemini_key_v1';
     const MAX_TIMEOUT_MS = 2147483640;
 
     let dailyResetTimer = null;
     let expiryDowngradeTimer = null;
     let confirmQueue = Promise.resolve(false);
 
-    function isStoredKeyValid(rawKey) {
-        if (!rawKey) return false;
-        const trimmed = String(rawKey).trim();
-        return Boolean(trimmed && trimmed !== 'undefined' && trimmed !== 'null');
-    }
-
     function isAdmin(userObj = global.userData) {
         const u = userObj || global.userData;
         return Boolean(u && (u.role === 'admin' || u.isAdmin === true));
     }
 
-    function getActiveAuthUid() {
-        try {
-            if (typeof firebase !== 'undefined' && firebase.auth && firebase.auth().currentUser) {
-                return String(firebase.auth().currentUser.uid || '').trim();
-            }
-            if (global.userData && global.userData.uid) {
-                return String(global.userData.uid || '').trim();
-            }
-        } catch (e) {}
-        return '';
-    }
-
-    function backupPersonalKeysForUid(uid = getActiveAuthUid()) {
-        if (!uid) return;
-        try {
-            const groq = localStorage.getItem(GROQ_KEY_STORAGE);
-            const gem = localStorage.getItem(GEMINI_KEY_STORAGE);
-            if (isStoredKeyValid(groq)) {
-                localStorage.setItem(`${GROQ_KEY_STORAGE}__${uid}`, String(groq).trim());
-            } else {
-                localStorage.removeItem(`${GROQ_KEY_STORAGE}__${uid}`);
-            }
-            if (isStoredKeyValid(gem)) {
-                localStorage.setItem(`${GEMINI_KEY_STORAGE}__${uid}`, String(gem).trim());
-            } else {
-                localStorage.removeItem(`${GEMINI_KEY_STORAGE}__${uid}`);
-            }
-        } catch (e) {}
-    }
-
-    function restorePersonalKeysForUid(uid = getActiveAuthUid()) {
-        if (!uid) return;
-        try {
-            if (localStorage.getItem('lzhcard_api_mode') === 'shared') return;
-            const curGroq = localStorage.getItem(GROQ_KEY_STORAGE);
-            const curGem = localStorage.getItem(GEMINI_KEY_STORAGE);
-            if (!isStoredKeyValid(curGroq)) {
-                const bkGroq = localStorage.getItem(`${GROQ_KEY_STORAGE}__${uid}`);
-                if (isStoredKeyValid(bkGroq)) localStorage.setItem(GROQ_KEY_STORAGE, String(bkGroq).trim());
-            }
-            if (!isStoredKeyValid(curGem)) {
-                const bkGem = localStorage.getItem(`${GEMINI_KEY_STORAGE}__${uid}`);
-                if (isStoredKeyValid(bkGem)) localStorage.setItem(GEMINI_KEY_STORAGE, String(bkGem).trim());
-            }
-        } catch (e) {}
-    }
-
-    function hasValidByok() {
-        try {
-            if (localStorage.getItem('lzhcard_api_mode') === 'shared') return false;
-            const groq = localStorage.getItem(GROQ_KEY_STORAGE);
-            const gem = localStorage.getItem(GEMINI_KEY_STORAGE);
-            return isStoredKeyValid(groq) || isStoredKeyValid(gem);
-        } catch (e) {
-            return false;
-        }
-    }
-
     function getEffectiveStatus(userObj = global.userData) {
         const u = userObj || global.userData || {};
         const admin = isAdmin(u);
-        const byok = hasValidByok();
         const me = global.MembershipEngine;
 
         let resolved = {
@@ -101,29 +34,35 @@
         if (me && typeof me.resolveActiveMembership === 'function') {
             resolved = me.resolveActiveMembership(u, Date.now());
         } else if (admin) {
-            resolved.tier = 'supporter_180';
+            resolved.tier = 'teacher_class';
             resolved.isSupporter = true;
             resolved.expiresAt = Date.now() + 3650 * 86400000;
             resolved.remainingDays = 3650;
-            resolved.priceNtd = 180;
+            resolved.priceNtd = 490;
         }
+
+        const sponsor = (me && typeof me.getActiveClassroomSponsor === 'function')
+            ? me.getActiveClassroomSponsor()
+            : null;
+        const classSponsored = Boolean(sponsor && sponsor.chatId);
 
         const effectiveTier = admin
             ? 'admin'
-            : (resolved.isSupporter ? resolved.tier : 'free');
+            : (resolved.isSupporter ? resolved.tier : (classSponsored ? 'teacher_class' : 'free'));
 
-        const unlimited = Boolean(admin || byok);
+        const unlimited = Boolean(admin);
         const coins = Math.max(0, Math.floor(Number(u.coins) || 0));
 
         let source = 'free';
         if (admin) source = 'admin';
-        else if (byok) source = 'byok';
         else if (resolved.isSupporter) source = resolved.isCoinTrial ? 'coin_trial' : 'membership';
+        else if (classSponsored) source = 'classroom_sponsor';
 
         return {
             source,
             isAdmin: admin,
-            byok,
+            classSponsored,
+            classSponsor: sponsor,
             unlimited,
             membershipTier: resolved.tier,
             effectiveTier,
@@ -135,14 +74,13 @@
         };
     }
 
-    function canUseFeature(feature = 'def_fill') {
+    function canUseFeature(feature = 'def_fill', options = {}) {
         const status = getEffectiveStatus();
-        if (status.isAdmin || status.byok) {
+        if (status.isAdmin) {
             return {
                 allowed: true,
                 unlimited: true,
-                byok: status.byok,
-                isAdmin: status.isAdmin,
+                isAdmin: true,
                 tier: status.membershipTier,
                 remaining: 999999,
                 status
@@ -150,7 +88,7 @@
         }
         const me = global.MembershipEngine;
         if (me && typeof me.canConsumeAiQuota === 'function') {
-            const q = me.canConsumeAiQuota(feature);
+            const q = me.canConsumeAiQuota(feature, options);
             return {
                 ...q,
                 unlimited: false,
@@ -158,12 +96,11 @@
             };
         }
         return {
-            allowed: true,
+            allowed: false,
             unlimited: false,
-            byok: false,
             isAdmin: false,
             tier: status.membershipTier,
-            remaining: 1,
+            remaining: 0,
             status
         };
     }
@@ -323,6 +260,174 @@
         });
     }
 
+    function openCustomPromptModal(message, defaultValue = '', options = {}) {
+        const doc = global.document;
+        if (!doc) return Promise.resolve(null);
+        let modal = doc.getElementById('lzhPromptModal');
+        if (!modal) {
+            modal = doc.createElement('div');
+            modal.id = 'lzhPromptModal';
+            modal.className = 'hidden fixed inset-0 z-[86] bg-slate-950/70 backdrop-blur-xs items-center justify-center p-4 lzh-safe-modal';
+            modal.setAttribute('role', 'dialog');
+            modal.setAttribute('aria-modal', 'true');
+            modal.innerHTML = `
+                <div class="bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-2xl max-w-md w-full p-5 space-y-3.5 shadow-2xl border border-slate-200 dark:border-slate-700">
+                    <div class="flex items-center justify-between border-b border-slate-100 dark:border-slate-700 pb-2.5">
+                        <h3 id="lzhPromptTitle" class="text-sm font-black text-slate-900 dark:text-white">請輸入內容</h3>
+                        <button type="button" id="lzhPromptCloseBtn" class="min-w-[40px] min-h-[40px] inline-flex items-center justify-center text-slate-400 hover:text-slate-600 rounded-lg cursor-pointer"><i class="fa-solid fa-xmark"></i></button>
+                    </div>
+                    <p id="lzhPromptMessage" class="text-xs text-slate-600 dark:text-slate-300 leading-relaxed whitespace-pre-line break-words"></p>
+                    <input type="text" id="lzhPromptInput" class="w-full min-h-[44px] px-3 py-2 text-xs rounded-xl border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100 font-semibold outline-none focus:ring-2 focus:ring-brand-500">
+                    <div class="flex justify-end gap-2 pt-1">
+                        <button type="button" id="lzhPromptCancelBtn" class="min-h-[44px] px-4 py-2 rounded-xl bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 text-slate-700 dark:text-slate-200 text-xs font-bold cursor-pointer">取消</button>
+                        <button type="button" id="lzhPromptOkBtn" class="min-h-[44px] px-5 py-2 rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-xs font-extrabold shadow-xs cursor-pointer">確定</button>
+                    </div>
+                </div>
+            `;
+            doc.body.appendChild(modal);
+        }
+
+        const titleEl = doc.getElementById('lzhPromptTitle');
+        const msgEl = doc.getElementById('lzhPromptMessage');
+        const inputEl = doc.getElementById('lzhPromptInput');
+        const okBtn = doc.getElementById('lzhPromptOkBtn');
+        const cancelBtn = doc.getElementById('lzhPromptCancelBtn');
+        const closeBtn = doc.getElementById('lzhPromptCloseBtn');
+
+        if (titleEl) titleEl.textContent = options.title || '請輸入';
+        if (msgEl) msgEl.textContent = String(message || '');
+        if (inputEl) {
+            inputEl.value = String(defaultValue || '');
+            inputEl.placeholder = options.placeholder || '';
+        }
+
+        return new Promise((resolve) => {
+            let settled = false;
+            const cleanup = (val) => {
+                if (settled) return;
+                settled = true;
+                okBtn.removeEventListener('click', onOk);
+                cancelBtn.removeEventListener('click', onCancel);
+                closeBtn.removeEventListener('click', onCancel);
+                modal.removeEventListener('click', onBackdrop);
+                doc.removeEventListener('keydown', onKeyDown, true);
+                modal.classList.add('hidden');
+                modal.classList.remove('flex');
+                resolve(val);
+            };
+            const onOk = () => cleanup(inputEl ? inputEl.value : '');
+            const onCancel = () => cleanup(null);
+            const onBackdrop = (ev) => { if (ev.target === modal) cleanup(null); };
+            const onKeyDown = (ev) => {
+                if (ev.key === 'Escape') {
+                    ev.preventDefault();
+                    ev.stopPropagation();
+                    cleanup(null);
+                } else if (ev.key === 'Enter') {
+                    ev.preventDefault();
+                    ev.stopPropagation();
+                    onOk();
+                }
+            };
+            okBtn.addEventListener('click', onOk);
+            cancelBtn.addEventListener('click', onCancel);
+            closeBtn.addEventListener('click', onCancel);
+            modal.addEventListener('click', onBackdrop);
+            doc.addEventListener('keydown', onKeyDown, true);
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+            setTimeout(() => { try { inputEl?.focus(); inputEl?.select(); } catch (e) {} }, 25);
+        });
+    }
+
+    function openCustomChoiceModal(message, choices = [], options = {}) {
+        const doc = global.document;
+        if (!doc) return Promise.resolve(null);
+        let modal = doc.getElementById('lzhChoiceModal');
+        if (!modal) {
+            modal = doc.createElement('div');
+            modal.id = 'lzhChoiceModal';
+            modal.className = 'hidden fixed inset-0 z-[86] bg-slate-950/70 backdrop-blur-xs items-center justify-center p-4 lzh-safe-modal';
+            modal.setAttribute('role', 'dialog');
+            modal.setAttribute('aria-modal', 'true');
+            modal.innerHTML = `
+                <div class="bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-2xl max-w-md w-full p-5 space-y-3.5 shadow-2xl border border-slate-200 dark:border-slate-700">
+                    <div class="flex items-center justify-between border-b border-slate-100 dark:border-slate-700 pb-2.5">
+                        <h3 id="lzhChoiceTitle" class="text-sm font-black text-slate-900 dark:text-white">請選擇操作</h3>
+                        <button type="button" id="lzhChoiceCloseBtn" class="min-w-[40px] min-h-[40px] inline-flex items-center justify-center text-slate-400 hover:text-slate-600 rounded-lg cursor-pointer"><i class="fa-solid fa-xmark"></i></button>
+                    </div>
+                    <p id="lzhChoiceMessage" class="text-xs text-slate-600 dark:text-slate-300 leading-relaxed whitespace-pre-line break-words"></p>
+                    <div id="lzhChoiceList" class="space-y-2 max-h-60 overflow-y-auto"></div>
+                    <div class="flex justify-end pt-1">
+                        <button type="button" id="lzhChoiceCancelBtn" class="min-h-[44px] px-4 py-2 rounded-xl bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 text-slate-700 dark:text-slate-200 text-xs font-bold cursor-pointer">取消</button>
+                    </div>
+                </div>
+            `;
+            doc.body.appendChild(modal);
+        }
+
+        const titleEl = doc.getElementById('lzhChoiceTitle');
+        const msgEl = doc.getElementById('lzhChoiceMessage');
+        const listEl = doc.getElementById('lzhChoiceList');
+        const cancelBtn = doc.getElementById('lzhChoiceCancelBtn');
+        const closeBtn = doc.getElementById('lzhChoiceCloseBtn');
+
+        if (titleEl) titleEl.textContent = options.title || '請選擇';
+        if (msgEl) msgEl.textContent = String(message || '');
+
+        return new Promise((resolve) => {
+            let settled = false;
+            const cleanup = (val) => {
+                if (settled) return;
+                settled = true;
+                cancelBtn.removeEventListener('click', onCancel);
+                closeBtn.removeEventListener('click', onCancel);
+                modal.removeEventListener('click', onBackdrop);
+                doc.removeEventListener('keydown', onKeyDown, true);
+                modal.classList.add('hidden');
+                modal.classList.remove('flex');
+                resolve(val);
+            };
+            const onCancel = () => cleanup(null);
+            const onBackdrop = (ev) => { if (ev.target === modal) cleanup(null); };
+            const onKeyDown = (ev) => {
+                if (ev.key === 'Escape') {
+                    ev.preventDefault();
+                    ev.stopPropagation();
+                    cleanup(null);
+                }
+            };
+
+            if (listEl) {
+                listEl.innerHTML = '';
+                (Array.isArray(choices) ? choices : []).forEach((item) => {
+                    const obj = typeof item === 'object' && item !== null ? item : { value: String(item), label: String(item) };
+                    const btn = doc.createElement('button');
+                    btn.type = 'button';
+                    btn.className = 'w-full min-h-[44px] px-3.5 py-2.5 text-left rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 hover:border-brand-400 hover:bg-brand-50/60 dark:hover:bg-brand-950/40 text-xs font-bold text-slate-800 dark:text-slate-100 transition cursor-pointer flex items-center justify-between gap-2';
+                    const lbl = doc.createElement('span');
+                    lbl.textContent = obj.label || obj.value;
+                    btn.appendChild(lbl);
+                    if (obj.sub) {
+                        const sub = doc.createElement('span');
+                        sub.className = 'text-[10px] font-semibold text-slate-400 shrink-0';
+                        sub.textContent = obj.sub;
+                        btn.appendChild(sub);
+                    }
+                    btn.addEventListener('click', () => cleanup(obj.value));
+                    listEl.appendChild(btn);
+                });
+            }
+
+            cancelBtn.addEventListener('click', onCancel);
+            closeBtn.addEventListener('click', onCancel);
+            modal.addEventListener('click', onBackdrop);
+            doc.addEventListener('keydown', onKeyDown, true);
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+        });
+    }
+
     function lzhConfirm(message, options = {}) {
         const nextPromise = confirmQueue.then(
             () => openCustomConfirmModal(message, options),
@@ -332,29 +437,41 @@
         return nextPromise;
     }
 
-    if (typeof global.addEventListener === 'function') {
-        global.addEventListener('storage', (ev) => {
-            if (ev && (ev.key === GROQ_KEY_STORAGE || ev.key === GEMINI_KEY_STORAGE || ev.key === 'lzhcard_api_mode')) {
-                notifyStateChange('storage_key_changed');
-            }
+    function lzhPrompt(message, defaultValue = '', options = {}) {
+        const nextPromise = confirmQueue.then(
+            () => openCustomPromptModal(message, defaultValue, options),
+            () => openCustomPromptModal(message, defaultValue, options)
+        );
+        confirmQueue = nextPromise.catch(() => null);
+        return nextPromise;
+    }
+
+    function lzhChoice(message, choices = [], options = {}) {
+        const nextPromise = confirmQueue.then(
+            () => openCustomChoiceModal(message, choices, options),
+            () => openCustomChoiceModal(message, choices, options)
+        );
+        confirmQueue = nextPromise.catch(() => null);
+        return nextPromise;
+    }
+
+    if (typeof global.addEventListener === 'function' && typeof global.document !== 'undefined') {
+        global.document.addEventListener('DOMContentLoaded', () => {
+            scheduleSyncTimers();
         });
-        if (typeof global.document !== 'undefined') {
-            global.document.addEventListener('DOMContentLoaded', () => {
-                scheduleSyncTimers();
-            });
-        }
     }
 
     global.LZHEntitlements = {
         isAdmin,
-        hasValidByok,
-        backupPersonalKeysForUid,
-        restorePersonalKeysForUid,
         getEffectiveStatus,
         canUseFeature,
         notifyStateChange,
         scheduleSyncTimers,
-        confirm: lzhConfirm
+        confirm: lzhConfirm,
+        prompt: lzhPrompt,
+        choice: lzhChoice
     };
     global.lzhConfirm = lzhConfirm;
+    global.lzhPrompt = lzhPrompt;
+    global.lzhChoice = lzhChoice;
 })(typeof window !== 'undefined' ? window : globalThis);

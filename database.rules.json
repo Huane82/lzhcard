@@ -16,9 +16,50 @@
       "$chatId": {
         ".read": "auth != null && ($chatId === 'chat_group_public' || data.child('members/' + auth.uid).exists() || root.child('users/' + auth.uid + '/role').val() === 'admin' || root.child('users/' + auth.uid + '/isAdmin').val() === true)",
         ".write": "auth != null && ($chatId === 'chat_group_public' || !data.exists() || data.child('members/' + auth.uid).exists() || root.child('users/' + auth.uid + '/role').val() === 'admin' || root.child('users/' + auth.uid + '/isAdmin').val() === true)",
+        "ownerUid": {
+          ".validate": "(!data.exists() && newData.val() === auth.uid) || data.val() === newData.val() || root.child('users/' + auth.uid + '/role').val() === 'admin' || root.child('users/' + auth.uid + '/isAdmin').val() === true"
+        },
+        "teacherMode": {
+          ".validate": "!data.parent().exists() || data.parent().child('ownerUid').val() === auth.uid || data.val() === newData.val() || root.child('users/' + auth.uid + '/role').val() === 'admin' || root.child('users/' + auth.uid + '/isAdmin').val() === true"
+        },
+        "maxMembers": {
+          ".validate": "newData.isNumber() && (newData.parent().child('teacherMode').val() !== true || newData.val() <= 50)"
+        },
+        "classroomSettings": {
+          ".validate": "!data.parent().exists() || data.parent().child('ownerUid').val() === auth.uid || newData.parent().child('ownerUid').val() === auth.uid || root.child('users/' + auth.uid + '/role').val() === 'admin' || root.child('users/' + auth.uid + '/isAdmin').val() === true"
+        },
+        "dailyTasks": {
+          ".validate": "!data.parent().exists() || data.parent().child('ownerUid').val() === auth.uid || root.child('users/' + auth.uid + '/role').val() === 'admin' || root.child('users/' + auth.uid + '/isAdmin').val() === true"
+        },
+        "studentSnapshots": {
+          "$uid": {
+            ".validate": "$uid === auth.uid || data.parent().parent().child('ownerUid').val() === auth.uid || root.child('users/' + auth.uid + '/role').val() === 'admin' || root.child('users/' + auth.uid + '/isAdmin').val() === true"
+          }
+        },
+        "challenges": {
+          "$challengeId": {
+            "title": { ".validate": "data.parent().parent().parent().child('ownerUid').val() === auth.uid || root.child('users/' + auth.uid + '/role').val() === 'admin' || root.child('users/' + auth.uid + '/isAdmin').val() === true" },
+            "sourceType": { ".validate": "data.parent().parent().parent().child('ownerUid').val() === auth.uid || root.child('users/' + auth.uid + '/role').val() === 'admin' || root.child('users/' + auth.uid + '/isAdmin').val() === true" },
+            "format": { ".validate": "data.parent().parent().parent().child('ownerUid').val() === auth.uid || root.child('users/' + auth.uid + '/role').val() === 'admin' || root.child('users/' + auth.uid + '/isAdmin').val() === true" },
+            "pacing": { ".validate": "data.parent().parent().parent().child('ownerUid').val() === auth.uid || root.child('users/' + auth.uid + '/role').val() === 'admin' || root.child('users/' + auth.uid + '/isAdmin').val() === true" },
+            "status": { ".validate": "data.parent().parent().parent().child('ownerUid').val() === auth.uid || root.child('users/' + auth.uid + '/role').val() === 'admin' || root.child('users/' + auth.uid + '/isAdmin').val() === true" },
+            "currentQuestionIndex": { ".validate": "data.parent().parent().parent().child('ownerUid').val() === auth.uid || root.child('users/' + auth.uid + '/role').val() === 'admin' || root.child('users/' + auth.uid + '/isAdmin').val() === true" },
+            "questions": { ".validate": "data.parent().parent().parent().child('ownerUid').val() === auth.uid || root.child('users/' + auth.uid + '/role').val() === 'admin' || root.child('users/' + auth.uid + '/isAdmin').val() === true" },
+            "participants": {
+              "$uid": {
+                ".validate": "$uid === auth.uid || data.parent().parent().parent().parent().child('ownerUid').val() === auth.uid || root.child('users/' + auth.uid + '/role').val() === 'admin' || root.child('users/' + auth.uid + '/isAdmin').val() === true"
+              }
+            },
+            "responses": {
+              "$uid": {
+                ".validate": "$uid === auth.uid || data.parent().parent().parent().parent().child('ownerUid').val() === auth.uid || root.child('users/' + auth.uid + '/role').val() === 'admin' || root.child('users/' + auth.uid + '/isAdmin').val() === true"
+              }
+            }
+          }
+        },
         "messages": {
           "$msgId": {
-            ".validate": "newData.hasChildren(['sender', 'senderUid', 'text', 'time']) && (newData.child('senderUid').val() === auth.uid || newData.child('sender').val() === '系統提示')"
+            ".validate": "newData.hasChildren(['sender', 'senderUid', 'text', 'time']) && (newData.child('senderUid').val() === auth.uid || newData.child('sender').val() === '系統提示') && (data.parent().parent().child('teacherMode').val() !== true || data.parent().parent().child('ownerUid').val() === auth.uid || root.child('users/' + auth.uid + '/role').val() === 'admin' || root.child('users/' + auth.uid + '/isAdmin').val() === true || (data.parent().parent().child('classroomSettings/muteAll').val() !== true && data.parent().parent().child('classroomSettings/mutedUids/' + auth.uid).val() !== true))"
           }
         }
       }

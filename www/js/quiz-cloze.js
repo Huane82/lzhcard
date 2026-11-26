@@ -605,6 +605,12 @@ Return ONLY a single valid JSON object (no markdown fences):
             } catch (e) {}
         }
 
+        if (global.ClassroomEngine && typeof global.ClassroomEngine.recordStudyActivity === 'function') {
+            try {
+                global.ClassroomEngine.recordStudyActivity({ type: 'quiz_questions', count: total, isCorrect: passed });
+            } catch (e) {}
+        }
+
         state.isSubmitted = true;
         state.resultSummary = { correct, total, accuracy, passed };
         renderCloze10UI();

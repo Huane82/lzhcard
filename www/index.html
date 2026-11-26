@@ -143,12 +143,20 @@
                         <span data-i18n="tosItem1Desc">本平台包含之公開聊天室與「私訊管理員」功能，系統管理員出於安全稽核、違規處理與服務維護之必要，皆擁有查看與審核之權限。</span>
                     </li>
                     <li>
-                        <strong class="text-slate-800 dark:text-slate-100" data-i18n="tosItem2Title">💾 資料保管免責聲明：</strong>
-                        <span data-i18n="tosItem2Desc">本網頁服務不承擔任何單字庫與學習數據之免費保管或永久儲存責任。建議使用者務必定期使用系統內建之「JSON 備份」功能自行下載備份資料。</span>
+                        <strong class="text-slate-800 dark:text-slate-100" data-i18n="tosItem2Title">💾 資料保管與同步機制：</strong>
+                        <span data-i18n="tosItem2Desc">登入帳號後系統採差異化雲端分片同步以減少讀寫並支援跨裝置銜接；本平台亦提供完整 JSON 匯出，建議使用者定期自行備份重要字庫。</span>
                     </li>
                     <li>
                         <strong class="text-slate-800 dark:text-slate-100" data-i18n="tosItem3Title">⚠️ 防詐騙與安全提醒：</strong>
                         <span data-i18n="tosItem3Desc">請勿於聊天室中透漏任何個人敏感資訊（如銀行帳密、身份證字號）。本平台不會以私訊要求轉帳或提供信用卡資訊，請提高警覺避免受騙。</span>
+                    </li>
+                    <li>
+                        <strong class="text-slate-800 dark:text-slate-100" data-i18n="tosItem4Title">🎓 班級老師模式與會員授權：</strong>
+                        <span data-i18n="tosItem4Desc">建立「班級老師模式」群組（每班上限 50 人）及於班級中啟用 ✨ AI 出題共享額度需訂閱「老師班級方案（每月 NT$ 490）」；群組學習進度與任務預設對班級成員可見，老師亦可於設定切換為僅限老師查看。</span>
+                    </li>
+                    <li>
+                        <strong class="text-slate-800 dark:text-slate-100" data-i18n="tosItem5Title">✨ 雲端 AI 額度與多語言條款：</strong>
+                        <span data-i18n="tosItem5Desc">凡標示 ✨ AI 之功能（如單字解析、分析診斷、圖片批匯與自訂查字）皆經由加密雲端通道處理並依方案扣減對應額度；選用「自訂語言」時示範皆以英文為主，如需特定語種長期客製更新維護，請聯繫開發者（tomlin980415@gmail.com）支付固定月費。</span>
                     </li>
                 </ul>
 
@@ -164,7 +172,7 @@
             <div class="flex items-center space-x-2 flex-shrink-0 pt-1">
                 <input type="checkbox" id="tosCheckbox" onchange="toggleAuthButtons()" class="w-5 h-5 rounded border-slate-300 text-brand-600 focus:ring-brand-500 cursor-pointer shrink-0">
                 <label for="tosCheckbox" class="text-xs font-bold text-slate-700 dark:text-slate-200 cursor-pointer select-none" data-i18n="tosCheckLabel">
-                    我已閱讀並完全同意上述使用者服務與隱私條款
+                    我已閱讀並完全同意上述使用者服務條款、班級共享授權、雲端 AI 額度規範與隱私權政策
                 </label>
             </div>
 
@@ -236,11 +244,15 @@
                 <!-- 2. 目標語言 -->
                 <div>
                     <label class="block font-bold mb-1" data-i18n="lblTargetLang">學習目標語言 (Target Language)</label>
-                    <select id="obTargetLang" class="w-full p-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl font-bold">
+                    <select id="obTargetLang" onchange="const n=document.getElementById('obCustomLangNotice');if(n) n.classList.toggle('hidden', this.value!=='custom');" class="w-full p-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl font-bold">
                         <option value="en">🇺🇸 English</option>
                         <option value="ja">🇯🇵 日本語</option>
                         <option value="zh-TW">🇹🇼 中文</option>
+                        <option value="custom" data-i18n="optCustomTarget">✏️ 自訂語言 (以英文為示範基準)</option>
                     </select>
+                    <p id="obCustomLangNotice" class="hidden mt-1.5 p-2 rounded-lg bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-[11px] text-amber-800 dark:text-amber-200 leading-relaxed" data-i18n="customLangPolicyShort">
+                        選用自訂語言時，系統教學與示範皆以英文為主；如需特定語言長期更新維護，可聯繫開發者（tomlin980415@gmail.com）支付固定月費客製。
+                    </p>
                 </div>
 
                 <!-- 🚀 步驟 1 底部按鈕 -->
@@ -255,10 +267,10 @@
                 </div>
             </div>
 
-            <!-- 📍 步驟 2：顯示模式、語音與 API Key 模式設定 (預設隱藏) -->
+            <!-- 📍 步驟 2：顯示模式與語音偏好設定 (預設隱藏) -->
             <div id="obStep2" class="hidden space-y-4 text-xs">
                 <div class="flex items-center justify-between font-bold text-brand-600 dark:text-brand-400 pb-1 border-b border-slate-100 dark:border-slate-700">
-                    <span data-i18n="obStep2Title">步驟 2 / 2：顯示、語音與 API 偏好</span>
+                    <span data-i18n="obStep2Title">步驟 2 / 2：顯示與語音偏好</span>
                 </div>
 
                 <!-- 3. 卡片顯示模式 -->
@@ -287,32 +299,6 @@
                         <option value="false" selected data-i18n="optAutoAudioOff">🔇 關閉（預設，點擊喇叭手動朗讀）</option>
                         <option value="true" data-i18n="optAutoAudioOn">🔊 開啟（切換單字卡時自動播放語音）</option>
                     </select>
-                </div>
-
-                <!-- 6. Groq / Gemini API Key (雙軌模式選擇) -->
-                <div>
-                    <label class="block font-bold mb-1" data-i18n="lblApiModeTitle">Groq / Gemini AI Key 模式</label>
-                    <div class="grid grid-cols-2 gap-2 mb-2">
-                        <label class="flex items-center space-x-1.5 border border-slate-200 dark:border-slate-700 rounded-lg p-2 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700/50">
-                            <input type="radio" name="obApiMode" value="personal" id="obApiModePersonal" onchange="toggleObApiKeyBox()" class="text-brand-600 focus:ring-brand-500">
-                            <span class="font-bold text-slate-800 dark:text-slate-100" data-i18n="lblApiModePersonal">個人 Key</span>
-                        </label>
-                        <label class="flex items-center space-x-1.5 border border-slate-200 dark:border-slate-700 rounded-lg p-2 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700/50">
-                            <input type="radio" name="obApiMode" value="shared" id="obApiModeShared" checked onchange="toggleObApiKeyBox()" class="text-brand-600 focus:ring-brand-500">
-                            <span class="font-bold text-slate-800 dark:text-slate-100" data-i18n="lblApiModeShared">免費共用 Key</span>
-                        </label>
-                    </div>
-                    <!-- 🟢 個人雙 Key 輸入框 (Groq + Google Gemini) -->
-                    <div id="obApiKeyBox" class="hidden space-y-2.5 pt-1">
-                        <div>
-                            <label for="obGroqApiKey" class="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1" data-i18n="lblGroqApiKey">Groq API Key（文字翻譯與字幕極速精修推薦）</label>
-                            <input type="password" id="obGroqApiKey" placeholder="gsk_..." data-i18n-placeholder="phGroqApiKey" class="w-full p-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl font-mono">
-                        </div>
-                        <div>
-                            <label for="obApiKey" class="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1" data-i18n="lblGeminiApiKey">Google Gemini API Key（支援純文字與拍照 OCR）</label>
-                            <input type="password" id="obApiKey" placeholder="AIzaSy..." data-i18n-placeholder="phApiKeyInput" class="w-full p-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl font-mono">
-                        </div>
-                    </div>
                 </div>
 
                 <!-- 🚀 步驟 2 底部按鈕 -->
@@ -726,8 +712,8 @@
                 </button>
             </div>
 
-            <!-- 🎯 測驗模式選單（句意拼寫／句構翻譯／綜合閱讀／文意選填 10 選 10 全數開放） -->
-            <div class="bg-white dark:bg-slate-800 p-2 rounded-xl border border-slate-200 dark:border-slate-700 grid grid-cols-2 sm:grid-cols-4 gap-1.5 text-xs">
+            <!-- 🎯 測驗模式選單（拼寫／句構翻譯／綜合閱讀／文意選填／日文科學題／同語進階考題） -->
+            <div class="bg-white dark:bg-slate-800 p-2 rounded-xl border border-slate-200 dark:border-slate-700 grid grid-cols-2 sm:grid-cols-3 gap-1.5 text-xs">
                 <button type="button" id="qmode-spelling" onclick="setQuizMode('spelling')" class="py-2 px-2.5 rounded-lg font-bold transition bg-brand-600 text-white shadow-xs flex items-center justify-center gap-1.5">
                     <i class="fa-solid fa-keyboard"></i>
                     <span data-i18n="quizModeSpelling">拼寫測驗</span>
@@ -744,6 +730,12 @@
                     <i class="fa-solid fa-puzzle-piece"></i>
                     <span>文意選填</span>
                 </button>
+                <button type="button" id="qmode-ja_science" onclick="setQuizMode('ja_science')" class="py-2 px-2.5 rounded-lg font-bold transition bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-600 flex items-center justify-center gap-1.5">
+                    <span>🇯🇵 日文科學出題</span>
+                </button>
+                <button type="button" id="qmode-native_exam" onclick="setQuizMode('native_exam')" class="hidden py-2 px-2.5 rounded-lg font-bold transition bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-600 flex items-center justify-center gap-1.5">
+                    <span>🎓 同語進階考題</span>
+                </button>
             </div>
 
             <div id="quizContainer" class="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5 sm:p-6 shadow-sm space-y-5">
@@ -756,6 +748,16 @@
                         <span id="quizTempLvBadge" class="hidden px-2.5 py-1 rounded-full text-xs font-bold border">⚡ 臨時 Lv.1</span>
                         <button type="button" onclick="nextQuizQuestion()" class="px-3 py-1 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 text-xs font-bold rounded-lg transition" data-i18n="btnNext">下一題</button>
                     </div>
+                </div>
+
+                <!-- 🧬 拼寫模式子切換：原字拼寫 vs 詞性/時態變化拼寫 -->
+                <div id="quizSpellingSubModeBar" class="flex items-center gap-1.5 bg-slate-100 dark:bg-slate-900 p-1 rounded-xl border border-slate-200 dark:border-slate-700">
+                    <button type="button" id="qspell-exact" onclick="setSpellingSubMode('exact')" class="flex-1 py-1.5 px-2.5 text-xs font-bold rounded-lg bg-brand-600 text-white shadow-2xs transition">
+                        原字拼寫
+                    </button>
+                    <button type="button" id="qspell-inflection" onclick="setSpellingSubMode('inflection')" class="flex-1 py-1.5 px-2.5 text-xs font-bold rounded-lg text-slate-600 dark:text-slate-300 hover:bg-slate-200/70 dark:hover:bg-slate-700 transition">
+                        🧬 詞性 / 時態變化拼寫
+                    </button>
                 </div>
 
                 <div class="space-y-2">
@@ -784,6 +786,12 @@
             <!-- 🧩 模組 C（考試模式四）：學測型文意選填 10 選 10 測驗容器 -->
             <div id="quizClozeContainer" class="hidden bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5 sm:p-6 shadow-sm"></div>
 
+            <!-- 🇯🇵 日文科學實證考題容器 -->
+            <div id="quizJaScienceContainer" class="hidden"></div>
+
+            <!-- 🎓 同語進階考題容器（含文言文＆教育部最新修正讀音） -->
+            <div id="quizNativeExamContainer" class="hidden"></div>
+
             <!-- 📖 Phase 1 共用「文章點擊單字即時翻譯」元件體驗區 -->
             <details id="quizReaderDemoCard" class="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-4 shadow-2xs">
                 <summary class="cursor-pointer select-none flex items-center justify-between text-xs font-bold text-slate-700 dark:text-slate-200">
@@ -805,7 +813,24 @@
         <!-- 區塊 3：字庫管理頁面 (整合所有管理工具) -->
         <section id="sec-list" class="hidden space-y-4 pb-24">
             <div class="flex flex-col space-y-3 bg-white dark:bg-slate-800 p-4 rounded-xl border border-slate-200 dark:border-slate-700 shadow-2xs">
-                
+                <!-- ☰ 左上角漢堡選單：字根字首字典＆全局 7000 單搜尋 -->
+                <div class="flex items-center justify-between gap-2 pb-2.5 border-b border-slate-100 dark:border-slate-700">
+                    <div class="flex items-center gap-2.5 min-w-0">
+                        <button type="button" id="wordListMenuBtn" onclick="if(typeof MorphologyEngine!=='undefined') MorphologyEngine.openWordManagerDrawer('morpheme')" aria-label="開啟字根字首與全局查字選單"
+                            class="min-h-[44px] min-w-[44px] inline-flex items-center justify-center rounded-xl bg-slate-100 hover:bg-brand-50 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-100 border border-slate-200 dark:border-slate-600 transition cursor-pointer shrink-0">
+                            <i class="fa-solid fa-bars text-base"></i>
+                        </button>
+                        <div class="min-w-0">
+                            <h2 class="text-sm font-extrabold text-slate-900 dark:text-white truncate" data-i18n="wordManagerDrawerEntryTitle">字庫管理與查詢工具</h2>
+                            <p class="text-[11px] text-slate-500 dark:text-slate-400 truncate" data-i18n="wordManagerDrawerEntrySub">點左側 ☰ 查字根字首詳解 ＆ 全域 7000 單搜尋</p>
+                        </div>
+                    </div>
+                    <button type="button" onclick="if(typeof MorphologyEngine!=='undefined') MorphologyEngine.openWordManagerDrawer('global_search')"
+                        class="min-h-[40px] px-2.5 py-1.5 rounded-xl bg-sky-50 hover:bg-sky-100 dark:bg-sky-950/40 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-800 text-[11px] font-extrabold transition shrink-0">
+                        <i class="fa-solid fa-earth-asia mr-1"></i>全域查字
+                    </button>
+                </div>
+
                 <!-- 快捷功能區 (新增單字 / 批量匯入 / 拍照查字入庫 / JSON 備份) -->
                 <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 pb-3 border-b border-slate-100 dark:border-slate-700">
                     <button type="button" onclick="openModal('cardModal')" class="py-2 px-3 bg-brand-600 hover:bg-brand-700 text-white font-bold rounded-lg text-xs transition flex items-center justify-center space-x-1.5 shadow-xs">
@@ -906,7 +931,7 @@
                         <button type="button" onclick="handleBatchChangeCategory()" class="px-2.5 py-1.5 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 font-bold rounded-lg transition" data-i18n="btnBatchMove">移動字庫</button>
                         <button type="button" onclick="if(typeof handleBatchResetProgress==='function') handleBatchResetProgress();" class="px-2.5 py-1.5 bg-sky-50 dark:bg-sky-950/40 hover:bg-sky-100 dark:hover:bg-sky-900/60 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-800 font-bold rounded-lg transition" data-i18n="btnBatchReset">還原進度</button>
                         <button type="button" id="batchResetFreeLevelBtn" onclick="if(typeof handleBatchResetFreeLevel==='function') handleBatchResetFreeLevel();" class="px-2.5 py-1.5 bg-sky-50 dark:bg-sky-950/40 hover:bg-sky-100 dark:hover:bg-sky-900/60 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-800 font-bold rounded-lg transition" data-i18n="btnBatchResetFree">重置臨時等級</button>
-                        <button type="button" onclick="handleBatchAiFillLibraryWords()" class="px-2.5 py-1.5 bg-purple-600 hover:bg-purple-700 text-white font-bold rounded-lg transition shadow-xs" data-i18n="btnBatchAi">✨ AI 補齊</button>
+                        <button type="button" onclick="handleBatchAiFillLibraryWords()" class="px-2.5 py-1.5 bg-purple-600 hover:bg-purple-700 text-white font-bold rounded-lg transition shadow-xs" data-i18n="btnBatchAi">✨ AI 補齊 (消耗解析額度)</button>
                         <button type="button" onclick="handleBatchDeleteWords()" class="px-2.5 py-1.5 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 dark:hover:bg-rose-900/60 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800 font-bold rounded-lg transition" data-i18n="btnBatchDelete">刪除</button>
                     </div>
                 </div>
@@ -993,11 +1018,25 @@
         <section id="sec-stats" class="hidden space-y-6 pb-24 max-w-4xl mx-auto">
             <!-- 標題區 -->
             <div class="bg-white dark:bg-slate-800 p-6 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-700">
-                <h2 class="text-xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                    <i class="fa-solid fa-chart-line text-brand-600 dark:text-brand-400"></i>
-                    <span data-i18n="statsTitle">學習成果與數據統計</span>
-                </h2>
-                <p class="text-xs text-slate-500 dark:text-slate-400 mt-1" data-i18n="statsDesc">掌握您的詞彙累積量、學習熟悉度與各字庫分佈</p>
+                <div class="flex items-center justify-between gap-2 flex-wrap">
+                    <div class="flex items-center gap-3 min-w-0">
+                        <button type="button" id="statsMenuBtn" onclick="if(typeof openStatsAiDiagnosisModal==='function') openStatsAiDiagnosisModal()" aria-label="開啟 ✨ AI 學習狀況診斷分析"
+                            class="min-h-[44px] min-w-[44px] inline-flex items-center justify-center rounded-xl bg-slate-100 hover:bg-indigo-50 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-100 border border-slate-200 dark:border-slate-600 transition cursor-pointer shrink-0">
+                            <i class="fa-solid fa-bars text-base"></i>
+                        </button>
+                        <div class="min-w-0">
+                            <h2 class="text-xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                                <i class="fa-solid fa-chart-line text-brand-600 dark:text-brand-400"></i>
+                                <span data-i18n="statsTitle">學習成果與數據統計</span>
+                            </h2>
+                            <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5" data-i18n="statsDesc">掌握您的詞彙累積量、學習熟悉度與各字庫分佈</p>
+                        </div>
+                    </div>
+                    <button type="button" onclick="if(typeof openStatsAiDiagnosisModal==='function') openStatsAiDiagnosisModal()"
+                        class="min-h-[40px] px-3 py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 text-xs font-extrabold transition shrink-0">
+                        ✨ AI 狀況診斷（消耗長文額度）
+                    </button>
+                </div>
 
                 <!-- ⚙️ 使用者顯示偏好勾選區 -->
                 <div class="mt-4 pt-4 border-t border-slate-100 dark:border-slate-700">
@@ -1216,9 +1255,9 @@
                     <label class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1"><span data-i18n="lblFormWord">目標語言單字 / 詞彙</span> <span class="text-rose-500">*</span></label>
                     <div class="flex space-x-2">
                         <input type="text" id="formWord" required data-i18n-placeholder="phFormWord" placeholder="例如: resilient / 食べる" class="flex-1 px-3.5 py-2.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-900 outline-none text-sm font-semibold">
-                        <button type="button" onclick="handleAiSingleFill()" id="aiGenerateBtn" class="px-3.5 py-2.5 rounded-lg bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white font-medium text-xs flex items-center space-x-1 shadow-sm transition">
+                        <button type="button" onclick="handleAiSingleFill()" id="aiGenerateBtn" class="px-3.5 py-2.5 rounded-lg bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white font-medium text-xs flex items-center space-x-1 shadow-sm transition shrink-0">
                             <i class="fa-solid fa-wand-magic-sparkles"></i>
-                            <span data-i18n="btnAiFill">AI 自動帶入</span>
+                            <span data-i18n="btnAiFill">✨ AI 自動帶入（消耗解析額度）</span>
                         </button>
                     </div>
                 </div>
@@ -1262,6 +1301,10 @@
         <div class="bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-2xl max-w-3xl w-full p-6 space-y-5 shadow-2xl border border-slate-100 dark:border-slate-700 max-h-[92vh] flex flex-col">
             <div class="flex items-center justify-between border-b border-slate-100 dark:border-slate-700 pb-3 flex-shrink-0">
                 <div class="flex items-center space-x-2">
+                    <button type="button" id="batchModalMenuBtn" onclick="if(typeof toggleBatchAiParserDrawer==='function') toggleBatchAiParserDrawer()" aria-label="開啟 ✨ AI 自由格式文字與圖片解析"
+                        class="min-h-[44px] min-w-[44px] inline-flex items-center justify-center rounded-xl bg-slate-100 hover:bg-purple-50 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-100 border border-slate-200 dark:border-slate-600 transition cursor-pointer shrink-0">
+                        <i class="fa-solid fa-bars text-base"></i>
+                    </button>
                     <i class="fa-solid fa-file-import text-emerald-600 text-xl"></i>
                     <h3 class="text-lg font-bold" data-i18n="modalBatchTitle">批量貼上與 AI 智慧解析</h3>
                 </div>
@@ -1271,6 +1314,35 @@
             </div>
 
             <div class="space-y-4 flex-1 overflow-y-auto pr-1">
+                <!-- ☰ 左上角漢堡選單展開：✨ AI 無格式限制解析文字＆圖片上傳 -->
+                <div id="batchAiParserDrawer" class="hidden p-3.5 rounded-xl bg-gradient-to-br from-purple-50 to-indigo-50 dark:from-purple-950/30 dark:to-slate-900 border border-purple-200 dark:border-purple-800 space-y-3">
+                    <div class="flex items-center justify-between gap-2">
+                        <div class="text-xs font-extrabold text-purple-900 dark:text-purple-200">
+                            ✨ AI 任意格式解析文字 ＆ 圖片擷取單字
+                        </div>
+                        <button type="button" onclick="toggleBatchAiParserDrawer(false)" class="text-xs font-bold text-slate-500 hover:text-slate-700 dark:text-slate-300">收合 ✕</button>
+                    </div>
+                    <p class="text-[11px] text-purple-800/80 dark:text-purple-200/80 leading-relaxed">
+                        若內容非統一逗號格式，或想直接從考卷／講義照片中依提示詞摘錄單字（例：「僅摘出選項裡的單字並附釋義與音標」），請貼於此處或上傳圖片交由 ✨ AI 解析。
+                    </p>
+                    <div>
+                        <label class="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">任意格式文字（選填）</label>
+                        <textarea id="batchAiRawTextInput" rows="3" placeholder="貼上任意格式文章、單字筆記或試題內容..." class="w-full p-2.5 text-xs rounded-lg border border-purple-200 dark:border-slate-600 bg-white dark:bg-slate-800 outline-none"></textarea>
+                    </div>
+                    <div>
+                        <label class="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">給 ✨ AI 的摘錄提示詞（選填）</label>
+                        <input type="text" id="batchAiPromptInput" placeholder="例：只擷取各題 (A)(B)(C)(D) 選項裡的單字，補上母語釋義與例句" class="w-full px-3 py-2 text-xs rounded-lg border border-purple-200 dark:border-slate-600 bg-white dark:bg-slate-800 outline-none">
+                    </div>
+                    <div class="space-y-2">
+                        <label class="block text-[11px] font-bold text-slate-700 dark:text-slate-300">上傳圖片（最多 4 張，純文字消耗解析額度／附圖片消耗識圖額度）</label>
+                        <input type="file" id="batchAiImageInput" multiple accept="image/*" onchange="handleBatchAiParserFiles(this.files)" class="block w-full text-xs text-slate-500 file:mr-2.5 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-bold file:bg-purple-600 file:text-white hover:file:bg-purple-700 cursor-pointer">
+                        <div id="batchAiImageList" class="hidden flex flex-wrap gap-2 pt-1"></div>
+                    </div>
+                    <button type="button" id="batchAiRunParserBtn" onclick="runBatchAiFreeParser()" class="w-full min-h-[44px] py-2.5 px-4 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white text-xs font-extrabold rounded-xl shadow-sm transition">
+                        ✨ AI 解析文字與圖片並填入預覽（無圖消耗解析額度／有圖消耗識圖額度）
+                    </button>
+                </div>
+
                 <!-- 預設單字庫一鍵匯入區塊（依目標語言動態切換：英文 7000 單 / 日文 JLPT N5~N1） -->
                 <div id="batchPresetBox" class="p-3.5 bg-gradient-to-r from-brand-50 to-indigo-50 dark:from-slate-900 dark:to-slate-900 border border-brand-200 dark:border-slate-700 rounded-xl space-y-2">
                     <div class="flex items-center space-x-2 font-bold text-xs">
@@ -1296,8 +1368,8 @@
                 </div>
 
                 <div>
-                    <label class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1" data-i18n="lblBatchRaw">貼上原始文字庫資料：</label>
-                    <textarea id="batchRawInput" rows="5" data-i18n-placeholder="phBatchRaw" placeholder="請在此貼上單字內容..." class="w-full p-3 font-mono text-xs rounded-xl border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-900 outline-none"></textarea>
+                    <label class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1" data-i18n="lblBatchRaw">貼上統一格式資料（目標單字,釋義,詞性,發音 ＆ 1."例句" / 2."翻譯"）：</label>
+                    <textarea id="batchRawInput" rows="5" data-i18n-placeholder="phBatchRaw" placeholder="請依統一逗號格式貼上單字內容，非標準格式請點左上角 ☰ 使用 ✨ AI 解析..." class="w-full p-3 font-mono text-xs rounded-xl border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-900 outline-none"></textarea>
                 </div>
 
                 <div class="flex space-x-2">
@@ -1309,11 +1381,11 @@
 
                 <!-- 預覽表格區塊 -->
                 <div id="batchPreviewBox" class="hidden space-y-3 pt-2">
-                    <div class="flex items-center justify-between">
+                    <div class="flex items-center justify-between gap-2 flex-wrap">
                         <span class="text-xs font-bold"><span data-i18n="lblBatchPreview">解析預覽</span> (共 <span id="batchParsedCount">0</span> 筆)：</span>
                         <button type="button" id="batchAiFillBtn" onclick="handleRunBatchAiAutoFill()" class="px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold rounded-lg shadow-xs transition flex items-center space-x-1">
                             <i class="fa-solid fa-wand-magic-sparkles"></i>
-                            <span data-i18n="btnBatchAiFill">AI 批次補齊缺漏欄位</span>
+                            <span data-i18n="btnBatchAiFill">✨ AI 批次補齊缺漏（消耗解析額度）</span>
                         </button>
                     </div>
 
@@ -1350,80 +1422,6 @@
             <div class="pt-3 border-t border-slate-100 dark:border-slate-700 flex justify-end space-x-2 flex-shrink-0">
                 <button type="button" onclick="closeModal('batchModal')" class="px-4 py-2 rounded-lg text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700" data-i18n="btnCancel">取消</button>
                 <button type="button" id="confirmBatchImportBtn" onclick="handleConfirmBatchImport()" disabled class="px-5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-bold shadow-sm transition" data-i18n="btnConfirmImport">確認匯入至字庫</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- 彈窗 3: Groq & Gemini API Key Modal (雙軌優先順序 + 本機儲存) -->
-    <div id="keyModal" class="hidden fixed inset-0 z-[65] bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 lzh-safe-modal">
-        <div class="bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl border border-slate-100 dark:border-slate-700 max-h-[92vh] overflow-y-auto">
-            <div class="flex items-center justify-between border-b border-slate-100 dark:border-slate-700 pb-3">
-                <div class="flex items-center space-x-2">
-                    <i class="fa-solid fa-key text-amber-500"></i>
-                    <h3 class="text-base font-bold" data-i18n="modalKeyTitle">Groq / Gemini API Key 設定</h3>
-                </div>
-                <button type="button" onclick="closeModal('keyModal')" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1">
-                    <i class="fa-solid fa-xmark text-lg"></i>
-                </button>
-            </div>
-
-            <div class="p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/70">
-                <p class="text-xs font-bold text-emerald-900 dark:text-emerald-200 leading-relaxed" data-i18n="byokMandatoryNotice">
-                    填寫自己的 Groq / Google API Key 可直接享有官方提供的免費額度、不受系統次數限制；若使用系統公用 Key，因伺服器需負擔運算成本，設有每日／每月額度限制且需付費會員解鎖，因此強烈推薦大家申請並填寫自己的免費 API Key！
-                </p>
-            </div>
-
-            <p class="text-xs text-slate-500 dark:text-slate-400 leading-relaxed" data-i18n="modalKeyDesc">
-                第一優先使用您本機填寫的 Groq 或 Google Gemini Key（僅儲存在本機裝置、永不上傳雲端資料庫且不扣系統配額）；兩者皆留白時才由系統公用通道依方案額度處理。
-            </p>
-
-            <!-- 🌟 雙軌模式切換選單 -->
-            <div class="space-y-2.5">
-                <label class="block text-xs font-bold text-slate-700 dark:text-slate-300" data-i18n="lblApiKeySource">API 金鑰來源模式</label>
-                <div class="grid grid-cols-2 gap-2.5">
-                    <label class="flex items-center space-x-2 border border-slate-200 dark:border-slate-700 rounded-xl p-3 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700/50 transition">
-                        <input type="radio" name="apiMode" value="personal" id="apiModePersonal" onchange="switchApiMode('personal')" class="text-brand-600 focus:ring-brand-500">
-                        <div class="text-xs font-bold text-slate-800 dark:text-slate-100">
-                            <span data-i18n="lblApiPersonalKey">個人 API Key</span>
-                            <div class="text-[10px] text-slate-400 font-normal" data-i18n="lblApiPersonalKeyDesc">BYOK 免費無上限不扣配額</div>
-                        </div>
-                    </label>
-                    <label class="flex items-center space-x-2 border border-slate-200 dark:border-slate-700 rounded-xl p-3 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700/50 transition">
-                        <input type="radio" name="apiMode" value="shared" id="apiModeShared" onchange="switchApiMode('shared')" class="text-brand-600 focus:ring-brand-500">
-                        <div class="text-xs font-bold text-slate-800 dark:text-slate-100">
-                            <span data-i18n="lblApiSharedKey">雲端共用方案 Key</span>
-                            <div class="text-[10px] text-slate-400 font-normal" data-i18n="lblApiSharedKeyDesc">依方案提供每日 AI 額度</div>
-                        </div>
-                    </label>
-                </div>
-            </div>
-
-            <!-- ☁️ 雲端共用方案 Key 提示區（選擇雲端共用時顯示，並隱藏個人 Key 輸入框） -->
-            <div id="sharedKeyModeNotice" class="hidden p-3.5 rounded-xl bg-sky-50 dark:bg-sky-950/40 border border-sky-200 dark:border-sky-800/70 space-y-1.5">
-                <div class="text-xs font-extrabold text-sky-900 dark:text-sky-200 flex items-center gap-1.5">
-                    <i class="fa-solid fa-cloud text-sky-500"></i>
-                    <span data-i18n="sharedApiModeTitle">已選擇「雲端共用方案 Key（公用 API）」</span>
-                </div>
-                <p class="text-[11px] text-sky-800/90 dark:text-sky-200/80 leading-relaxed" data-i18n="sharedApiModeDesc">
-                    將使用 LZHCard 雲端共用 AI 通道依您目前的方案或免費額度運行，無需輸入個人 API Key。點擊「儲存設定」即可套用雲端公用模式並停用本機個人金鑰。
-                </p>
-            </div>
-
-            <!-- 個人雙 Key 輸入框 (Groq + Gemini，僅選擇「個人 API Key」時顯示) -->
-            <div id="personalKeyInputBox" class="hidden pt-1 space-y-3">
-                <div>
-                    <label for="groqApiKeyInput" class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1" data-i18n="lblGroqApiKey">Groq API Key（文字翻譯與字幕極速精修推薦）</label>
-                    <input type="password" id="groqApiKeyInput" data-i18n-placeholder="phGroqApiKey" placeholder="gsk_..." class="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-900 text-sm font-mono outline-none focus:ring-2 focus:ring-amber-500">
-                </div>
-                <div>
-                    <label for="geminiApiKeyInput" class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1" data-i18n="lblGeminiApiKey">Google Gemini API Key（支援純文字與拍照 OCR）</label>
-                    <input type="password" id="geminiApiKeyInput" placeholder="AIzaSy..." class="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-900 text-sm font-mono outline-none focus:ring-2 focus:ring-amber-500">
-                </div>
-            </div>
-
-            <div class="pt-2 flex justify-end space-x-2">
-                <button type="button" onclick="closeModal('keyModal')" class="px-4 py-2 rounded-lg text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700" data-i18n="btnCancel">取消</button>
-                <button type="button" onclick="handleSaveApiKey()" class="px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold shadow-sm" data-i18n="btnSaveKey">儲存設定</button>
             </div>
         </div>
     </div>
@@ -1548,7 +1546,7 @@
             </div>
 
             <p class="text-xs text-slate-500 dark:text-slate-400 leading-relaxed" data-i18n="modalQuickAddDesc">
-                輸入單字（多個單字可以用逗號、空白或換行隔開），AI 將會自動加入字庫！(此功能自訂語言無法使用)
+                輸入單字（可用逗號、空白或換行隔開），將自動透過 ✨ AI（消耗解析額度）補齊釋義、詞性與例句！(若選擇自訂語言將改以英文示範基準)
             </p>
 
             <!-- 指定/選擇儲存字庫欄位 -->
@@ -1565,7 +1563,7 @@
 
             <div class="flex justify-end space-x-2">
                 <button type="button" onclick="closeModal('quickAddModal')" class="px-3 py-1.5 rounded-lg text-xs font-medium text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700" data-i18n="btnCancel">取消</button>
-                <button type="button" id="quickAddConfirmBtn" onclick="handleQuickAddWords()" class="px-4 py-1.5 rounded-lg bg-brand-600 hover:bg-brand-700 text-white text-xs font-bold shadow-xs transition" data-i18n="btnQuickAddConfirm">確定並 AI 自動填入</button>
+                <button type="button" id="quickAddConfirmBtn" onclick="handleQuickAddWords()" class="px-4 py-1.5 rounded-lg bg-brand-600 hover:bg-brand-700 text-white text-xs font-bold shadow-xs transition" data-i18n="btnQuickAddConfirm">✨ AI 自動填入（消耗解析額度）</button>
             </div>
         </div>
     </div>
@@ -1935,6 +1933,17 @@
                                 </label>
                             </div>
 
+                            <div id="settingsMorphemesSlot" class="flex items-center justify-between gap-2">
+                                <div class="min-w-0">
+                                    <div class="text-xs font-bold text-slate-800 dark:text-slate-100" data-i18n="lblShowMorphemes">刷卡自動標示字首／字根／字尾</div>
+                                    <div class="text-[10px] text-slate-500 dark:text-slate-400" data-i18n="descShowMorphemes">藍＝字首 · 綠＝字根 · 琥珀＝字尾（點擊詞素直接查詳解，不會翻卡）</div>
+                                </div>
+                                <label class="relative inline-flex items-center cursor-pointer shrink-0">
+                                    <input type="checkbox" id="showMorphemesToggle" checked onchange="if(typeof handleShowMorphemesChange==='function') handleShowMorphemesChange(this.checked)" class="sr-only peer">
+                                    <div class="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-slate-600 peer-checked:bg-emerald-600"></div>
+                                </label>
+                            </div>
+
                             <div class="p-3 bg-slate-50 dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700 space-y-2">
                                 <div>
                                     <div class="text-xs font-bold text-slate-800 dark:text-slate-100" data-i18n="lblDailyFreeSync">每日臨時等級同步</div>
@@ -2063,6 +2072,11 @@
                                     <input type="text" id="customTargetInput" onchange="handleCustomLangChange('target', this.value)" data-i18n-placeholder="customTargetPlaceholder" placeholder="輸入自訂目標語言" class="hidden px-2 py-1 text-xs border border-slate-300 dark:border-slate-600 rounded bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-slate-100">
                                 </div>
                             </div>
+
+                            <div id="customLangPolicyNotice" class="hidden p-3 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 text-[11px] text-amber-900 dark:text-amber-200 leading-relaxed space-y-1">
+                                <p class="font-extrabold" data-i18n="customLangPolicyTitle">🌐 自訂語言與專屬維護方案說明</p>
+                                <p data-i18n="customLangPolicyBody">系統預設支援繁體中文、英文與日文；當您選擇「自訂語言」時，新手示範字卡、預設字庫與例句範例皆以英文為主，並依您的提示調整解析。若需長期新增或維護特定小眾語言版本，歡迎聯繫開發者（tomlin980415@gmail.com）支付固定會員費以購買專屬更新維護服務。</p>
+                            </div>
                         </div>
                     </div>
 
@@ -2157,25 +2171,6 @@
                                     <option value="light" data-i18n="themeLight">☀️ 亮色模式</option>
                                     <option value="dark" data-i18n="themeDark">🌙 夜間模式</option>
                                 </select>
-                            </div>
-
-                            <div class="space-y-2">
-                                <div class="flex items-center justify-between gap-2">
-                                    <div class="min-w-0">
-                                        <div class="text-xs font-bold text-slate-800 dark:text-slate-100" data-i18n="lblApiKey">Groq / Gemini AI Key</div>
-                                        <div class="text-[10px] text-slate-500 dark:text-slate-400" data-i18n="descApiKey">自備個人 API Key（不扣系統次數）或雲端共用額度</div>
-                                        <div id="settingsApiModeBadgeText" class="text-[11px] font-bold text-sky-600 dark:text-sky-400 mt-1">☁️ 目前模式：雲端共用方案 API（依會員或免費額度運行）</div>
-                                    </div>
-                                    <button type="button" onclick="openModal('keyModal')" class="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white font-bold rounded-lg text-xs transition shadow-xs flex items-center space-x-1 shrink-0 cursor-pointer">
-                                        <i class="fa-solid fa-key"></i>
-                                        <span data-i18n="btnSetKey">設定 Key</span>
-                                    </button>
-                                </div>
-                                <div class="p-2.5 rounded-xl bg-emerald-50/80 dark:bg-emerald-950/30 border border-emerald-200/80 dark:border-emerald-800/60">
-                                    <p class="text-[11px] font-semibold text-emerald-900 dark:text-emerald-200 leading-relaxed" data-i18n="byokMandatoryNotice">
-                                        填寫自己的 Groq / Google API Key 可直接享有官方提供的免費額度、不受系統次數限制；若使用系統公用 Key，因伺服器需負擔運算成本，設有每日／每月額度限制且需付費會員解鎖，因此強烈推薦大家申請並填寫自己的免費 API Key！
-                                    </p>
-                                </div>
                             </div>
 
                             <!-- 💬 匯出聊天紀錄 (.txt / .json) -->
@@ -2510,7 +2505,7 @@
                         <i class="fa-solid fa-crown text-amber-500"></i>
                         <span data-i18n="memModalTitle">會員方案與 AI 配額中心</span>
                     </h3>
-                    <p class="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5" data-i18n="memModalSub">核心記憶／離線翻譯永久免費 · 雲端 AI 分級額度與 BYOK 無上限</p>
+                    <p class="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5" data-i18n="memModalSub">核心記憶／離線翻譯永久免費 · 雲端 AI 月繳會員方案與班級教師全班共享</p>
                 </div>
                 <button type="button" onclick="if(typeof closeMembershipModal==='function') closeMembershipModal()" class="min-w-[44px] min-h-[44px] inline-flex items-center justify-center text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1.5 rounded-lg cursor-pointer shrink-0">
                     <i class="fa-solid fa-xmark text-lg"></i>
@@ -2705,9 +2700,9 @@
             <div class="overflow-y-auto space-y-3 text-xs text-slate-600 dark:text-slate-300 leading-relaxed bg-slate-50 dark:bg-slate-900/60 p-3.5 rounded-xl border border-slate-200 dark:border-slate-700">
                 <p class="font-bold text-slate-800 dark:text-slate-100" data-i18n="aiConsentLead">當您啟用雲端 AI 功能時，LZHCard 會依所選服務將以下資料進行加密傳輸：</p>
                 <ul class="list-disc pl-4 space-y-1.5 text-[11px]">
-                    <li data-i18n="aiConsentItem1">傳送內容：您主動拍攝或選取的照片影像、欲查詢或翻譯的字詞與例句文字片段。</li>
-                    <li data-i18n="aiConsentItem2">第三方 AI 處理方：Google Gemini API、Groq API 及 LZHCard Cloudflare Worker 中繼站，僅用於即時回傳釋義、OCR 辨識與翻譯結果，不會用於廣告追蹤或身分販售。</li>
-                    <li data-i18n="aiConsentItem3">離線選擇：若您不同意雲端傳輸，核心單字卡記憶（FSRS）、本機字庫複習及 Apple 裝置端離線翻譯／Tesseract 本地辨識仍可正常運作。</li>
+                    <li data-i18n="aiConsentItem1">傳送內容：您主動拍攝／上傳的照片影像、欲查詢或批匯解析的字詞與例句，以及主動觸發學習診斷時之彙整統計指標。</li>
+                    <li data-i18n="aiConsentItem2">雲端 AI 處理架構：透過 LZHCard Cloudflare Worker 安全雲端中繼（依方案或教師班級共享通道核銷額度）即時回傳結果，絕不將資料用於廣告追蹤或販售。</li>
+                    <li data-i18n="aiConsentItem3">離線選擇：若您不同意雲端傳輸，核心單字卡記憶（FSRS）、本機字根字首字典、7000 單查字、歷屆審訂母語考題及本機複習仍可完整離線運作。</li>
                 </ul>
                 <div class="pt-1">
                     <button type="button" onclick="if(typeof openPrivacyPolicyModal==='function') openPrivacyPolicyModal();" class="min-h-[44px] px-3 py-1.5 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-brand-600 dark:text-brand-400 text-[11px] font-bold hover:underline inline-flex items-center gap-1.5 cursor-pointer">
@@ -2737,20 +2732,20 @@
             </div>
             <div class="p-5 overflow-y-auto flex-1 space-y-4 text-xs text-slate-600 dark:text-slate-300 leading-relaxed select-text">
                 <div>
-                    <h4 class="font-extrabold text-sm text-slate-900 dark:text-white mb-1" data-i18n="privacySec1Title">1. 資料收集範圍與本機優先原則</h4>
-                    <p data-i18n="privacySec1Body">LZHCard 以裝置端學習體驗為核心。您的單字庫、FSRS 記憶進度與個人偏好設定預設儲存在裝置的 LocalStorage 與 IndexedDB 中；僅當您選擇使用 Google 或 Apple 帳號登入時，才會透過 Firebase Authentication 與 Cloud Firestore 同步您的學習紀錄與公開名片資料。</p>
+                    <h4 class="font-extrabold text-sm text-slate-900 dark:text-white mb-1" data-i18n="privacySec1Title">1. 資料收集範圍與差異化雲端同步</h4>
+                    <p data-i18n="privacySec1Body">LZHCard 以裝置端學習體驗為核心。您的單字庫、FSRS 記憶進度與偏好設定預設儲存在裝置 LocalStorage 與 IndexedDB 中；登入 Google 或 Apple 帳號後，系統透過 Firebase Authentication 與差異化分片同步（Cloud Firestore 與 Beacon 離線保護）同步跨裝置學習進度。</p>
                 </div>
                 <div>
-                    <h4 class="font-extrabold text-sm text-slate-900 dark:text-white mb-1" data-i18n="privacySec2Title">2. 相機、照片與螢幕翻譯（AI 資料傳輸）</h4>
-                    <p data-i18n="privacySec2Body">您可優先選擇裝置端離線辨識（Apple Vision / Translation 或本地 Tesseract）。僅於您明確同意授權並觸發雲端 AI 功能（如單字解析、拍照 OCR 翻譯、字幕語境精修）時，系統才會透過 HTTPS 加密將必要文字或影像片段傳送至 Google Gemini API、Groq API 或 LZHCard Cloudflare Worker 中繼服務即時運算，運算完成後不會留存您的私人影像。</p>
+                    <h4 class="font-extrabold text-sm text-slate-900 dark:text-white mb-1" data-i18n="privacySec2Title">2. 相機、圖片批匯、AI 診斷與螢幕翻譯</h4>
+                    <p data-i18n="privacySec2Body">您可優先使用離線字典、字根字首庫與裝置端辨識。僅當您同意並主動觸發標示「✨ AI」的功能（如拍照／多圖批匯解析、字幕精修、字根問答或學習狀況診斷）時，必要資料才會經 HTTPS 加密送往 LZHCard 安全雲端中繼運算，運算完成後不會留存私人圖片。</p>
                 </div>
                 <div>
-                    <h4 class="font-extrabold text-sm text-slate-900 dark:text-white mb-1" data-i18n="privacySec3Title">3. 不進行跨 App 廣告追蹤與資料販售</h4>
-                    <p data-i18n="privacySec3Body">本應用程式不包含第三方廣告 SDK，不追蹤您於其他公司應用程式或網站的活動（NSPrivacyTracking = false），亦絕不販售或出租任何個人資料。</p>
+                    <h4 class="font-extrabold text-sm text-slate-900 dark:text-white mb-1" data-i18n="privacySec3Title">3. 班級老師模式可見性與資料安全（零廣告追蹤）</h4>
+                    <p data-i18n="privacySec3Body">加入或建立「班級老師模式」群組（上限 50 人）時，每日任務進度與挑戰排名預設供同班成員互查，建立群組之老師可於設定切換為「僅限老師查看」。本應用程式絕不包含第三方廣告 SDK、不進行跨 App 追蹤（NSPrivacyTracking = false），亦絕不販售個人資料。</p>
                 </div>
                 <div>
-                    <h4 class="font-extrabold text-sm text-slate-900 dark:text-white mb-1" data-i18n="privacySec4Title">4. 帳號刪除與資料控制權</h4>
-                    <p data-i18n="privacySec4Body">您可隨時於「設定 → 帳號與備份」匯出 JSON 備份，或使用「永久註銷帳號」功能立即清除雲端 Firestore 分片資料、公開名片與認證帳號，以及本機所有快取。</p>
+                    <h4 class="font-extrabold text-sm text-slate-900 dark:text-white mb-1" data-i18n="privacySec4Title">4. 帳號刪除、訂閱透明與資料控制權</h4>
+                    <p data-i18n="privacySec4Body">「老師班級方案」採每月訂閱制（NT$ 490／月，無買斷），可隨時取消。您亦隨時可於「設定 → 帳號與備份」匯出 JSON 備份，或使用「永久註銷帳號」立即清除雲端分片、名片與帳號資料。</p>
                 </div>
             </div>
             <div class="px-5 py-3 border-t border-slate-100 dark:border-slate-700 flex justify-end gap-2 bg-slate-50/70 dark:bg-slate-900/40 shrink-0">
@@ -2869,11 +2864,13 @@
     <script src="js/i18n.js"></script>
     <script src="js/ai.js"></script>
     <script src="js/reader-popover.js"></script>
+    <script src="js/quiz-exam-bank.js"></script>
     <script src="js/quiz.js"></script>
     <script src="js/quiz-translation.js"></script>
     <script src="js/quiz-reading.js"></script>
     <script src="js/quiz-cloze.js"></script>
     <script src="js/chat.js"></script>
+    <script src="js/classroom.js"></script>
     <script src="js/store.js"></script>
     <script src="js/stats.js"></script>
     <script src="js/batch.js"></script>
@@ -2881,6 +2878,7 @@
     <script src="js/system-overlay.js"></script>
     <script src="js/game-engine.js"></script>
     <script src="js/multiplayer.js"></script>
+    <script src="js/morphology.js"></script>
     <script src="js/app.js"></script>
     <script src="js/floating-translator.js"></script>
     <script src="js/onboarding.js"></script>

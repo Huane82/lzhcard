@@ -1,5 +1,5 @@
 /**
- * LZHCard - 商業化分級方案、Google Play 內購驗證、2:8 金幣儲值、管理員特權與雙軌 BYOK 系統
+ * LZHCard - 商業化分級方案、Google Play / App Store 內購驗證、2:8 金幣儲值、管理員特權與班級教師共享系統
  * 檔案：www/js/membership.js
  */
 (function (global) {
@@ -7,24 +7,18 @@
 
     const MEMBERSHIP_CYCLE_DAYS = 30;
     const MEMBERSHIP_CYCLE_MS = MEMBERSHIP_CYCLE_DAYS * 24 * 60 * 60 * 1000;
-    const ANNUAL_CYCLE_DAYS = 365;
-    const ANNUAL_CYCLE_MS = ANNUAL_CYCLE_DAYS * 24 * 60 * 60 * 1000;
     const SHARED_WORKER_BASE = 'https://lzhcard.tomlin980415.workers.dev';
     const ANDROID_PACKAGE_NAME = 'com.lzhcard.app';
 
-    const GROQ_KEY_STORAGE = 'lzhcard_groq_key_v1';
-    const GEMINI_KEY_STORAGE = 'flashcard_gemini_key_v1';
-
-    const MANDATORY_BYOK_NOTICE = '填寫自己的 Groq / Google API Key 可直接享有官方提供的免費額度、不受系統次數限制；若使用系統公用 Key，因伺服器需負擔運算成本，設有每日／每月額度限制且需付費會員解鎖，因此強烈推薦大家申請並填寫自己的免費 API Key！';
-    const MANDATORY_DISCLOSURE_TEXT = 'LZHCard 核心單字卡、FSRS 記憶排程、內建題庫測驗、本地離線拍照取詞與即時字幕直譯皆永久免費；雲端高耗能 AI 運算依方案提供每日與每月安心額度，亦可隨時填入個人 Groq / Google API Key 免費無上限使用！';
+    const MANDATORY_DISCLOSURE_TEXT = 'LZHCard 核心單字卡、FSRS 記憶排程、內建題庫測驗、本地離線拍照取詞與即時字幕直譯皆永久免費；雲端 AI 解析、AI 文章／考題出題、拍照 OCR 與語境字幕精修由會員方案或班級教師方案提供雲端運算配額。';
 
     const AI_QUOTA_MATRIX = {
         free: {
             priority: 1,
             priorityLabelKey: 'memPriorityStd',
-            priorityLabelFallback: '標準排隊',
-            daily: { def_fill: 10, article_gen: 1, vision_ocr: 0, fast_refine: 0 },
-            monthly: { def_fill: 120, article_gen: 10, vision_ocr: 0, fast_refine: 0 }
+            priorityLabelFallback: '標準模式（核心與離線永久免費）',
+            daily: { def_fill: 0, article_gen: 0, vision_ocr: 0, fast_refine: 0 },
+            monthly: { def_fill: 0, article_gen: 0, vision_ocr: 0, fast_refine: 0 }
         },
         supporter_30: {
             priority: 2,
@@ -46,6 +40,13 @@
             priorityLabelFallback: 'VIP 極速通道',
             daily: { def_fill: 300, article_gen: 25, vision_ocr: 50, fast_refine: 600 },
             monthly: { def_fill: 4500, article_gen: 400, vision_ocr: 750, fast_refine: 8000 }
+        },
+        teacher_class: {
+            priority: 5,
+            priorityLabelKey: 'memPriorityTeacher',
+            priorityLabelFallback: '班級共享極速通道',
+            daily: { def_fill: 600, article_gen: 60, vision_ocr: 80, fast_refine: 1000 },
+            monthly: { def_fill: 12000, article_gen: 1200, vision_ocr: 1500, fast_refine: 15000 }
         }
     };
 
@@ -58,9 +59,10 @@
     ];
 
     const PLAY_MEMBERSHIP_SKUS = {
-        supporter_30: { monthly: 'lzhcard_mem_starter_30d', annual: 'lzhcard_mem_starter_365d' },
-        supporter_90: { monthly: 'lzhcard_mem_plus_30d', annual: 'lzhcard_mem_plus_365d' },
-        supporter_180: { monthly: 'lzhcard_mem_pro_30d', annual: 'lzhcard_mem_pro_365d' }
+        supporter_30: { monthly: 'lzhcard_mem_starter_30d' },
+        supporter_90: { monthly: 'lzhcard_mem_plus_30d' },
+        supporter_180: { monthly: 'lzhcard_mem_pro_30d' },
+        teacher_class: { monthly: 'lzhcard_mem_teacher_30d' }
     };
 
     // Apple App Store 內購 +10%（Exact 10% rounded to integer NT$，僅原生 iOS App 生效）
@@ -70,11 +72,9 @@
         lzhcard_coins_720: 198,
         lzhcard_coins_1200: 330,
         lzhcard_mem_starter_30d: 43,
-        lzhcard_mem_starter_365d: 429,
         lzhcard_mem_plus_30d: 109,
-        lzhcard_mem_plus_365d: 1089,
         lzhcard_mem_pro_30d: 219,
-        lzhcard_mem_pro_365d: 2189
+        lzhcard_mem_teacher_30d: 539
     };
 
     function getPlatformPriceNtd(basePriceNtd, skuId = '', platform = getPaymentPlatform()) {
@@ -128,13 +128,26 @@
             fullMembershipTier: 'supporter_180'
         },
         {
+            id: 'redeem_teacher_30d',
+            icon: '🎓',
+            costCoins: 1960,
+            titleKey: 'coinPackTeacher30dTitle',
+            titleFallback: '30 天 班級教師方案 (Teacher Class)',
+            descKey: 'coinPackTeacher30dDesc',
+            descFallback: '以 1,960 金幣開通 30 天班級教師方案（全班上限 50 名學生共享雲端 AI 與班級挑戰出題特權）',
+            credits: { def_fill: 0, article_gen: 0, vision_ocr: 0, fast_refine: 0 },
+            trialDays: 0,
+            fullMembershipDays: 30,
+            fullMembershipTier: 'teacher_class'
+        },
+        {
             id: 'pack_trial_starter_7d',
             icon: '🎟️',
             costCoins: 80,
             titleKey: 'coinPackTrialTitle',
             titleFallback: '7 天 Starter 入門會員體驗卡',
             descKey: 'coinPackTrialDesc',
-            descFallback: '立即體驗 7 天雲端拍照 OCR、語境字幕精修、高配額與暖陽金專屬外觀',
+            descFallback: '立即體驗 7 天雲端 AI、拍照 OCR、語境字幕精修與暖陽金專屬外觀',
             credits: { def_fill: 0, article_gen: 0, vision_ocr: 0, fast_refine: 0 },
             trialDays: 7,
             fullMembershipDays: 0
@@ -145,13 +158,12 @@
         free: {
             id: 'free',
             priceNtd: 0,
-            annualPriceNtd: 0,
             icon: '🌱',
             nameKey: 'memTierFreeName',
             name: '免費方案 (Free)',
             shortBadge: '',
             descKey: 'memTierFreeDesc',
-            desc: '核心記憶卡、FSRS 排程、內建題庫、離線 OCR 與極速直譯永久免費；含每日輕量雲端 AI 額度。',
+            desc: '核心記憶卡、FSRS 排程、內建題庫、對戰、離線 OCR 與極速直譯永久免費；雲端 AI 需會員或加入教師班級共享。',
             badgeClass: 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200 border-slate-200 dark:border-slate-700',
             cardAccentClass: 'border-slate-200 dark:border-slate-700',
             frameId: 'default',
@@ -159,22 +171,20 @@
             titleId: 'newcomer',
             perks: [
                 'FSRS 記憶排程、單字本、聊天、對戰與商城永久免費',
-                'AI 填補釋義例句：10 次/日（每月上限 120 次）',
-                'AI 產生測驗文章：1 篇/日（每月上限 10 篇）',
-                '拍照翻譯與即時字幕：自動使用免費離線 OCR / Tier-1 直譯',
-                '填入個人 Groq / Gemini API Key 立即享有免費無上限'
+                '內建字典／離線 OCR 拍照取詞／Tier-1 即時字幕直譯永久免費',
+                '加入具備「班級教師方案」的班級群組即可免費使用 AI 學習功能',
+                '雲端 AI 解析、AI 考題、雲端拍照 OCR 需付費會員方案解鎖'
             ]
         },
         supporter_30: {
             id: 'supporter_30',
             priceNtd: 39,
-            annualPriceNtd: 390,
             icon: '☕',
             nameKey: 'memTierStarterName',
             name: '入門方案 (Starter)',
             shortBadge: 'Starter 入門',
             descKey: 'memTierStarterDesc',
-            desc: '高 CP 值日常學習首選！解鎖雲端 AI 拍照 OCR 與語境字幕精修＋☕ 暖心贊助外觀。',
+            desc: '高 CP 值日常學習首選！解鎖雲端 AI 填補、拍照 OCR 與語境字幕精修＋☕ 暖心贊助外觀。',
             badgeClass: 'bg-gradient-to-r from-amber-100 to-orange-100 text-amber-800 dark:from-amber-950/80 dark:to-orange-950/70 dark:text-amber-200 border-amber-300 dark:border-amber-700',
             cardAccentClass: 'border-amber-300 dark:border-amber-700',
             frameId: 'supporter_warm_amber',
@@ -182,7 +192,7 @@
             titleId: 'supporter_coffee',
             perks: [
                 'AI 填補釋義例句：40 次/日（月上限 600 次）',
-                'AI 產生測驗文章：5 篇/日（月上限 80 篇）',
+                'AI 產生測驗與考試題目：5 篇/日（月上限 80 篇）',
                 'AI 雲端拍照識別：5 張/日（月上限 80 張）',
                 'AI 字幕語境精修：60 句/日（月上限 800 句）',
                 '解鎖 ☕ 暖陽金環頭像框、琥珀晨光橫幅與徽章'
@@ -191,7 +201,6 @@
         supporter_90: {
             id: 'supporter_90',
             priceNtd: 99,
-            annualPriceNtd: 990,
             icon: '💎',
             nameKey: 'memTierPlusName',
             name: '進階方案 (Plus)',
@@ -206,7 +215,7 @@
             titleId: 'supporter_diamond',
             perks: [
                 'AI 填補釋義例句：120 次/日（月上限 1,800 次）',
-                'AI 產生測驗文章：12 篇/日（月上限 180 篇）',
+                'AI 產生測驗與考試題目：12 篇/日（月上限 180 篇）',
                 'AI 雲端拍照識別：20 張/日（月上限 300 張）',
                 'AI 字幕語境精修：250 句/日（月上限 3,000 句）',
                 '高速優先排隊＋解鎖 💎 蒼穹鑽石光環與極光殿堂橫幅'
@@ -215,13 +224,12 @@
         supporter_180: {
             id: 'supporter_180',
             priceNtd: 199,
-            annualPriceNtd: 1990,
             icon: '👑',
             nameKey: 'memTierProName',
             name: '專業方案 (Pro)',
             shortBadge: 'Pro 專業',
             descKey: 'memTierProDesc',
-            desc: '重度考生與影音精聽專武！最高配額、VIP 極速通道與全階皇冠外觀 100% 解除封印。',
+            desc: '重度考生與影音精聽專武！最高個人配額、VIP 極速通道與全階皇冠外觀 100% 解除封印。',
             badgeClass: 'bg-gradient-to-r from-amber-200 via-rose-100 to-purple-100 text-purple-900 dark:from-amber-900/70 dark:via-rose-950/70 dark:to-purple-950/80 dark:text-amber-200 border-amber-400 dark:border-amber-500',
             cardAccentClass: 'border-purple-400 dark:border-purple-500',
             frameId: 'supporter_celestial_crown',
@@ -229,18 +237,40 @@
             titleId: 'supporter_crown',
             perks: [
                 'AI 填補釋義例句：300 次/日（月上限 4,500 次）',
-                'AI 產生測驗文章：25 篇/日（月上限 400 篇）',
+                'AI 產生測驗與考試題目：25 篇/日（月上限 400 篇）',
                 'AI 雲端拍照識別：50 張/日（月上限 750 張）',
                 'AI 字幕語境精修：600 句/日（月上限 8,000 句）',
                 'VIP 極速通道＋解鎖 👑 星曜皇冠與皇家極光宮殿橫幅'
             ]
+        },
+        teacher_class: {
+            id: 'teacher_class',
+            priceNtd: 490,
+            icon: '🎓',
+            nameKey: 'memTierTeacherName',
+            name: '班級教師方案 (Teacher Class)',
+            shortBadge: 'Teacher 班級教師',
+            isTeacherBadge: true,
+            descKey: 'memTierTeacherDesc',
+            desc: '專為學校與補習班教師設計！老師一人訂閱 NT$ 490／月，班級群組內最多 50 位學生全班免個人會員直接共享雲端 AI。',
+            badgeClass: 'bg-gradient-to-r from-emerald-100 via-teal-100 to-sky-100 text-emerald-900 dark:from-emerald-950/90 dark:via-teal-950/80 dark:to-sky-950/80 dark:text-emerald-200 border-emerald-400 dark:border-emerald-500',
+            cardAccentClass: 'border-emerald-400 dark:border-emerald-500',
+            frameId: 'supporter_celestial_crown',
+            bannerId: 'supporter_imperial_aurora',
+            titleId: 'supporter_crown',
+            perks: [
+                '教師購買一人方案，班級群組上限 50 名學生全班免付費共享雲端 AI',
+                '支援群組挑戰使用「考試模式 AI 閱讀／克漏字／翻譯出題」',
+                'AI 填補釋義例句：600 次/日（月上限 12,000 次）',
+                'AI 產生文章／考題：60 篇/日（月上限 1,200 篇）',
+                'AI 拍照識別 80 張/日 ＋ 字幕精修 1,000 句/日 ＋ 全階教師專屬外觀'
+            ]
         }
     };
 
-    const TIER_ORDER = ['free', 'supporter_30', 'supporter_90', 'supporter_180'];
+    const TIER_ORDER = ['free', 'supporter_30', 'supporter_90', 'supporter_180', 'teacher_class'];
     const VALID_FEATURES = ['def_fill', 'article_gen', 'vision_ocr', 'fast_refine'];
 
-    let billingCycle = 'monthly'; // 'monthly' | 'annual'
     let expiryMonitorTimer = null;
     let isPurchasing = false;
 
@@ -307,38 +337,13 @@
         return AI_QUOTA_MATRIX[tierId] || AI_QUOTA_MATRIX.free;
     }
 
-    function getCleanLocalStorageKey(storageName) {
+    function getActiveClassroomSponsor() {
         try {
-            const raw = (localStorage.getItem(storageName) || '').trim();
-            if (!raw || raw === 'undefined' || raw === 'null') return '';
-            return raw;
-        } catch (e) {
-            return '';
-        }
-    }
-
-    /**
-     * 優先檢查本地端是否填有個人 Groq 或 Gemini Key（且未切換至雲端共用 API 模式）
-     */
-    function isPersonalByokActive() {
-        try {
-            if (localStorage.getItem('lzhcard_api_mode') === 'shared') return false;
+            if (global.ClassroomEngine && typeof global.ClassroomEngine.getActiveSponsor === 'function') {
+                return global.ClassroomEngine.getActiveSponsor() || null;
+            }
         } catch (e) {}
-        return Boolean(getCleanLocalStorageKey(GROQ_KEY_STORAGE) || getCleanLocalStorageKey(GEMINI_KEY_STORAGE));
-    }
-
-    function getPersonalKeysStatus() {
-        const isShared = (() => {
-            try { return localStorage.getItem('lzhcard_api_mode') === 'shared'; } catch (e) { return false; }
-        })();
-        if (isShared) {
-            return { hasGroq: false, hasGemini: false, active: false };
-        }
-        return {
-            hasGroq: Boolean(getCleanLocalStorageKey(GROQ_KEY_STORAGE)),
-            hasGemini: Boolean(getCleanLocalStorageKey(GEMINI_KEY_STORAGE)),
-            active: isPersonalByokActive()
-        };
+        return null;
     }
 
     /**
@@ -347,17 +352,17 @@
     function resolveActiveMembership(input = null, now = Date.now()) {
         if (input && typeof input === 'object' && isAdminAccount(input)) {
             return {
-                tier: 'supporter_180',
-                priceNtd: MEMBERSHIP_TIERS.supporter_180.priceNtd,
+                tier: 'teacher_class',
+                priceNtd: MEMBERSHIP_TIERS.teacher_class.priceNtd,
                 isActive: true,
                 isSupporter: true,
                 isAdmin: true,
                 expired: false,
                 startedAt: 0,
-                expiresAt: now + ANNUAL_CYCLE_MS,
+                expiresAt: now + 3650 * 86400000,
                 remainingDays: 999,
                 isCoinTrial: false,
-                meta: MEMBERSHIP_TIERS.supporter_180
+                meta: MEMBERSHIP_TIERS.teacher_class
             };
         }
 
@@ -524,15 +529,19 @@
         const cfg = getTierQuotaConfig(status.tier);
         const usage = u.aiUsage;
         const credits = (u.coinBoost && u.coinBoost.credits) || { def_fill: 0, article_gen: 0, vision_ocr: 0, fast_refine: 0 };
-        const byok = isPersonalByokActive();
+        const sponsor = getActiveClassroomSponsor();
+        const classSponsored = Boolean(sponsor && sponsor.chatId);
 
         const remainingDaily = {};
         const remainingMonthly = {};
         VALID_FEATURES.forEach((f) => {
             const extra = Math.max(0, Number(credits[f]) || 0);
-            if (byok || admin) {
+            if (admin) {
                 remainingDaily[f] = 999999;
                 remainingMonthly[f] = 999999;
+            } else if (classSponsored && status.tier === 'free') {
+                remainingDaily[f] = 999;
+                remainingMonthly[f] = 999;
             } else {
                 remainingDaily[f] = Math.max(0, (cfg.daily[f] || 0) - (usage.daily[f] || 0)) + extra;
                 remainingMonthly[f] = Math.max(0, (cfg.monthly[f] || 0) - (usage.monthly[f] || 0)) + extra;
@@ -543,8 +552,9 @@
             tier: status.tier,
             isSupporter: status.isSupporter,
             isAdmin: admin,
-            byok,
-            priority: admin ? 4 : cfg.priority,
+            classSponsored,
+            classSponsor: sponsor,
+            priority: admin ? 5 : cfg.priority,
             dailyDate: usage.dailyDate,
             monthlyKey: usage.monthlyKey,
             daily: { ...usage.daily },
@@ -558,21 +568,41 @@
         };
     }
 
-    function canConsumeAiQuota(feature = 'def_fill') {
-        if (isPersonalByokActive()) {
-            return { allowed: true, byok: true, remaining: 999999 };
-        }
+    function canConsumeAiQuota(feature = 'def_fill', options = {}) {
         if (isAdminAccount(global.userData)) {
-            return { allowed: true, byok: false, isAdmin: true, tier: 'supporter_180', remaining: 999999 };
+            return { allowed: true, isAdmin: true, tier: 'teacher_class', remaining: 999999 };
         }
         const snap = getQuotaSnapshot();
         const f = VALID_FEATURES.includes(feature) ? feature : 'def_fill';
         const remD = snap.remainingDaily[f] || 0;
         const remM = snap.remainingMonthly[f] || 0;
+        if (snap.tier !== 'free' && remD > 0 && remM > 0) {
+            return {
+                allowed: true,
+                isAdmin: false,
+                tier: snap.tier,
+                remaining: Math.min(remD, remM),
+                dailyLimit: snap.limits.daily[f] || 0,
+                monthlyLimit: snap.limits.monthly[f] || 0
+            };
+        }
+        const explicitGroupId = options && options.classGroupId ? String(options.classGroupId).trim() : '';
+        const sponsorGroupId = explicitGroupId || (snap.classSponsor && snap.classSponsor.chatId) || '';
+        if (sponsorGroupId) {
+            return {
+                allowed: true,
+                isAdmin: false,
+                classSponsored: true,
+                classGroupId: sponsorGroupId,
+                tier: 'teacher_class',
+                remaining: 999,
+                dailyLimit: AI_QUOTA_MATRIX.teacher_class.daily[f] || 0,
+                monthlyLimit: AI_QUOTA_MATRIX.teacher_class.monthly[f] || 0
+            };
+        }
         const allowed = remD > 0 && remM > 0;
         return {
             allowed,
-            byok: false,
             isAdmin: false,
             tier: snap.tier,
             remaining: Math.min(remD, remM),
@@ -582,7 +612,7 @@
     }
 
     function consumeLocalQuota(feature = 'def_fill') {
-        if (isPersonalByokActive() || isAdminAccount(global.userData)) return;
+        if (isAdminAccount(global.userData)) return;
         const u = global.userData || (global.userData = {});
         ensureMembershipDefaults(u);
         const f = VALID_FEATURES.includes(feature) ? feature : 'def_fill';
@@ -660,7 +690,7 @@
             fast_refine: memTr('quotaFeatSubtitle', 'AI 即時字幕精修')
         };
         const label = featureNames[feature] || 'AI 功能';
-        const msg = memTr('toastQuotaExceededHint', '{feat} 今日／本月配額已達上限（已自動啟用免費離線或極速引擎）。可升級會員、用商店金幣兌換，或填入個人 Groq / Google API Key！', { feat: label });
+        const msg = memTr('toastQuotaExceededHint', '{feat} 需要有效會員或由班級教師方案提供（已自動維持離線／免費功能）。請於會員頁升級方案或使用商店金幣兌換！', { feat: label });
         if (typeof global.showToast === 'function') {
             global.showToast(msg, 'warning');
         }
@@ -742,7 +772,7 @@
 
     function getEffectiveTier() {
         const u = global.userData || {};
-        if (isAdminAccount(u)) return 'supporter_180';
+        if (isAdminAccount(u)) return 'teacher_class';
         return getMyMembershipStatus().tier || 'free';
     }
 
@@ -774,11 +804,6 @@
         if (typeof global.isGuestUser === 'function') return global.isGuestUser();
         const isFirebaseUser = typeof firebase !== 'undefined' && firebase.auth && firebase.auth().currentUser;
         return !isFirebaseUser || localStorage.getItem('lzhcard_guest_mode') === 'true';
-    }
-
-    function setBillingCycle(cycle) {
-        billingCycle = cycle === 'annual' ? 'annual' : 'monthly';
-        renderMembershipModalBody();
     }
 
     function getPaymentPlatform() {
@@ -958,7 +983,7 @@
         if (!plugin || typeof plugin.purchaseProduct !== 'function') {
             if (typeof global.showToast === 'function') {
                 global.showToast(
-                    memTr('toastPlayBillingAndroidOnly', 'Google Play 實名金流僅於 Android App 內開放付款；網頁端請改用金幣兌換或填入個人 Groq / Google API Key！'),
+                    memTr('toastPlayBillingAndroidOnly', 'Google Play 實名金流僅於 Android App 內開放付款；網頁端可使用商店金幣兌換會員方案！'),
                     'info'
                 );
             }
@@ -1267,7 +1292,7 @@
             if (!res.ok || !data.ok) {
                 throw new Error(
                     data.error ||
-                    '網頁版線上金流維護中，請使用 Android 或 iOS App 內購儲值，或於設定頁填入個人 API Key（BYOK）'
+                    '網頁版線上金流維護中，請使用 Android 或 iOS App 內購儲值，或使用商店金幣兌換會員'
                 );
             }
 
@@ -1283,7 +1308,7 @@
 
             if (typeof global.showToast === 'function') {
                 global.showToast(
-                    data.message || '網頁版線上金流維護中，請使用 Android 或 iOS App 內購儲值，或於設定頁填入個人 API Key（BYOK）',
+                    data.message || '網頁版線上金流維護中，請使用 Android 或 iOS App 內購儲值，或使用商店金幣兌換會員',
                     'info'
                 );
             }
@@ -1291,7 +1316,7 @@
         } catch (err) {
             if (typeof global.showToast === 'function') {
                 global.showToast(
-                    err?.message || '網頁版線上金流維護中，請使用 Android 或 iOS App 內購儲值，或於設定頁填入個人 API Key（BYOK）',
+                    err?.message || '網頁版線上金流維護中，請使用 Android 或 iOS App 內購儲值，或使用商店金幣兌換會員',
                     'info'
                 );
             }
@@ -1368,11 +1393,9 @@
             }
         }
 
-        const isAnnual = (options.cycle || billingCycle) === 'annual';
         const skuMap = PLAY_MEMBERSHIP_SKUS[tierId];
-        if (!skuMap) return false;
-        const skuId = isAnnual ? skuMap.annual : skuMap.monthly;
-        return await launchPurchaseByPlatform(skuId);
+        if (!skuMap || !skuMap.monthly) return false;
+        return await launchPurchaseByPlatform(skuMap.monthly);
     }
 
     async function redeemCoinsForPack(packId) {
@@ -1458,7 +1481,7 @@
         }
     }
 
-    function renderQuotaBarItem(label, used, limit, extraCredit = 0, unlimitedMode = false, unlimitedTag = '∞ BYOK') {
+    function renderQuotaBarItem(label, used, limit, extraCredit = 0, unlimitedMode = false, unlimitedTag = '∞ ADMIN') {
         if (unlimitedMode) {
             return `
                 <div class="p-2.5 rounded-xl bg-white dark:bg-slate-800/80 border border-emerald-200 dark:border-emerald-800/70">
@@ -1474,12 +1497,12 @@
         }
         const safeLimit = Math.max(0, Number(limit) || 0);
         const safeUsed = Math.max(0, Number(used) || 0);
-        const pct = safeLimit > 0 ? Math.min(100, Math.round((safeUsed / safeLimit) * 100)) : 100;
+        const pct = safeLimit > 0 ? Math.min(100, Math.round((safeUsed / safeLimit) * 100)) : 0;
         const barColor = safeLimit === 0
             ? 'bg-slate-300 dark:bg-slate-600'
             : (pct >= 90 ? 'bg-rose-500' : (pct >= 70 ? 'bg-amber-500' : 'bg-brand-500'));
         const rightText = safeLimit === 0
-            ? (extraCredit > 0 ? `補充包 ${extraCredit}` : memTr('memQuotaTier1Only', '免費離線/直譯'))
+            ? (extraCredit > 0 ? `補充包 ${extraCredit}` : memTr('memQuotaPaidOnly', '需會員/班級共享'))
             : `${safeUsed}/${safeLimit}${extraCredit > 0 ? ` (+${extraCredit})` : ''}`;
 
         return `
@@ -1506,7 +1529,6 @@
         const status = resolveActiveMembership(u, now);
         const snap = getQuotaSnapshot();
         const isGuest = isGuestSession();
-        const isAnnual = billingCycle === 'annual';
         const userCoins = Math.max(0, Math.floor(Number(u.coins) || 0));
         const history = Array.isArray(u.membershipHistory) ? u.membershipHistory : [];
         const platform = getPaymentPlatform();
@@ -1514,7 +1536,7 @@
         const isAndroid = platform === 'android';
         const hasPlayBilling = Boolean(getPlayBillingPlugin());
         const hasIosStoreKit = Boolean(getIosStoreKitPlugin());
-        const keyStatus = getPersonalKeysStatus();
+        const sponsor = snap.classSponsor;
 
         const currentPaidIdx = (status.isSupporter && !status.isCoinTrial && !admin)
             ? TIER_ORDER.indexOf(status.tier)
@@ -1525,11 +1547,8 @@
             const isCurrent = status.tier === tier.id;
             const isHigherUnlocked = (status.priceNtd > tier.priceNtd && tier.priceNtd > 0) || admin;
             const skuMap = PLAY_MEMBERSHIP_SKUS[tid] || {};
-            const activeSku = isAnnual ? (skuMap.annual || '') : (skuMap.monthly || '');
-            const baseDisplayPrice = isAnnual ? tier.annualPriceNtd : tier.priceNtd;
-            const displayPrice = getPlatformPriceNtd(baseDisplayPrice, activeSku, platform);
-            const annualEffective = getPlatformPriceNtd(tier.annualPriceNtd, skuMap.annual || '', platform);
-            const monthlyEquiv = isAnnual && annualEffective > 0 ? Math.round(annualEffective / 12) : displayPrice;
+            const activeSku = skuMap.monthly || '';
+            const displayPrice = getPlatformPriceNtd(tier.priceNtd, activeSku, platform);
 
             const isLockedDuplicate = !admin && tier.id !== 'free' && currentPaidIdx >= idx && currentPaidIdx > 0;
             const isUpgradeable = !admin && tier.id !== 'free' && currentPaidIdx > 0 && idx > currentPaidIdx;
@@ -1541,17 +1560,11 @@
                     ? memTr('btnMemCurrentPlan', '✓ 目前方案')
                     : memTr('memFreeAutoRevertHint', '期滿自動恢復免費');
             } else if (isIos) {
-                btnLabel = isAnnual
-                    ? `App Store 訂閱 NT$ ${displayPrice} / 年`
-                    : `App Store 購買 NT$ ${displayPrice} / 30天`;
+                btnLabel = `App Store 購買 NT$ ${displayPrice} / 月`;
             } else if (isAndroid) {
-                btnLabel = isAnnual
-                    ? memTr('btnMemSponsorAnnual', '年繳 NT$ {price} / 年', { price: displayPrice })
-                    : memTr('btnMemSponsorPlan', 'Google Play 購買 {price} / 30天', { price: `NT$ ${displayPrice}` });
+                btnLabel = memTr('btnMemSponsorPlan', 'Google Play 購買 {price} / 月', { price: `NT$ ${displayPrice}` });
             } else {
-                btnLabel = isAnnual
-                    ? `線上購買 NT$ ${displayPrice} / 年`
-                    : `線上購買 NT$ ${displayPrice} / 30天`;
+                btnLabel = `月繳方案 NT$ ${displayPrice} / 月`;
             }
 
             if (admin && tier.id !== 'free') {
@@ -1560,24 +1573,24 @@
                 btnLabel = memTr('memActiveExpiryLock', '目前已是有效會員（到期日：{date}）', { date: formatYmdDate(status.expiresAt) });
             } else if (isUpgradeable) {
                 btnLabel = isIos
-                    ? (isAnnual ? `透過 App Store 升級年繳 NT$ ${displayPrice}` : `透過 App Store 升級 NT$ ${displayPrice}`)
-                    : (isAnnual
-                        ? memTr('btnMemUpgradeAnnual', '升級年繳 NT$ {price}', { price: displayPrice })
-                        : memTr('btnMemUpgradePlan', '升級為此方案 NT$ {price}', { price: displayPrice }));
+                    ? `透過 App Store 升級 NT$ ${displayPrice} / 月`
+                    : memTr('btnMemUpgradePlan', '升級為此方案 NT$ {price} / 月', { price: displayPrice });
             }
 
             const btnColorClass = isDisabled
                 ? 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 cursor-not-allowed'
                 : (tier.priceNtd === 0
                     ? 'bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200'
-                    : (tier.id === 'supporter_180'
-                        ? 'bg-gradient-to-r from-amber-500 via-rose-500 to-purple-600 hover:opacity-95 text-white shadow-sm'
-                        : (tier.id === 'supporter_90'
-                            ? 'bg-gradient-to-r from-sky-500 to-indigo-600 hover:opacity-95 text-white shadow-sm'
-                            : 'bg-amber-500 hover:bg-amber-600 text-white shadow-sm')));
+                    : (tier.id === 'teacher_class'
+                        ? 'bg-gradient-to-r from-emerald-500 via-teal-500 to-sky-600 hover:opacity-95 text-white shadow-sm'
+                        : (tier.id === 'supporter_180'
+                            ? 'bg-gradient-to-r from-amber-500 via-rose-500 to-purple-600 hover:opacity-95 text-white shadow-sm'
+                            : (tier.id === 'supporter_90'
+                                ? 'bg-gradient-to-r from-sky-500 to-indigo-600 hover:opacity-95 text-white shadow-sm'
+                                : 'bg-amber-500 hover:bg-amber-600 text-white shadow-sm'))));
 
             return `
-                <div class="rounded-2xl border-2 p-4 flex flex-col justify-between gap-3 transition relative ${isCurrent
+                <div class="rounded-2xl border-2 p-4 flex flex-col justify-between gap-3 transition relative ${tier.id === 'teacher_class' ? 'sm:col-span-2 ' : ''}${isCurrent
                     ? `${tier.cardAccentClass} bg-brand-50/40 dark:bg-slate-900 shadow-sm ring-2 ring-brand-500/25`
                     : `${tier.cardAccentClass} bg-white dark:bg-slate-900/70 hover:shadow-md`}">
                     <div class="space-y-2.5">
@@ -1592,14 +1605,13 @@
                                     <span class="text-[11px] font-semibold text-slate-400">
                                         ${tier.priceNtd === 0
                                             ? memTr('memFreeForeverSuffix', '/ 核心功能永久免費')
-                                            : (isAnnual
-                                                ? memTr('memAnnualSuffix', '/ 年（均月 NT$ {m} · 付10送2）', { m: monthlyEquiv })
-                                                : memTr('memMonthlySuffix', '/ 30 天（到期自動恢復免費）'))}
+                                            : memTr('memMonthlySuffix', '/ 月（30 天，不買斷・到期自動恢復免費）')}
                                     </span>
                                 </div>
                             </div>
                             <div class="flex flex-col items-end gap-1 shrink-0">
                                 ${isCurrent ? `<span class="px-2 py-0.5 rounded-full bg-brand-600 text-white text-[10px] font-extrabold">${escapeMemHtml(memTr('memBadgeCurrent', '目前方案'))}</span>` : ''}
+                                ${!isCurrent && tier.id === 'teacher_class' ? `<span class="px-2 py-0.5 rounded-full bg-emerald-600 text-white text-[10px] font-extrabold">🎓 全班50人共享</span>` : ''}
                                 ${!isCurrent && tier.isPopular ? `<span class="px-2 py-0.5 rounded-full bg-sky-600 text-white text-[10px] font-extrabold">${escapeMemHtml(memTr('memBadgePopular', '80/20 熱門推薦'))}</span>` : ''}
                                 ${!isCurrent && isHigherUnlocked ? `<span class="px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 text-[10px] font-bold">${escapeMemHtml(memTr('memBadgeIncluded', '已涵蓋外觀'))}</span>` : ''}
                             </div>
@@ -1687,24 +1699,22 @@
             `;
         }).join('');
 
-        const unlimitedTag = admin ? '∞ ADMIN' : '∞ BYOK';
-        const unlimitedActive = keyStatus.active || admin;
+        const unlimitedTag = admin ? '∞ ADMIN' : '🎓 班級AI共享';
+        const unlimitedActive = admin || (snap.classSponsored && status.tier === 'free');
 
         body.innerHTML = `
             <div class="space-y-4">
-                <!-- 🔑 強烈推薦自備 Groq / Google API Key 說明與雙軌透明公告 -->
-                <div class="p-4 rounded-2xl bg-gradient-to-br from-emerald-50 via-amber-50/70 to-orange-50/70 dark:from-emerald-950/40 dark:via-slate-900 dark:to-amber-950/30 border-2 border-emerald-300/80 dark:border-emerald-700/70 shadow-2xs space-y-2">
+                <!-- 🎓 平台透明說明與班級教師方案亮點 -->
+                <div class="p-4 rounded-2xl bg-gradient-to-br from-emerald-50 via-teal-50/70 to-sky-50/70 dark:from-emerald-950/40 dark:via-slate-900 dark:to-sky-950/30 border border-emerald-200 dark:border-emerald-800/70 shadow-2xs space-y-1.5">
                     <div class="flex items-center justify-between gap-2 flex-wrap">
                         <div class="flex items-center gap-2 text-xs font-extrabold text-emerald-800 dark:text-emerald-300">
-                            <i class="fa-solid fa-key text-amber-500"></i>
-                            <span>${escapeMemHtml(memTr('memDisclosureHeading', '免費自備 Groq / Google Key 雙軌通道'))}</span>
+                            <i class="fa-solid fa-graduation-cap text-emerald-500"></i>
+                            <span>${escapeMemHtml(memTr('memDisclosureHeading', '雲端 AI 會員方案與班級教師共享（月繳不買斷）'))}</span>
                         </div>
-                        <button type="button" onclick="if(typeof closeMembershipModal==='function') closeMembershipModal(); if(typeof openModal==='function') openModal('keyModal');" class="min-h-[36px] px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-extrabold cursor-pointer transition">
-                            🔑 ${escapeMemHtml(memTr('btnByokShortcut', keyStatus.active ? '已啟用個人 API Key (設定)' : '立即設定個人 Groq / Gemini Key'))}
-                        </button>
+                        ${sponsor ? `<span class="px-2.5 py-0.5 rounded-full bg-emerald-600 text-white text-[10px] font-extrabold">🎓 已受惠於「${escapeMemHtml(sponsor.chatName || '班級')}」AI 共享</span>` : ''}
                     </div>
-                    <p class="text-xs font-bold text-slate-700 dark:text-slate-200 leading-relaxed">
-                        ${escapeMemHtml(memTr('byokMandatoryNotice', MANDATORY_BYOK_NOTICE))}
+                    <p class="text-[11px] font-semibold text-slate-600 dark:text-slate-300 leading-relaxed">
+                        ${escapeMemHtml(memTr('memDisclosureText', MANDATORY_DISCLOSURE_TEXT))}
                     </p>
                 </div>
 
@@ -1713,21 +1723,23 @@
                     <div class="flex flex-wrap items-center justify-between gap-2.5">
                         <div class="flex items-center gap-2.5">
                             <div class="w-10 h-10 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 flex items-center justify-center text-xl shadow-2xs">
-                                ${admin ? '👑' : status.meta.icon}
+                                ${admin ? '👑' : (sponsor && !status.isSupporter ? '🎓' : status.meta.icon)}
                             </div>
                             <div>
                                 <div class="flex items-center gap-1.5 flex-wrap">
                                     <span class="text-xs font-extrabold text-slate-900 dark:text-white">${escapeMemHtml(memTr('memCurrentStatus', '目前身分：'))}${escapeMemHtml(admin ? memTr('memAdminVipName', '系統管理員 (全功能永久解鎖)') : memTr(status.meta.nameKey, status.meta.name))}</span>
                                     ${status.isSupporter ? renderBadgeHtml(status, { size: 'xs' }) : ''}
                                     ${status.isCoinTrial ? `<span class="px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 text-[10px] font-bold">🎟️ 金幣體驗卡</span>` : ''}
-                                    ${keyStatus.active ? `<span class="px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 text-[10px] font-bold">🔑 ${keyStatus.hasGroq ? 'Groq' : ''}${keyStatus.hasGroq && keyStatus.hasGemini ? '+' : ''}${keyStatus.hasGemini ? 'Gemini' : ''} Key 運作中</span>` : ''}
+                                    ${sponsor ? `<span class="px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 text-[10px] font-bold">🎓 班級教師 AI 共享中</span>` : ''}
                                 </div>
                                 <div class="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
                                     ${admin
                                         ? escapeMemHtml(memTr('memAdminStatusHint', '已自動解鎖所有付費功能、商城字庫、付費外觀與無限雲端 AI 配額'))
                                         : (status.isSupporter
                                             ? escapeMemHtml(memTr('memExpiresAt', '效期至 {date}（剩餘 {days} 天，期滿自動恢復免費身分）', { date: formatYmdDate(status.expiresAt), days: status.remainingDays }))
-                                            : escapeMemHtml(memTr('memFreeStatusHint', '目前為免費方案 · 核心記憶／對戰永久免費；填入個人 Key 即享無上限')))}
+                                            : (sponsor
+                                                ? `已加入班級「${escapeMemHtml(sponsor.chatName || '老師群組')}」，可直接使用老師購買的雲端 AI 配額`
+                                                : escapeMemHtml(memTr('memFreeStatusHint', '目前為免費方案 · 核心記憶／對戰／離線翻譯永久免費；雲端 AI 需會員或加入教師班級'))))}
                                 </div>
                             </div>
                         </div>
@@ -1775,7 +1787,7 @@
                                         ? (hasPlayBilling
                                             ? memTr('topupPlayReadyDesc', '經由 Google Play 安全付款並於雲端驗證入帳；可用於購買商城字庫、限定外觀與會員天數')
                                             : memTr('topupPlayAndroidNote', '實名金流儲值請於 Android App 內透過 Google Play 購買（網頁版不可未付款直接發幣）'))
-                                        : '支援網頁端線上結帳（維護期間請改用 Android / iOS App 內購或於設定頁填入個人 API Key）'))}
+                                        : '支援網頁端線上結帳（維護期間請改用 Android / iOS App 內購或使用商店金幣兌換）'))}
                             </p>
                         </div>
                         ${isIos ? `
@@ -1793,25 +1805,17 @@
                     </div>
                 </div>
 
-                <!-- 🗓️ 月繳 / 年繳 83折切換器 -->
+                <!-- 🗓️ 月繳方案標題（每月 30 天制，無買斷制） -->
                 <div class="flex items-center justify-between gap-2 flex-wrap px-1">
                     <span class="text-xs font-extrabold text-slate-700 dark:text-slate-200">${escapeMemHtml(
                         isIos
-                            ? 'App Store 會員方案與週期'
-                            : (isAndroid ? memTr('memSelectPlanTitle', 'Google Play 會員方案與週期') : '線上金流會員方案與週期')
+                            ? 'App Store 月繳會員方案（30 天制）'
+                            : (isAndroid ? memTr('memSelectPlanTitle', 'Google Play 月繳會員方案（30 天制）') : '月繳會員方案（30 天制・不綁約不買斷）')
                     )}</span>
-                    <div class="inline-flex p-1 rounded-xl bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 gap-1">
-                        <button type="button" onclick="MembershipEngine.setBillingCycle('monthly')" class="px-3 py-1 rounded-lg text-[11px] font-extrabold transition cursor-pointer ${!isAnnual ? 'bg-white dark:bg-slate-800 text-brand-600 dark:text-brand-400 shadow-2xs' : 'text-slate-500 dark:text-slate-400'}">
-                            ${escapeMemHtml(memTr('memCycleMonthly', '月繳方案 (30天)'))}
-                        </button>
-                        <button type="button" onclick="MembershipEngine.setBillingCycle('annual')" class="px-3 py-1 rounded-lg text-[11px] font-extrabold transition cursor-pointer flex items-center gap-1 ${isAnnual ? 'bg-white dark:bg-slate-800 text-emerald-600 dark:text-emerald-400 shadow-2xs' : 'text-slate-500 dark:text-slate-400'}">
-                            <span>${escapeMemHtml(memTr('memCycleAnnual', '年繳方案 (365天)'))}</span>
-                            <span class="px-1.5 py-0.2 rounded-md bg-emerald-100 dark:bg-emerald-900/70 text-emerald-700 dark:text-emerald-300 text-[9px]">${escapeMemHtml(memTr('memAnnualSaveBadge', '付10送2 · 省17%'))}</span>
-                        </button>
-                    </div>
+                    <span class="px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 text-[10px] font-extrabold text-slate-600 dark:text-slate-300">🗓️ 全部皆為 30 天月繳制</span>
                 </div>
 
-                <!-- 💳 四大方案卡片 -->
+                <!-- 💳 會員與班級教師方案卡片 -->
                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     ${tierCardsHtml}
                 </div>
@@ -1895,9 +1899,6 @@
     const MembershipEngine = {
         MEMBERSHIP_CYCLE_DAYS,
         MEMBERSHIP_CYCLE_MS,
-        ANNUAL_CYCLE_DAYS,
-        ANNUAL_CYCLE_MS,
-        MANDATORY_BYOK_NOTICE,
         MANDATORY_DISCLOSURE_TEXT,
         AI_QUOTA_MATRIX,
         COIN_TOPUP_PACKAGES,
@@ -1907,8 +1908,7 @@
         isAdminAccount,
         getTierMeta,
         getTierQuotaConfig,
-        isPersonalByokActive,
-        getPersonalKeysStatus,
+        getActiveClassroomSponsor,
         resolveActiveMembership,
         ensureMembershipDefaults,
         checkMembershipExpiration,
@@ -1921,7 +1921,6 @@
         syncQuotaFromServer,
         refreshQuotaStatusFromServer,
         showQuotaUpgradePrompt,
-        setBillingCycle,
         getPaymentPlatform,
         getPlatformPriceNtd,
         IOS_SKU_PRICE_MAP,

@@ -925,7 +925,7 @@
                 <div class="h-28 sm:h-32 ${bannerMeta.bannerClass} relative p-4 flex items-start justify-between">
                     <div class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/25 backdrop-blur-xs text-white text-[11px] font-bold">
                         <i class="fa-solid fa-shield-halved text-amber-300"></i>
-                        <span>Lv.${stats.level} · ${escapeProfileHTML(stats.rankTier)}</span>
+                        <span>Lv.${stats.level} · ${escapeProfileHTML(stats.rankTier)} (${stats.rankPoints} RP)</span>
                     </div>
                     ${(u.role === 'admin' || u.isAdmin === true) ? `
                         <span class="px-2.5 py-1 rounded-full bg-rose-600/90 text-white text-[10px] font-black shadow-xs">👑 管理員 VIP</span>
@@ -1610,6 +1610,7 @@
                                         xp: d.progression.xp || 0,
                                         streakDays: d.progression.streakDays || 0,
                                         rankTier: d.progression.rankTier || '青銅 III',
+                                        rankPoints: Number(d.progression.rankPoints) || 0,
                                         duelWins: d.progression.duelWins || 0,
                                         duelTotal: d.progression.duelTotal || 0,
                                         duelWinRate: d.progression.duelTotal > 0 ? Math.round((d.progression.duelWins / d.progression.duelTotal) * 100) : 0,
@@ -1744,7 +1745,7 @@
                 <div class="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
                     <div class="p-2.5 bg-slate-50 dark:bg-slate-900/80 rounded-xl border border-slate-100 dark:border-slate-700 text-center">
                         <div class="text-[10px] font-bold text-slate-400">${escapeProfileHTML(profileTr('statLevelShort', '等級 / 段位'))}</div>
-                        <div class="text-xs font-extrabold text-brand-600 dark:text-brand-400 mt-1">Lv.${Number(st.level) || 1} · ${escapeProfileHTML(st.rankTier || '青銅 III')}</div>
+                        <div class="text-xs font-extrabold text-brand-600 dark:text-brand-400 mt-1">Lv.${Number(st.level) || 1} · ${escapeProfileHTML(st.rankTier || '青銅 III')} (${Math.max(0, Number(st.rankPoints) || 0)} RP)</div>
                     </div>
                     <div class="p-2.5 bg-slate-50 dark:bg-slate-900/80 rounded-xl border border-slate-100 dark:border-slate-700 text-center">
                         <div class="text-[10px] font-bold text-slate-400">${escapeProfileHTML(profileTr('statMasteredShort', '已掌握單字'))}</div>

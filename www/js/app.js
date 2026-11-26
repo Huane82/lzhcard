@@ -64,6 +64,7 @@ window.selectedCategories = getSavedCategories();
 let currentCard = null;
 let selectedWordIds = new Set();
 let currentTab = 'home';
+if (typeof window !== 'undefined') window.currentTab = currentTab;
 let isCardActionLocked = false;
 let isAppLoaderHidden = false;
 let currentLoaderProgress = 15;
@@ -744,6 +745,9 @@ function isFreePracticeActive() {
  * 🃏 抽取或更新字卡 (force = true 代表使用者主動換卡)
  */
 function nextCard(force = false) {
+    if (typeof MorphologyEngine !== 'undefined' && typeof MorphologyEngine.hideSegmentPopover === 'function') {
+        MorphologyEngine.hideSegmentPopover();
+    }
     const flashcardElem = document.getElementById('flashcard');
     const defaultCatName = tr('defaultCategoryName', '預設字庫');
     const activeCats = window.selectedCategories || ['ALL'];
@@ -883,7 +887,14 @@ function nextCard(force = false) {
         if (backMeaningElem) backMeaningElem.innerText = wordText;
     } else if (displayMode === 'both_front') {
         if (frontWordElem) {
-            frontWordElem.textContent = wordText;
+            const morphHtml = (typeof MorphologyEngine !== 'undefined' && typeof MorphologyEngine.renderInteractiveCardWordHtml === 'function')
+                ? MorphologyEngine.renderInteractiveCardWordHtml(wordText, currentCard)
+                : null;
+            if (morphHtml) {
+                frontWordElem.innerHTML = morphHtml;
+            } else {
+                frontWordElem.textContent = wordText;
+            }
             const subMeaning = document.createElement('div');
             subMeaning.className = 'text-xl sm:text-2xl font-medium text-amber-500 dark:text-amber-400 mt-2';
             subMeaning.textContent = meaningText;
@@ -891,7 +902,16 @@ function nextCard(force = false) {
         }
         if (backMeaningElem) backMeaningElem.innerText = `${wordText} - ${meaningText}`;
     } else {
-        if (frontWordElem) frontWordElem.innerText = wordText;
+        if (frontWordElem) {
+            const morphHtml = (typeof MorphologyEngine !== 'undefined' && typeof MorphologyEngine.renderInteractiveCardWordHtml === 'function')
+                ? MorphologyEngine.renderInteractiveCardWordHtml(wordText, currentCard)
+                : null;
+            if (morphHtml) {
+                frontWordElem.innerHTML = morphHtml;
+            } else {
+                frontWordElem.innerText = wordText;
+            }
+        }
         if (backMeaningElem) backMeaningElem.innerText = meaningText;
     }
 
@@ -1389,6 +1409,9 @@ function handleCardRating(rating, e) {
     if (typeof GameEngine !== 'undefined' && typeof GameEngine.onCardRated === 'function') {
         GameEngine.onCardRated(currentCard, rating);
     }
+    if (typeof ClassroomEngine !== 'undefined' && typeof ClassroomEngine.recordStudyActivity === 'function') {
+        ClassroomEngine.recordStudyActivity({ type: 'flashcards', count: 1 });
+    }
 
     saveStorage();
     updateUI();
@@ -1412,6 +1435,9 @@ function handleEasy(e) {
 }
 
 function flipCard() {
+    if (typeof MorphologyEngine !== 'undefined' && typeof MorphologyEngine.hideSegmentPopover === 'function') {
+        MorphologyEngine.hideSegmentPopover();
+    }
     const flashcardElem = document.getElementById('flashcard');
     if (flashcardElem) flashcardElem.classList.toggle('rotate-y-180');
 }
@@ -1749,6 +1775,7 @@ function switchTab(tab) {
         stopSpeakingWord();
     }
     currentTab = tab;
+    if (typeof window !== 'undefined') window.currentTab = tab;
 
     const secHome = document.getElementById('sec-home');
     const secFlashcard = document.getElementById('sec-flashcard');
@@ -1817,6 +1844,7 @@ function switchTab(tab) {
 
 function startFocusMode(mode) {
     currentTab = mode;
+    if (typeof window !== 'undefined') window.currentTab = mode;
     updateHeaderLeftButtonState(mode);
     const header = document.getElementById('main-header');
     const bottomNav = document.getElementById('bottom-nav');
@@ -2671,32 +2699,6 @@ function openModal(id) {
 
     if (typeof applyLanguageUI === 'function') {
         applyLanguageUI();
-    }
-
-    if (id === 'keyModal') {
-        const keyStorageName = typeof API_KEY_STORAGE_NAME !== 'undefined' ? API_KEY_STORAGE_NAME : 'flashcard_gemini_key_v1';
-        const existingGeminiKey = localStorage.getItem(keyStorageName) || '';
-        const existingGroqKey = localStorage.getItem('lzhcard_groq_key_v1') || '';
-        const hasAny = Boolean(existingGroqKey.trim() || existingGeminiKey.trim());
-        const rawMode = localStorage.getItem('lzhcard_api_mode');
-        const savedMode = (rawMode === 'shared' || rawMode === 'personal')
-            ? rawMode
-            : (hasAny ? 'personal' : 'shared');
-
-        const groqInput = document.getElementById('groqApiKeyInput');
-        const keyInput = document.getElementById('geminiApiKeyInput');
-        if (groqInput) groqInput.value = savedMode === 'personal' ? existingGroqKey : '';
-        if (keyInput) keyInput.value = savedMode === 'personal' ? existingGeminiKey : '';
-
-        const radShared = document.getElementById('apiModeShared');
-        const radPersonal = document.getElementById('apiModePersonal');
-        if (radShared) radShared.checked = (savedMode === 'shared');
-        if (radPersonal) radPersonal.checked = (savedMode === 'personal');
-        if (typeof switchApiMode === 'function') switchApiMode(savedMode);
-
-        if (savedMode === 'personal' && hasAny) {
-            showToast(tr('toastKeyLoaded', '🔑 已載入本機個人 API Key'), "info");
-        }
     }
 }
 

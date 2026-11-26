@@ -56,7 +56,7 @@ export const BILLING_SKU_CATALOG = {
     title: "1,200 商店金幣包"
   },
 
-  // Google Play / Apple App Store / Web 共用會員 SKU
+  // Google Play / Apple App Store / Web 共用會員 SKU（純月繳 30 天制）
   lzhcard_mem_starter_30d: {
     sku: "lzhcard_mem_starter_30d",
     kind: "membership",
@@ -69,19 +69,6 @@ export const BILLING_SKU_CATALOG = {
     bannerId: "supporter_warm_horizon",
     titleId: "supporter_coffee",
     title: "入門方案 Starter (30天)"
-  },
-  lzhcard_mem_starter_365d: {
-    sku: "lzhcard_mem_starter_365d",
-    kind: "membership",
-    tier: "supporter_30",
-    cycle: "annual",
-    days: 365,
-    priceNtd: 390,
-    consumable: true,
-    frameId: "supporter_warm_amber",
-    bannerId: "supporter_warm_horizon",
-    titleId: "supporter_coffee",
-    title: "入門方案 Starter 年繳 (365天)"
   },
   lzhcard_mem_plus_30d: {
     sku: "lzhcard_mem_plus_30d",
@@ -96,19 +83,6 @@ export const BILLING_SKU_CATALOG = {
     titleId: "supporter_diamond",
     title: "進階方案 Plus (30天)"
   },
-  lzhcard_mem_plus_365d: {
-    sku: "lzhcard_mem_plus_365d",
-    kind: "membership",
-    tier: "supporter_90",
-    cycle: "annual",
-    days: 365,
-    priceNtd: 990,
-    consumable: true,
-    frameId: "supporter_sapphire_aura",
-    bannerId: "supporter_aurora_palace",
-    titleId: "supporter_diamond",
-    title: "進階方案 Plus 年繳 (365天)"
-  },
   lzhcard_mem_pro_30d: {
     sku: "lzhcard_mem_pro_30d",
     kind: "membership",
@@ -122,18 +96,18 @@ export const BILLING_SKU_CATALOG = {
     titleId: "supporter_crown",
     title: "專業方案 Pro (30天)"
   },
-  lzhcard_mem_pro_365d: {
-    sku: "lzhcard_mem_pro_365d",
+  lzhcard_mem_teacher_30d: {
+    sku: "lzhcard_mem_teacher_30d",
     kind: "membership",
-    tier: "supporter_180",
-    cycle: "annual",
-    days: 365,
-    priceNtd: 1990,
+    tier: "teacher_class",
+    cycle: "monthly",
+    days: 30,
+    priceNtd: 490,
     consumable: true,
     frameId: "supporter_celestial_crown",
     bannerId: "supporter_imperial_aurora",
     titleId: "supporter_crown",
-    title: "專業方案 Pro 年繳 (365天)"
+    title: "班級教師方案 Teacher Class (30天)"
   }
 };
 
@@ -143,11 +117,9 @@ export const IOS_PRICE_NTD_BY_SKU = {
   lzhcard_coins_720: 198,
   lzhcard_coins_1200: 330,
   lzhcard_mem_starter_30d: 43,
-  lzhcard_mem_starter_365d: 429,
   lzhcard_mem_plus_30d: 109,
-  lzhcard_mem_plus_365d: 1089,
   lzhcard_mem_pro_30d: 219,
-  lzhcard_mem_pro_365d: 2189
+  lzhcard_mem_teacher_30d: 539
 };
 
 export function getSkuPriceNtd(skuId, platform = "android") {
@@ -878,7 +850,7 @@ export async function handleWebCheckout(request, env, corsHeaders) {
     {
       ok: false,
       code: "WEB_CHECKOUT_MAINTENANCE",
-      error: "網頁版線上金流維護中，請使用 Android 或 iOS App 內購儲值，或於設定頁填入個人 API Key（BYOK）"
+      error: "網頁版線上金流維護中，請使用 Android 或 iOS App 內購儲值，或於商店以金幣兌換會員方案"
     },
     503,
     corsHeaders

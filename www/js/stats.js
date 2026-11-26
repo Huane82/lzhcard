@@ -505,3 +505,219 @@ function renderStats() {
     const selectAtLeastOneText = statsTr('statsSelectAtLeastOne', '請最少勾選一個顯示指標');
     container.innerHTML = html || `<div class="text-center text-slate-400 text-xs py-10">${selectAtLeastOneText}</div>`;
 }
+
+/* ==========================================================================
+   🤖 統計頁左上角漢堡選單：AI 學習問題診斷報告（消耗長文額度 article_gen）
+   ========================================================================== */
+
+let activeStatsAiScope = 'all';
+let isStatsAiDiagnosing = false;
+
+function buildStatsDiagnosisTelemetry(scope = 'all') {
+    const words = getStatsFilteredWords();
+    const now = Date.now();
+    const levelCounts = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+    const freeCounts = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+    const leeches = [];
+    let dueNow = 0;
+    let totalR = 0;
+    let rCount = 0;
+    const catBreakdown = {};
+
+    words.forEach(w => {
+        const lv = Math.min(5, Math.max(1, Number(w.level) || 1));
+        const flv = Math.min(5, Math.max(1, Number(w.freeLevel) || 1));
+        levelCounts[lv]++;
+        freeCounts[flv]++;
+        const cat = w.category || statsTr('defaultCategoryName', '預設字庫');
+        catBreakdown[cat] = (catBreakdown[cat] || 0) + 1;
+        if (w.state !== 'new' && (w.nextReview || 0) <= now) dueNow++;
+        if (typeof calculateRetrievability === 'function' && (w.stability || 0) > 0) {
+            totalR += calculateRetrievability(w, now);
+            rCount++;
+        }
+        if ((Number(w.lapses) || 0) >= 2 && w.word) {
+            leeches.push({
+                word: w.word,
+                pos: w.pos || '',
+                meaning: w.meaning || '',
+                lapses: Number(w.lapses) || 0,
+                difficulty: Number(w.difficulty || 5.5).toFixed(1)
+            });
+        }
+    });
+
+    leeches.sort((a, b) => b.lapses - a.lapses);
+    const quizScores = {};
+    ['en', 'ja', 'zh-TW'].forEach(lang => {
+        try {
+            const raw = localStorage.getItem(`lzhcard_quiz_score_${lang}`);
+            if (raw) quizScores[lang] = JSON.parse(raw);
+        } catch (e) {}
+    });
+
+    const today = new Date().toISOString().slice(0, 10);
+    const dailyStats = (window.userData && window.userData.dailyActivity && window.userData.dailyActivity[today])
+        ? window.userData.dailyActivity[today]
+        : null;
+
+    return {
+        scope,
+        totalUniqueWords: words.length,
+        fsrsLevelDistribution: levelCounts,
+        freeLevelDistribution: freeCounts,
+        dueNowCount: dueNow,
+        avgRetentionPct: rCount > 0 ? Math.round((totalR / rCount) * 100) : 100,
+        topLeeches: leeches.slice(0, 12),
+        quizAccuracyByLang: quizScores,
+        todayActivity: dailyStats,
+        topDecks: Object.entries(catBreakdown).slice(0, 8)
+    };
+}
+
+function ensureStatsAiDrawerDom() {
+    if (typeof document === 'undefined') return null;
+    let drawer = document.getElementById('statsAiDiagnosisModal');
+    if (drawer) return drawer;
+
+    drawer = document.createElement('div');
+    drawer.id = 'statsAiDiagnosisModal';
+    drawer.className = 'hidden fixed inset-0 z-[85] bg-slate-950/75 backdrop-blur-xs items-center justify-center p-4 lzh-safe-modal';
+    drawer.onclick = (e) => { if (e.target === drawer) closeStatsAiDiagnosisModal(); };
+    drawer.innerHTML = `
+        <div class="bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-3xl max-w-2xl w-full max-h-[88vh] shadow-2xl border border-slate-200 dark:border-slate-700 flex flex-col overflow-hidden">
+            <div class="px-5 py-4 bg-gradient-to-r from-indigo-600 to-purple-600 text-white flex items-center justify-between gap-2 shrink-0">
+                <div>
+                    <h3 class="font-black text-base flex items-center gap-2">
+                        <i class="fa-solid fa-brain"></i>
+                        <span>AI 學習狀況與問題診斷</span>
+                        <span class="px-2 py-0.5 rounded bg-white/20 text-[10px] font-extrabold">✨ AI · 消耗長文額度</span>
+                    </h3>
+                    <p class="text-[11px] text-indigo-100 mt-0.5">彙整 FSRS 遺忘曲線、頑固難字與考試正確率進行個人化弱點診療</p>
+                </div>
+                <button type="button" onclick="closeStatsAiDiagnosisModal()" class="w-10 h-10 rounded-full bg-white/20 hover:bg-white/30 flex items-center justify-center cursor-pointer" aria-label="關閉">
+                    <i class="fa-solid fa-xmark text-base"></i>
+                </button>
+            </div>
+            <div class="p-4 sm:p-5 overflow-y-auto flex-1 space-y-4 text-xs">
+                <div class="grid grid-cols-3 gap-2">
+                    <button type="button" data-stats-scope="all" onclick="runStatsAiDiagnosis('all')" class="min-h-[44px] py-2 px-3 rounded-xl font-extrabold border transition cursor-pointer bg-indigo-600 text-white border-indigo-600 shadow-xs">
+                        🌐 全模式綜合分析
+                    </button>
+                    <button type="button" data-stats-scope="flashcard" onclick="runStatsAiDiagnosis('flashcard')" class="min-h-[44px] py-2 px-3 rounded-xl font-bold border transition cursor-pointer bg-slate-50 dark:bg-slate-900 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700">
+                        🃏 字卡模式分析
+                    </button>
+                    <button type="button" data-stats-scope="quiz" onclick="runStatsAiDiagnosis('quiz')" class="min-h-[44px] py-2 px-3 rounded-xl font-bold border transition cursor-pointer bg-slate-50 dark:bg-slate-900 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700">
+                        📝 考試模式分析
+                    </button>
+                </div>
+                <div id="statsAiDiagnosisTelemetrySummary" class="p-3 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-[11px] text-slate-600 dark:text-slate-300"></div>
+                <div id="statsAiDiagnosisResult" class="p-4 rounded-2xl bg-slate-50 dark:bg-slate-900/70 border border-slate-200 dark:border-slate-700 min-h-[160px] text-xs leading-relaxed whitespace-pre-line text-slate-800 dark:text-slate-100">
+                    請點擊上方任一診斷模式，AI 將分析您的學習數據與弱點（消耗 1 次長文額度）。
+                </div>
+            </div>
+            <div class="px-5 py-3 border-t border-slate-100 dark:border-slate-700 flex justify-between items-center bg-slate-50/70 dark:bg-slate-900/40 shrink-0">
+                <span class="text-[11px] font-bold text-purple-600 dark:text-purple-300">✨ AI 診斷消耗「長文額度」 (article_gen)</span>
+                <button type="button" onclick="closeStatsAiDiagnosisModal()" class="min-h-[44px] px-4 py-2 rounded-xl bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold cursor-pointer">關閉</button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(drawer);
+    return drawer;
+}
+
+function updateStatsDiagnosisScopeButtons(scope) {
+    document.querySelectorAll('[data-stats-scope]').forEach(btn => {
+        const s = btn.getAttribute('data-stats-scope');
+        btn.className = s === scope
+            ? 'min-h-[44px] py-2 px-3 rounded-xl font-extrabold border transition cursor-pointer bg-indigo-600 text-white border-indigo-600 shadow-xs'
+            : 'min-h-[44px] py-2 px-3 rounded-xl font-bold border transition cursor-pointer bg-slate-50 dark:bg-slate-900 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700 hover:bg-slate-100';
+    });
+}
+
+function openStatsAiDiagnosisModal() {
+    const modal = ensureStatsAiDrawerDom();
+    if (!modal) return;
+    const snap = buildStatsDiagnosisTelemetry(activeStatsAiScope);
+    const sumEl = document.getElementById('statsAiDiagnosisTelemetrySummary');
+    if (sumEl) {
+        sumEl.innerHTML = `📊 目前分析範圍樣本：<strong>${snap.totalUniqueWords}</strong> 字 ｜ 記憶保留率：<strong>${snap.avgRetentionPct}%</strong> ｜ 到期未複習：<strong>${snap.dueNowCount}</strong> 字 ｜ 高遺忘難字：<strong>${snap.topLeeches.length}</strong> 字`;
+    }
+    updateStatsDiagnosisScopeButtons(activeStatsAiScope);
+    modal.classList.remove('hidden');
+    modal.classList.add('flex');
+}
+
+function closeStatsAiDiagnosisModal() {
+    const modal = document.getElementById('statsAiDiagnosisModal');
+    if (!modal) return;
+    modal.classList.add('hidden');
+    modal.classList.remove('flex');
+}
+
+async function runStatsAiDiagnosis(scope = 'all') {
+    if (isStatsAiDiagnosing) return;
+    activeStatsAiScope = scope || 'all';
+    updateStatsDiagnosisScopeButtons(activeStatsAiScope);
+
+    const modal = ensureStatsAiDrawerDom();
+    const resEl = document.getElementById('statsAiDiagnosisResult');
+    if (!modal || !resEl) return;
+
+    const telemetry = buildStatsDiagnosisTelemetry(activeStatsAiScope);
+    if (telemetry.totalUniqueWords === 0 && activeStatsAiScope !== 'quiz') {
+        resEl.innerHTML = '⚠️ 目前尚未匯入任何單字卡，請先至「字庫管理」新增或匯入單字後再執行 AI 診斷。';
+        return;
+    }
+
+    if (typeof MembershipEngine !== 'undefined' && typeof MembershipEngine.canConsumeAiQuota === 'function') {
+        const chk = MembershipEngine.canConsumeAiQuota('article_gen');
+        if (!chk.allowed) {
+            if (typeof MembershipEngine.showQuotaUpgradePrompt === 'function') {
+                MembershipEngine.showQuotaUpgradePrompt('article_gen');
+            }
+            return;
+        }
+    }
+
+    if (typeof callGeminiApi !== 'function') {
+        if (typeof showToast === 'function') showToast('雲端 AI 服務尚未載入', 'error');
+        return;
+    }
+
+    isStatsAiDiagnosing = true;
+    resEl.innerHTML = `<div class="flex items-center gap-2 text-indigo-600 dark:text-indigo-300 font-bold py-6 justify-center"><i class="fa-solid fa-spinner fa-spin"></i><span>正在進行「${scope === 'flashcard' ? '字卡模式' : (scope === 'quiz' ? '考試模式' : '全模式綜合')}」AI 深度診斷（消耗長文額度）...</span></div>`;
+
+    try {
+        const nativeLang = localStorage.getItem('lzhcard_native_lang') || 'zh-TW';
+        const scopeLabel = scope === 'flashcard'
+            ? '字卡輪播模式（FSRS 記憶排程、保留率、難字遺忘）'
+            : (scope === 'quiz' ? '考試模式（拼寫、翻譯、閱讀、克漏字正確率與臨時等級）' : '全模式綜合（字卡＋考試＋每日進度連動）');
+
+        const prompt = `請扮演專業二語習得與記憶科學顧問，使用「${nativeLang === 'en' ? 'English' : (nativeLang === 'ja' ? '日本語' : '繁體中文')}」針對這位學習者的「${scopeLabel}」數據進行診斷。
+
+學習者真實數據 JSON：
+${JSON.stringify(telemetry, null, 2)}
+
+請以清晰條列輸出以下四段內容：
+1. 【整體現況評估】：指出記憶保留率、FSRS/臨時等級分佈與考試表現亮點。
+2. 【核心卡關與錯題原因】：分析最常遺忘單字（topLeeches）的共通規律（例如抽象動詞、長字詞根混淆或詞性變化誤用）或複習累積問題。
+3. 【本週具體改善行動】：給出可執行的每日建議（如新字配額、深淵魔王強訓、詞性拼寫/字根記憶策略）。
+4. 【推薦下一步練習模式】：明確點出該先刷哪一個模式與目標。`;
+
+        const report = await callGeminiApi(prompt, { feature: 'article_gen' });
+        resEl.textContent = String(report || '').trim() || '未取得診斷結果，請稍後再試。';
+    } catch (err) {
+        console.warn('[Stats AI Diagnosis Error]:', err);
+        resEl.innerHTML = `<div class="text-rose-600 dark:text-rose-400 font-bold">診斷失敗：${String(err && err.message || '連線或額度異常')}</div>`;
+    } finally {
+        isStatsAiDiagnosing = false;
+    }
+}
+
+if (typeof window !== 'undefined') {
+    window.openStatsAiDiagnosisModal = openStatsAiDiagnosisModal;
+    window.closeStatsAiDiagnosisModal = closeStatsAiDiagnosisModal;
+    window.runStatsAiDiagnosis = runStatsAiDiagnosis;
+}
+

@@ -124,9 +124,6 @@ public class FloatingOverlayService extends Service {
     public static final String KEY_PENDING_ACTION = "pending_overlay_action";
     public static final String KEY_NATIVE_LANG = "overlay_native_lang";
     public static final String KEY_THEME_MODE = "overlay_theme_mode";
-    public static final String KEY_API_MODE = "overlay_api_mode";
-    public static final String KEY_API_KEY = "overlay_api_key";
-    public static final String KEY_GROQ_API_KEY = "overlay_groq_api_key";
     public static final String KEY_DECKS_JSON = "overlay_decks_json";
     public static final String KEY_DEFAULT_DECK = "overlay_default_deck";
     public static final String KEY_MEMBERSHIP_TIER = "overlay_membership_tier";
@@ -776,9 +773,6 @@ public class FloatingOverlayService extends Service {
 
             obj.put("nativeLang", sp.getString(KEY_NATIVE_LANG, "zh-TW"));
             obj.put("isDark", isDark);
-            obj.put("apiMode", sp.getString(KEY_API_MODE, "shared"));
-            obj.put("apiKey", sp.getString(KEY_API_KEY, ""));
-            obj.put("groqApiKey", sp.getString(KEY_GROQ_API_KEY, ""));
             obj.put("decks", new JSONArray(sp.getString(KEY_DECKS_JSON, "[\"我的單字本\"]")));
             obj.put("defaultDeck", sp.getString(KEY_DEFAULT_DECK, "我的單字本"));
             obj.put("membershipTier", sp.getString(KEY_MEMBERSHIP_TIER, "free"));
@@ -2083,13 +2077,8 @@ public class FloatingOverlayService extends Service {
             .addOnFailureListener(bgExecutor, e -> cb.onResult(""));
     }
 
-    private boolean isPaidOrPersonalFastRefineEligible() {
+    private boolean isPaidFastRefineEligible() {
         SharedPreferences sp = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
-        String apiKey = sp.getString(KEY_API_KEY, "").trim();
-        String groqKey = sp.getString(KEY_GROQ_API_KEY, "").trim();
-        if (!TextUtils.isEmpty(groqKey) || !TextUtils.isEmpty(apiKey)) {
-            return true;
-        }
         String tier = sp.getString(KEY_MEMBERSHIP_TIER, "free");
         boolean hasExtraCredit = false;
         try {
@@ -2100,108 +2089,6 @@ public class FloatingOverlayService extends Service {
             }
         } catch (Exception ignored) {}
         return (!"free".equalsIgnoreCase(tier) || hasExtraCredit) && !fastRefineQuotaExhausted;
-    }
-
-    private String callDirectByokFastRefineSync(
-        String text,
-        String draft,
-        String targetLangName,
-        List<String> contextLines
-    ) {
-        SharedPreferences sp = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
-        String groqKey = sp.getString(KEY_GROQ_API_KEY, "").trim();
-        String geminiKey = sp.getString(KEY_API_KEY, "").trim();
-
-        StringBuilder ctxBlock = new StringBuilder();
-        if (contextLines != null && !contextLines.isEmpty()) {
-            ctxBlock.append("Prior context:\n");
-            for (String l : contextLines) {
-                if (!TextUtils.isEmpty(l)) ctxBlock.append(l).append("\n");
-            }
-            ctxBlock.append("\n");
-        }
-        String draftHint = !TextUtils.isEmpty(draft) ? ("Draft translation: " + draft + "\n") : "";
-        String sysPrompt = "You are a low-latency subtitle interpreter. "
-            + "1) Automatically ignore and clean residual OCR edge symbols or broken gibberish tokens (e.g. '| ar Ss = 5'). If the entire input is pure OCR noise with no meaningful words, return an empty string. "
-            + "2) Translate colloquialisms, idioms, and slang contextually into natural " + targetLangName + " (e.g., English 'new whip' means 「新車／座駕」, not literal whip). "
-            + "3) Output ONLY the final translated string with zero quotes or markdown.";
-        String userPrompt = ctxBlock.toString() + draftHint + "Subtitle:\n" + text;
-
-        if (!TextUtils.isEmpty(groqKey)) {
-            HttpURLConnection conn = null;
-            try {
-                conn = (HttpURLConnection) new URL("https://api.groq.com/openai/v1/chat/completions").openConnection();
-                conn.setRequestMethod("POST");
-                conn.setConnectTimeout(4500);
-                conn.setReadTimeout(6500);
-                conn.setDoOutput(true);
-                conn.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
-                conn.setRequestProperty("Authorization", "Bearer " + groqKey);
-
-                JSONObject body = new JSONObject();
-                body.put("model", "llama-3.1-8b-instant");
-                body.put("temperature", 0.2);
-                body.put("max_tokens", 200);
-                JSONArray msgs = new JSONArray();
-                msgs.put(new JSONObject().put("role", "system").put("content", sysPrompt));
-                msgs.put(new JSONObject().put("role", "user").put("content", userPrompt));
-                body.put("messages", msgs);
-
-                try (OutputStream os = conn.getOutputStream()) {
-                    os.write(body.toString().getBytes(StandardCharsets.UTF_8));
-                }
-                if (conn.getResponseCode() >= 200 && conn.getResponseCode() < 300) {
-                    BufferedReader br = new BufferedReader(new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8));
-                    StringBuilder sb = new StringBuilder();
-                    String line;
-                    while ((line = br.readLine()) != null) sb.append(line);
-                    JSONObject json = new JSONObject(sb.toString());
-                    String out = json.optJSONArray("choices").getJSONObject(0).getJSONObject("message").optString("content", "").trim();
-                    out = out.replaceAll("<think>[\\s\\S]*?</think>", "").replaceAll("^[\"「『]|[\"」』]$", "").trim();
-                    if (!TextUtils.isEmpty(out)) return out;
-                }
-            } catch (Exception ignored) {
-            } finally {
-                if (conn != null) conn.disconnect();
-            }
-        }
-
-        if (!TextUtils.isEmpty(geminiKey)) {
-            HttpURLConnection conn = null;
-            try {
-                String urlStr = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key=" + Uri.encode(geminiKey);
-                conn = (HttpURLConnection) new URL(urlStr).openConnection();
-                conn.setRequestMethod("POST");
-                conn.setConnectTimeout(4500);
-                conn.setReadTimeout(6500);
-                conn.setDoOutput(true);
-                conn.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
-
-                JSONObject part = new JSONObject().put("text", sysPrompt + "\n\n" + userPrompt);
-                JSONArray parts = new JSONArray().put(part);
-                JSONArray contents = new JSONArray().put(new JSONObject().put("parts", parts));
-                JSONObject body = new JSONObject().put("contents", contents);
-
-                try (OutputStream os = conn.getOutputStream()) {
-                    os.write(body.toString().getBytes(StandardCharsets.UTF_8));
-                }
-                if (conn.getResponseCode() >= 200 && conn.getResponseCode() < 300) {
-                    BufferedReader br = new BufferedReader(new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8));
-                    StringBuilder sb = new StringBuilder();
-                    String line;
-                    while ((line = br.readLine()) != null) sb.append(line);
-                    JSONObject json = new JSONObject(sb.toString());
-                    String out = json.optJSONArray("candidates").getJSONObject(0).getJSONObject("content").getJSONArray("parts").getJSONObject(0).optString("text", "").trim();
-                    out = out.replaceAll("<think>[\\s\\S]*?</think>", "").replaceAll("^[\"「『]|[\"」』]$", "").trim();
-                    if (!TextUtils.isEmpty(out)) return out;
-                }
-            } catch (Exception ignored) {
-            } finally {
-                if (conn != null) conn.disconnect();
-            }
-        }
-
-        return "";
     }
 
     private void runTwoTierSubtitleTranslation(String orig, String srcLang, boolean emitFinalImmediatelyIfNeeded) {
@@ -2224,16 +2111,13 @@ public class FloatingOverlayService extends Service {
                 updateSubtitleHudText(orig, "...", "⏳ 翻譯");
             }
 
-            if (!isPaidOrPersonalFastRefineEligible()) {
+            if (!isPaidFastRefineEligible()) {
                 pushSubtitleUpdateToWebView(orig, !TextUtils.isEmpty(draft) ? draft : "", true, "draft", srcLang);
                 return;
             }
 
             bgExecutor.execute(() -> {
-                String refined = callDirectByokFastRefineSync(orig, draft, targetLangName, ctxSnapshot);
-                if (TextUtils.isEmpty(refined)) {
-                    refined = callWorkerFastRefineSync(orig, draft, srcLang, nativeLang, targetLangName, ctxSnapshot);
-                }
+                String refined = callWorkerFastRefineSync(orig, draft, srcLang, nativeLang, targetLangName, ctxSnapshot);
                 if (!TextUtils.isEmpty(refined)) {
                     updateSubtitleHudText(orig, refined, "✨ 精修");
                     pushSubtitleUpdateToWebView(orig, refined, true, "refined", srcLang);
@@ -2257,8 +2141,6 @@ public class FloatingOverlayService extends Service {
         HttpURLConnection conn = null;
         try {
             SharedPreferences sp = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
-            String apiMode = sp.getString(KEY_API_MODE, "shared");
-            String apiKey = sp.getString(KEY_API_KEY, "").trim();
             String idToken = "";
             try {
                 JSONObject chatJson = new JSONObject(sp.getString(KEY_CHAT_SESSION_JSON, "{}"));
@@ -2276,9 +2158,6 @@ public class FloatingOverlayService extends Service {
             conn.setRequestProperty("X-Client-Platform", "android-overlay");
             if (!TextUtils.isEmpty(idToken)) {
                 conn.setRequestProperty("Authorization", "Bearer " + idToken);
-            }
-            if ("personal".equalsIgnoreCase(apiMode) && !TextUtils.isEmpty(apiKey)) {
-                conn.setRequestProperty("X-User-Api-Key", apiKey);
             }
 
             JSONObject body = new JSONObject();

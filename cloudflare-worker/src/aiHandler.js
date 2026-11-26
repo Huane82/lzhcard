@@ -1,11 +1,7 @@
 import {
   authorizeAndConsumeQuota,
-  enforceNotBanned,
-  extractBearerToken,
-  normalizeFeatureName,
-  verifyFirebaseToken
+  normalizeFeatureName
 } from "./quotaManager.js";
-import { firestoreGetDoc, getFirestoreAuthHeader } from "./firestoreAdmin.js";
 
 function contentsHasInlineMedia(contents) {
   if (!Array.isArray(contents)) return false;
@@ -101,9 +97,10 @@ export async function handleGeminiAi(request, env, corsHeaders) {
     (body && body.feature) || request.headers.get("X-AI-Feature") || "",
     hasMedia
   );
+  const classGroupId = String((body && body.classGroupId) || request.headers.get("X-Class-Group-Id") || "").trim();
 
-  // 1. 伺服器端強制驗證會員方案與每日/每月硬上限
-  const quotaCheck = await authorizeAndConsumeQuota(request, feature, env);
+  // 1. 伺服器端強制驗證會員方案／班級授權與每日/每月硬上限
+  const quotaCheck = await authorizeAndConsumeQuota(request, feature, env, { classGroupId });
   if (!quotaCheck.allowed) {
     if (quotaCheck.isBanned) {
       return new Response(
@@ -146,7 +143,8 @@ export async function handleGeminiAi(request, env, corsHeaders) {
           ],
           _provider: groqRes.provider,
           _feature: feature,
-          _quota: quotaCheck.snapshot
+          _quota: quotaCheck.snapshot,
+          _classroomSponsor: quotaCheck.classroomSponsor || null
         }),
         { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
@@ -185,6 +183,7 @@ export async function handleGeminiAi(request, env, corsHeaders) {
         data._provider = `gemini:${model}`;
         data._feature = feature;
         data._quota = quotaCheck.snapshot;
+        data._classroomSponsor = quotaCheck.classroomSponsor || null;
         return new Response(JSON.stringify(data), {
           status: 200,
           headers: { ...corsHeaders, "Content-Type": "application/json" }
@@ -222,8 +221,9 @@ export async function handleFastRefine(request, env, corsHeaders) {
     );
   }
 
-  // 伺服器端強制驗證 fast_refine 配額（Free 方案自動回傳 429 並引導前端留守免費極速直譯）
-  const quotaCheck = await authorizeAndConsumeQuota(request, "fast_refine", env);
+  const classGroupId = String((body && body.classGroupId) || request.headers.get("X-Class-Group-Id") || "").trim();
+  // 伺服器端強制驗證 fast_refine 配額（支援班級教師方案授權）
+  const quotaCheck = await authorizeAndConsumeQuota(request, "fast_refine", env, { classGroupId });
   if (!quotaCheck.allowed) {
     if (quotaCheck.isBanned) {
       return new Response(
@@ -395,27 +395,31 @@ function normalizeWhisperLangCode(rawLang) {
 }
 
 export async function handleAudioStt(request, env, corsHeaders) {
-  const idToken = extractBearerToken(request);
-  if (idToken) {
-    const verified = await verifyFirebaseToken(idToken);
-    if (verified && verified.uid) {
-      const fsAuth = await getFirestoreAuthHeader(env, idToken);
-      const userRes = await firestoreGetDoc(`users/${encodeURIComponent(verified.uid)}`, fsAuth.Authorization || `Bearer ${idToken}`);
-      if (userRes && userRes.exists) {
-        const banCheck = await enforceNotBanned(verified.uid, userRes.doc, fsAuth, Date.now());
-        if (banCheck.banned) {
-          return new Response(
-            JSON.stringify({
-              ok: false,
-              code: "ACCOUNT_BANNED",
-              error: `此帳號已被封鎖（原因：${banCheck.ban.reason || "違反使用規範"}）`,
-              ban: banCheck.ban
-            }),
-            { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-          );
-        }
-      }
+  const classGroupId = String(request.headers.get("X-Class-Group-Id") || "").trim();
+  const sttQuotaCheck = await authorizeAndConsumeQuota(request, "fast_refine", env, { classGroupId });
+  if (!sttQuotaCheck.allowed) {
+    if (sttQuotaCheck.isBanned) {
+      return new Response(
+        JSON.stringify({
+          ok: false,
+          code: "ACCOUNT_BANNED",
+          error: sttQuotaCheck.reason,
+          ban: sttQuotaCheck.ban
+        }),
+        { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
     }
+    return new Response(
+      JSON.stringify({
+        ok: false,
+        code: "QUOTA_EXCEEDED",
+        error: sttQuotaCheck.reason,
+        feature: "fast_refine",
+        tier: sttQuotaCheck.tier,
+        quota: sttQuotaCheck.snapshot
+      }),
+      { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
   }
 
   let audioBytes = null;
@@ -470,9 +474,8 @@ export async function handleAudioStt(request, env, corsHeaders) {
     );
   }
 
-  const userApiKey = String(request.headers.get("X-User-Api-Key") || "").trim();
-  const groqKey = userApiKey.startsWith("gsk_") ? userApiKey : String(env.GROQ_API_KEY || "").trim();
-  const geminiKey = (!userApiKey.startsWith("gsk_") && userApiKey) ? userApiKey : String(env.GEMINI_API_KEY || "").trim();
+  const groqKey = String(env.GROQ_API_KEY || "").trim();
+  const geminiKey = String(env.GEMINI_API_KEY || "").trim();
 
   // 1. Primary: Groq Whisper (whisper-large-v3-turbo)
   if (groqKey) {

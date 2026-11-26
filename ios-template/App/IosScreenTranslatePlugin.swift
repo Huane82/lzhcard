@@ -115,7 +115,6 @@ public class IosScreenTranslatePlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInP
         "model": "apple_translation",
         "sourceLang": "en",
         "targetLang": "zh-Hant",
-        "apiKey": "",
         "workerBaseUrl": "https://lzhcard.tomlin980415.workers.dev",
         "authToken": "",
         "regionMode": "auto",
@@ -1050,9 +1049,6 @@ public class IosScreenTranslatePlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInP
         if let dst = defaults.string(forKey: "lzh_target_lang"), !dst.isEmpty {
             cfg["targetLang"] = dst
         }
-        if let key = defaults.string(forKey: "lzh_custom_api_key") {
-            cfg["apiKey"] = key
-        }
         if let worker = defaults.string(forKey: "lzh_worker_base_url"), !worker.isEmpty {
             cfg["workerBaseUrl"] = worker
         }
@@ -1226,7 +1222,6 @@ public class IosScreenTranslatePlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInP
         let model = call.getString("model") ?? (engine == "apple_offline" ? "apple_translation" : "gemini-2.0-flash")
         let sourceLang = call.getString("sourceLang") ?? "en"
         let targetLang = call.getString("targetLang") ?? "zh-Hant"
-        let apiKey = call.getString("apiKey") ?? ""
         let workerBaseUrl = call.getString("workerBaseUrl") ?? "https://lzhcard.tomlin980415.workers.dev"
         let authToken = call.getString("authToken") ?? ""
         let regionMode = call.getString("regionMode") ?? "auto"
@@ -1290,7 +1285,7 @@ public class IosScreenTranslatePlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInP
             defaults.set(model, forKey: "lzh_translate_model")
             defaults.set(sourceLang, forKey: "lzh_source_lang")
             defaults.set(targetLang, forKey: "lzh_target_lang")
-            defaults.set(apiKey, forKey: "lzh_custom_api_key")
+            defaults.removeObject(forKey: "lzh_custom_api_key")
             defaults.set(workerBaseUrl, forKey: "lzh_worker_base_url")
             defaults.set(authToken, forKey: "lzh_auth_token")
             defaults.set(regionMode, forKey: "lzh_region_mode")
@@ -1319,7 +1314,6 @@ public class IosScreenTranslatePlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInP
             "model": model,
             "sourceLang": sourceLang,
             "targetLang": targetLang,
-            "apiKey": apiKey,
             "workerBaseUrl": workerBaseUrl,
             "authToken": authToken,
             "regionMode": regionMode,
@@ -2182,88 +2176,8 @@ public class IosScreenTranslatePlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInP
     private func translateViaCloudFallback(_ sourceText: String) {
         let cfg = currentConfigDictionary()
         let workerUrl = ((cfg["workerBaseUrl"] as? String) ?? "https://lzhcard.tomlin980415.workers.dev").trimmingCharacters(in: .whitespacesAndNewlines)
-        let customKey = ((cfg["apiKey"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        let provider = ((cfg["provider"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let model = ((cfg["model"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let authToken = ((cfg["authToken"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let sourceLang = (cfg["sourceLang"] as? String) ?? "auto"
-
-        let subtitlePrompt = """
-        你是一位即時雙語字幕譯者，請將以下 OCR 擷取文字翻譯成自然道地的繁體中文：
-        1. 自動忽略句首或句尾殘留的 OCR 亂碼、孤立符號或雜訊（如 `| ar Ss = 5` 等），只針對語意連貫的句子進行翻譯。
-        2. 若整段內容皆為無意義雜訊或無法辨識，請僅回傳空字串。
-        3. 遇到口語慣用語或俚語時，請依語境自然意譯，切勿死板逐字直譯（例如 `"new whip"` 應譯為「新車／座駕」）。
-        4. 僅輸出最終繁體中文譯文，勿加引號或解釋。
-
-        原文：
-        \(sourceText)
-        """
-
-        if customKey.hasPrefix("gsk_") || (provider == "groq" && !customKey.isEmpty) {
-            let groqModel = model.isEmpty ? "llama-3.1-8b-instant" : model
-            guard let url = URL(string: "https://api.groq.com/openai/v1/chat/completions") else {
-                isTranslatingOcr = false
-                return
-            }
-            var req = URLRequest(url: url)
-            req.httpMethod = "POST"
-            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            req.setValue("Bearer \(customKey)", forHTTPHeaderField: "Authorization")
-            let body: [String: Any] = [
-                "model": groqModel,
-                "temperature": 0.2,
-                "messages": [
-                    ["role": "user", "content": subtitlePrompt]
-                ]
-            ]
-            req.httpBody = try? JSONSerialization.data(withJSONObject: body)
-            fastCloudSession.dataTask(with: req) { [weak self] data, _, _ in
-                var translated = ""
-                if let data = data,
-                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                   let choices = json["choices"] as? [[String: Any]],
-                   let msg = choices.first?["message"] as? [String: Any],
-                   let text = msg["content"] as? String {
-                    translated = text.trimmingCharacters(in: .whitespacesAndNewlines)
-                }
-                DispatchQueue.main.async {
-                    self?.isTranslatingOcr = false
-                    if !translated.isEmpty {
-                        self?.publishHostTranslatedSubtitle(translated, sourceText: sourceText)
-                    }
-                }
-            }.resume()
-            return
-        }
-
-        if customKey.hasPrefix("AIza") || (provider == "gemini" && !customKey.isEmpty) {
-            let gemModel = (model.isEmpty || !model.lowercased().contains("gemini")) ? "gemini-2.0-flash" : model
-            let endpoint = "https://generativelanguage.googleapis.com/v1beta/models/\(gemModel):generateContent?key=\(customKey)"
-            guard let url = URL(string: endpoint) else { isTranslatingOcr = false; return }
-            var req = URLRequest(url: url)
-            req.httpMethod = "POST"
-            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            let body: [String: Any] = ["contents": [["parts": [["text": subtitlePrompt]]]]]
-            req.httpBody = try? JSONSerialization.data(withJSONObject: body)
-            fastCloudSession.dataTask(with: req) { [weak self] data, _, _ in
-                var translated = ""
-                if let data = data,
-                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                   let cands = json["candidates"] as? [[String: Any]],
-                   let content = cands.first?["content"] as? [String: Any],
-                   let parts = content["parts"] as? [[String: Any]],
-                   let text = parts.first?["text"] as? String {
-                    translated = text.trimmingCharacters(in: .whitespacesAndNewlines)
-                }
-                DispatchQueue.main.async {
-                    self?.isTranslatingOcr = false
-                    if !translated.isEmpty {
-                        self?.publishHostTranslatedSubtitle(translated, sourceText: sourceText)
-                    }
-                }
-            }.resume()
-            return
-        }
 
         guard let url = URL(string: "\(workerUrl)/ai/fast-refine") else {
             translateViaFreeTier1Fallback(sourceText, sourceLang: sourceLang)

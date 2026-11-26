@@ -31,9 +31,6 @@ public class SystemOverlayPlugin extends Plugin {
         SharedPreferences.Editor ed = ctx.getSharedPreferences(FloatingOverlayService.PREFS_NAME, Context.MODE_PRIVATE).edit();
         if (call.hasOption("nativeLang")) ed.putString(FloatingOverlayService.KEY_NATIVE_LANG, call.getString("nativeLang", "zh-TW"));
         if (call.hasOption("theme")) ed.putString(FloatingOverlayService.KEY_THEME_MODE, call.getString("theme", "system"));
-        if (call.hasOption("apiMode")) ed.putString(FloatingOverlayService.KEY_API_MODE, call.getString("apiMode", "shared"));
-        if (call.hasOption("apiKey")) ed.putString(FloatingOverlayService.KEY_API_KEY, call.getString("apiKey", ""));
-        if (call.hasOption("groqApiKey")) ed.putString(FloatingOverlayService.KEY_GROQ_API_KEY, call.getString("groqApiKey", ""));
         if (call.hasOption("decksJson")) ed.putString(FloatingOverlayService.KEY_DECKS_JSON, call.getString("decksJson", "[\"我的單字本\"]"));
         if (call.hasOption("defaultDeck")) ed.putString(FloatingOverlayService.KEY_DEFAULT_DECK, call.getString("defaultDeck", "我的單字本"));
         if (call.hasOption("membershipTier")) ed.putString(FloatingOverlayService.KEY_MEMBERSHIP_TIER, call.getString("membershipTier", "free"));

@@ -9,7 +9,13 @@
     'use strict';
 
     let currentQuizWord = null;
-    let currentQuizMode = 'spelling'; // 'spelling' | 'translation' | 'reading' | 'cloze'
+    let currentQuizMode = 'spelling'; // 'spelling' | 'translation' | 'reading' | 'cloze' | 'ja_science' | 'native_exam'
+    let spellingSubMode = 'exact';    // 'exact' | 'inflection'
+    let currentQuizTargetAnswer = '';
+    let currentInflectionMeta = null;
+    let currentJaScienceFilter = 'all';
+    let currentJaScienceQuestion = null;
+    let currentNativeExamQuestion = null;
     let currentQuizLang = 'en';       // 'en' | 'ja' | 'zh-TW'
     let quizScoreCorrect = 0;
     let quizScoreTotal = 0;
@@ -314,12 +320,38 @@
         if (mode === 'translation') return 'translation';
         if (mode === 'reading') return 'reading';
         if (mode === 'cloze') return 'cloze';
+        if (mode === 'ja_science') return 'ja_science';
+        if (mode === 'native_exam') return 'native_exam';
         return 'spelling';
+    }
+
+    function syncNativeAndJaModeVisibility() {
+        if (typeof document === 'undefined') return;
+        const jaBtn = document.getElementById('qmode-ja_science');
+        const nativeBtn = document.getElementById('qmode-native_exam');
+        const subBar = document.getElementById('quizSpellingSubModeBar');
+
+        const isSameLang = Boolean(global.QuizExamBank && typeof global.QuizExamBank.isSameNativeAndTargetLang === 'function' && global.QuizExamBank.isSameNativeAndTargetLang());
+        if (nativeBtn) {
+            nativeBtn.classList.toggle('hidden', !isSameLang);
+        }
+        if (jaBtn) {
+            const globalTarget = typeof localStorage !== 'undefined' ? (localStorage.getItem('lzhcard_target_lang') || 'en') : 'en';
+            const showJa = currentQuizLang === 'ja' || globalTarget === 'ja';
+            jaBtn.classList.toggle('hidden', !showJa);
+        }
+        if (subBar) {
+            subBar.classList.toggle('hidden', !(currentQuizMode === 'spelling' && currentQuizLang === 'en'));
+        }
+        if (currentQuizMode === 'native_exam' && !isSameLang) {
+            currentQuizMode = 'spelling';
+        }
     }
 
     function setQuizLanguage(lang) {
         currentQuizLang = normalizeTargetLangCode(lang);
         updateLanguageTabUI();
+        syncNativeAndJaModeVisibility();
         nextQuizQuestion();
     }
 
@@ -345,11 +377,15 @@
         const transBox = document.getElementById('quizTranslationContainer');
         const readBox = document.getElementById('quizReadingContainer');
         const clozeBox = document.getElementById('quizClozeContainer');
+        const jaSciBox = document.getElementById('quizJaScienceContainer');
+        const nativeBox = document.getElementById('quizNativeExamContainer');
 
         const isSpelling = currentQuizMode === 'spelling';
         const isTrans = currentQuizMode === 'translation';
         const isRead = currentQuizMode === 'reading';
         const isCloze = currentQuizMode === 'cloze';
+        const isJaSci = currentQuizMode === 'ja_science';
+        const isNative = currentQuizMode === 'native_exam';
 
         if (basicBox) basicBox.classList.toggle('hidden', !isSpelling);
         if (demoBox) demoBox.classList.toggle('hidden', !isSpelling);
@@ -357,10 +393,29 @@
         if (transBox) transBox.classList.toggle('hidden', !isTrans);
         if (readBox) readBox.classList.toggle('hidden', !isRead);
         if (clozeBox) clozeBox.classList.toggle('hidden', !isCloze);
+        if (jaSciBox) jaSciBox.classList.toggle('hidden', !isJaSci);
+        if (nativeBox) nativeBox.classList.toggle('hidden', !isNative);
+        syncNativeAndJaModeVisibility();
+    }
+
+    function updateSpellingSubModeUI() {
+        if (typeof document === 'undefined') return;
+        const exactBtn = document.getElementById('qspell-exact');
+        const inflBtn = document.getElementById('qspell-inflection');
+        const activeCls = 'flex-1 py-1.5 px-2.5 text-xs font-bold rounded-lg bg-brand-600 text-white shadow-2xs transition';
+        const idleCls = 'flex-1 py-1.5 px-2.5 text-xs font-bold rounded-lg text-slate-600 dark:text-slate-300 hover:bg-slate-200/70 dark:hover:bg-slate-700 transition';
+        if (exactBtn) exactBtn.className = spellingSubMode === 'exact' ? activeCls : idleCls;
+        if (inflBtn) inflBtn.className = spellingSubMode === 'inflection' ? activeCls : idleCls;
+    }
+
+    function setSpellingSubMode(sub) {
+        spellingSubMode = sub === 'inflection' ? 'inflection' : 'exact';
+        updateSpellingSubModeUI();
+        nextQuizQuestion();
     }
 
     /**
-     * 🎯 切換測驗模式 (拼寫測驗 / 句構翻譯 / 綜合閱讀 / 文意選填 10 選 10)
+     * 🎯 切換測驗模式 (拼寫測驗 / 句構翻譯 / 綜合閱讀 / 文意選填 / 日文科學題 / 同語進階考題)
      */
     function setQuizMode(mode) {
         currentQuizMode = normalizeQuizMode(mode);
@@ -402,12 +457,18 @@
         const transBtn = document.getElementById('qmode-translation');
         const readBtn = document.getElementById('qmode-reading');
         const clozeBtn = document.getElementById('qmode-cloze');
+        const jaSciBtn = document.getElementById('qmode-ja_science');
+        const nativeBtn = document.getElementById('qmode-native_exam');
         const activeCls = 'py-2 px-2.5 rounded-lg font-bold transition bg-brand-600 text-white shadow-xs flex items-center justify-center gap-1.5';
         const idleCls = 'py-2 px-2.5 rounded-lg font-bold transition bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-600 flex items-center justify-center gap-1.5';
         if (spellBtn) spellBtn.className = currentQuizMode === 'spelling' ? activeCls : idleCls;
         if (transBtn) transBtn.className = currentQuizMode === 'translation' ? activeCls : idleCls;
         if (readBtn) readBtn.className = currentQuizMode === 'reading' ? activeCls : idleCls;
         if (clozeBtn) clozeBtn.className = currentQuizMode === 'cloze' ? activeCls : idleCls;
+        if (jaSciBtn) jaSciBtn.className = currentQuizMode === 'ja_science' ? activeCls : idleCls;
+        if (nativeBtn) nativeBtn.className = currentQuizMode === 'native_exam' ? activeCls : idleCls;
+        updateSpellingSubModeUI();
+        syncNativeAndJaModeVisibility();
     }
 
     function speakQuizPromptWord(wordStr, langCode = currentQuizLang) {
@@ -559,22 +620,12 @@
         updateModeTabUI();
         syncActiveQuizModeContainers();
 
-        if (currentQuizMode === 'translation') {
-            if (global.QuizTranslationModule && typeof global.QuizTranslationModule.activateMode === 'function') {
-                global.QuizTranslationModule.activateMode();
-            }
+        if (currentQuizMode === 'ja_science') {
+            renderJaScienceQuestion();
             return;
         }
-        if (currentQuizMode === 'reading') {
-            if (global.QuizReadingModule && typeof global.QuizReadingModule.activateMode === 'function') {
-                global.QuizReadingModule.activateMode();
-            }
-            return;
-        }
-        if (currentQuizMode === 'cloze') {
-            if (global.QuizClozeModule && typeof global.QuizClozeModule.activateMode === 'function') {
-                global.QuizClozeModule.activateMode();
-            }
+        if (currentQuizMode === 'native_exam') {
+            renderNativeExamQuestion();
             return;
         }
 
@@ -598,6 +649,8 @@
 
         if (pool.length === 0) {
             currentQuizWord = null;
+            currentQuizTargetAnswer = '';
+            currentInflectionMeta = null;
             updateQuizCardHeaderBadges(null);
             if (spellingForm) spellingForm.classList.add('hidden');
 
@@ -622,20 +675,47 @@
             return;
         }
 
-        currentQuizWord = pickNextFreeQuizCandidate(pool);
+        currentInflectionMeta = null;
+        if (spellingSubMode === 'inflection' && currentQuizLang === 'en' && global.QuizExamBank && typeof global.QuizExamBank.findLocalInflectionForCard === 'function') {
+            const allWords = getQuizWordList();
+            const inflPool = pool.filter(c => Boolean(global.QuizExamBank.findLocalInflectionForCard(c, allWords)));
+            currentQuizWord = pickNextFreeQuizCandidate(inflPool.length > 0 ? inflPool : pool);
+            currentInflectionMeta = global.QuizExamBank.findLocalInflectionForCard(currentQuizWord, allWords);
+        } else {
+            currentQuizWord = pickNextFreeQuizCandidate(pool);
+        }
+
         lastQuizWordKey = String(currentQuizWord.word).trim().toLowerCase();
+        currentQuizTargetAnswer = (currentInflectionMeta && currentInflectionMeta.target)
+            ? String(currentInflectionMeta.target).trim()
+            : String(currentQuizWord.word || '').trim();
+
         updateQuizCardHeaderBadges(currentQuizWord);
 
         if (spellingForm) spellingForm.classList.remove('hidden');
         if (inputElem) {
             inputElem.disabled = false;
             inputElem.value = '';
-            inputElem.placeholder = '請根據句意翻譯與頭尾字母提示，填入正確單字...';
+            inputElem.placeholder = currentInflectionMeta
+                ? `請填入「${currentQuizWord.word}」變化後的正確形式...`
+                : '請根據句意翻譯與頭尾字母提示，填入正確單字...';
             setTimeout(() => {
                 try { inputElem.focus(); } catch (e) {}
             }, 40);
         }
         if (submitBtn) submitBtn.disabled = false;
+
+        renderActiveSpellingPromptBox();
+    }
+
+    function renderActiveSpellingPromptBox() {
+        if (typeof document === 'undefined' || !currentQuizWord) return;
+        const promptBox = document.getElementById('quizPromptBox');
+        const promptTitleElem = document.getElementById('quizPromptTitle');
+        if (!promptBox) return;
+
+        const targetAnswer = currentQuizTargetAnswer || String(currentQuizWord.word || '').trim();
+        const isInflection = Boolean(currentInflectionMeta && currentInflectionMeta.target);
 
         const diffBadgeHtml = (currentQuizLang === 'en' && typeof global.getWordDifficultyInfo === 'function')
             ? (() => {
@@ -646,27 +726,58 @@
             })()
             : '';
 
-        const posBadgeHtml = currentQuizWord.pos
-            ? `<span class="px-2 py-0.5 rounded bg-brand-100 dark:bg-brand-900/50 text-brand-700 dark:text-brand-300 text-xs font-bold">${escapeQuizHTML(currentQuizWord.pos)}</span>`
+        const posBadgeHtml = (isInflection ? currentInflectionMeta.targetPos : currentQuizWord.pos)
+            ? `<span class="px-2 py-0.5 rounded bg-brand-100 dark:bg-brand-900/50 text-brand-700 dark:text-brand-300 text-xs font-bold">${escapeQuizHTML(isInflection ? currentInflectionMeta.targetPos : currentQuizWord.pos)}</span>`
             : '';
 
-        const headTailHint = buildHeadTailMaskHint(currentQuizWord.word, true);
-        const charLen = String(currentQuizWord.word || '').trim().length;
-        const hasSentence = currentQuizWord.sentence && String(currentQuizWord.sentence).trim() !== '';
+        const headTailHint = buildHeadTailMaskHint(targetAnswer, true);
+        const charLen = targetAnswer.length;
+
+        const rawSentence = isInflection ? (currentInflectionMeta.sentence || '') : (currentQuizWord.sentence || '');
+        const hasSentence = Boolean(rawSentence && String(rawSentence).trim() !== '');
         const clozeRes = hasSentence
-            ? buildClozeSentenceHtml(currentQuizWord.sentence, currentQuizWord.word, currentQuizLang)
+            ? (rawSentence.includes('_____')
+                ? {
+                    html: (currentQuizLang === 'en' ? renderReaderAwareEnglishHtml(rawSentence.replace(/_____/g, ' __MASK__ '), []) : escapeQuizHTML(rawSentence))
+                        .replace('__MASK__', `<span class="quiz-blank-mask inline-block px-2 py-0.5 mx-0.5 rounded-md bg-brand-50 dark:bg-sky-950/60 border-b-2 border-brand-500 dark:border-sky-400 text-brand-700 dark:text-sky-300 font-mono font-extrabold tracking-wider">${escapeQuizHTML(buildHeadTailMaskHint(targetAnswer, false))}</span>`),
+                    replaced: true
+                }
+                : buildClozeSentenceHtml(rawSentence, targetAnswer, currentQuizLang))
             : { html: '', replaced: false };
 
-        const nativeTranslation = currentQuizWord.translation && String(currentQuizWord.translation).trim() !== ''
-            ? String(currentQuizWord.translation).trim()
-            : '';
+        const nativeTranslation = isInflection
+            ? String(currentInflectionMeta.translation || '').trim()
+            : (currentQuizWord.translation && String(currentQuizWord.translation).trim() !== ''
+                ? String(currentQuizWord.translation).trim()
+                : '');
 
         if (promptTitleElem) {
-            promptTitleElem.innerText = '拼寫／輸入測驗（依句子挖空、母語翻譯與頭尾字母填入正確單字）：';
+            promptTitleElem.innerText = isInflection
+                ? '詞性／時態變化拼寫測驗（請將提示原字轉換為句中正確詞形）：'
+                : '拼寫／輸入測驗（依句子挖空、母語翻譯與頭尾字母填入正確單字）：';
         }
+
+        const inflectionHeaderHtml = isInflection
+            ? `<div class="p-2.5 rounded-xl bg-indigo-50/90 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800/70 flex items-center justify-between gap-2 flex-wrap">
+                   <div class="text-xs font-extrabold text-indigo-800 dark:text-indigo-200">
+                       🧬 原形字：<span class="underline">${escapeQuizHTML(currentQuizWord.word)}</span> ➜ ${escapeQuizHTML(currentInflectionMeta.hint || '詞性變化')}
+                   </div>
+                   <span class="text-[10px] font-bold px-2 py-0.5 rounded bg-white/80 dark:bg-slate-800 text-indigo-600 dark:text-indigo-300">
+                       ${currentInflectionMeta.source === 'ai' ? '✨ AI 出題' : (currentInflectionMeta.source === 'deck' ? '字庫衍生詞' : '內建變化題庫')}
+                   </span>
+               </div>`
+            : (spellingSubMode === 'inflection' && currentQuizLang === 'en'
+                ? `<div class="p-2.5 rounded-xl bg-amber-50/80 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/60 flex items-center justify-between gap-2 flex-wrap">
+                       <span class="text-xs font-bold text-amber-800 dark:text-amber-200">目前字庫與內建詞族未收錄「${escapeQuizHTML(currentQuizWord.word)}」的變化詞形，可改用 AI 即時出變化題</span>
+                       <button type="button" onclick="requestAiInflectionQuestion()" class="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-extrabold transition shrink-0">
+                           ✨ AI 生成變化題（消耗解析額度）
+                       </button>
+                   </div>`
+                : '');
 
         promptBox.innerHTML = `
             <div class="space-y-3.5">
+                ${inflectionHeaderHtml}
                 <!-- 1. 句子挖空區 -->
                 ${hasSentence && clozeRes.replaced ? `
                     <div class="p-3.5 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 space-y-1.5">
@@ -675,7 +786,7 @@
                     </div>
                 ` : `
                     <div class="p-3 rounded-xl bg-amber-50/70 dark:bg-amber-950/30 border border-amber-200/80 dark:border-amber-800/60 text-xs text-amber-800 dark:text-amber-300">
-                        <i class="fa-regular fa-note-sticky mr-1"></i>此單字卡尚無對應挖空例句，請依下方母語釋義與頭尾字母提示拼出單字（可用「AI 補齊」為字庫補上例句）。
+                        <i class="fa-regular fa-note-sticky mr-1"></i>此單字卡尚無對應挖空例句，請依下方母語釋義與頭尾字母提示拼出單字（可用「✨ AI 補齊」為字庫補上例句）。
                     </div>
                 `}
 
@@ -690,7 +801,7 @@
                     <div class="flex items-center flex-wrap gap-2 pt-0.5">
                         ${posBadgeHtml}
                         ${diffBadgeHtml}
-                        <span class="text-base sm:text-lg font-extrabold text-slate-900 dark:text-white">${escapeQuizHTML(currentQuizWord.meaning)}</span>
+                        <span class="text-base sm:text-lg font-extrabold text-slate-900 dark:text-white">${escapeQuizHTML(isInflection ? (currentInflectionMeta.hint || currentQuizWord.meaning) : currentQuizWord.meaning)}</span>
                     </div>
                 </div>
 
@@ -710,6 +821,34 @@
         }
     }
 
+    async function requestAiInflectionQuestion() {
+        if (!currentQuizWord || !global.QuizExamBank || typeof global.QuizExamBank.generateAiInflectionQuestion !== 'function') return;
+        if (typeof global.MembershipEngine !== 'undefined' && typeof global.MembershipEngine.canConsumeAiQuota === 'function') {
+            const q = global.MembershipEngine.canConsumeAiQuota('def_fill');
+            if (!q.allowed) {
+                if (typeof global.MembershipEngine.showQuotaUpgradePrompt === 'function') {
+                    global.MembershipEngine.showQuotaUpgradePrompt('def_fill');
+                }
+                return;
+            }
+        }
+        try {
+            if (typeof global.showToast === 'function') global.showToast('✨ AI 正在生成詞性／時態變化題...', 'info');
+            const generated = await global.QuizExamBank.generateAiInflectionQuestion(currentQuizWord);
+            if (!generated || !generated.target) return;
+            currentInflectionMeta = generated;
+            currentQuizTargetAnswer = String(generated.target).trim();
+            const inputElem = typeof document !== 'undefined' ? document.getElementById('quizInput') : null;
+            if (inputElem) {
+                inputElem.placeholder = `請填入「${currentQuizWord.word}」變化後的正確形式...`;
+                inputElem.focus();
+            }
+            renderActiveSpellingPromptBox();
+        } catch (err) {
+            if (typeof global.showToast === 'function') global.showToast(`✨ AI 生成失敗：${err.message}`, 'error');
+        }
+    }
+
     function renderQuizResultFeedback(isCorrect) {
         if (typeof document === 'undefined' || !currentQuizWord) return;
         const feedbackElem = document.getElementById('quizFeedback');
@@ -725,13 +864,20 @@
             ? (lv === 1 ? `臨時 Lv.1（連對 ${streak}/2 升 Lv.2）` : `${lvInfo.name}（已提升，不影響 FSRS）`)
             : `已降回 臨時 Lv.1（FSRS 排程未更動）`;
 
-        const safeWord = escapeQuizHTML(currentQuizWord.word);
-        const safeMeaning = escapeQuizHTML(currentQuizWord.meaning || '');
+        const answerDisplay = (currentQuizTargetAnswer || currentQuizWord.word);
+        const safeWord = escapeQuizHTML(answerDisplay);
+        const safeMeaning = escapeQuizHTML(
+            (currentInflectionMeta && currentInflectionMeta.target)
+                ? `${currentQuizWord.word} → ${currentInflectionMeta.hint || ''}`
+                : (currentQuizWord.meaning || '')
+        );
         const safePhonetic = escapeQuizHTML(currentQuizWord.phonetic || '');
-        const exampleHtml = (currentQuizWord.sentence && isCardMatchingTargetLang(currentQuizWord, currentQuizLang))
+        const sentenceText = (currentInflectionMeta && currentInflectionMeta.sentence) || currentQuizWord.sentence;
+        const transText = (currentInflectionMeta && currentInflectionMeta.translation) || currentQuizWord.translation;
+        const exampleHtml = (sentenceText && isCardMatchingTargetLang(currentQuizWord, currentQuizLang))
             ? `<div class="mt-2 pt-2 border-t border-current/15 text-xs leading-relaxed">
-                    <p class="font-serif text-slate-700 dark:text-slate-200">${currentQuizLang === 'en' ? renderReaderAwareEnglishHtml(currentQuizWord.sentence) : escapeQuizHTML(currentQuizWord.sentence)}</p>
-                    ${currentQuizWord.translation ? `<p class="text-slate-500 dark:text-slate-400 mt-0.5">${escapeQuizHTML(currentQuizWord.translation)}</p>` : ''}
+                    <p class="font-serif text-slate-700 dark:text-slate-200">${currentQuizLang === 'en' ? renderReaderAwareEnglishHtml(sentenceText.replace(/_____/g, answerDisplay)) : escapeQuizHTML(sentenceText)}</p>
+                    ${transText ? `<p class="text-slate-500 dark:text-slate-400 mt-0.5">${escapeQuizHTML(transText)}</p>` : ''}
                </div>`
             : '';
 
@@ -756,7 +902,7 @@
                     <div class="flex items-center justify-between gap-2 flex-wrap">
                         <div class="flex items-center space-x-2">
                             <i class="fa-solid fa-circle-xmark text-rose-600 dark:text-rose-400 text-lg"></i>
-                            <span>答錯了！正確單字：<strong class="underline">${safeWord}</strong></span>
+                            <span>答錯了！正確答案：<strong class="underline">${safeWord}</strong></span>
                         </div>
                         <span class="text-[11px] px-2.5 py-0.5 rounded-full bg-rose-100 dark:bg-rose-900/70 text-rose-700 dark:text-rose-300 font-bold">
                             ⚡ ${escapeQuizHTML(progressLabel)}
@@ -816,7 +962,7 @@
         const submitBtn = typeof document !== 'undefined' ? document.getElementById('quizSubmitBtn') : null;
         if (submitBtn) submitBtn.disabled = true;
 
-        const targetWord = String(currentQuizWord.word || '').trim().toLowerCase();
+        const targetWord = String(currentQuizTargetAnswer || currentQuizWord.word || '').trim().toLowerCase();
         const isCorrect = userRaw.toLowerCase() === targetWord;
 
         quizScoreTotal += 1;
@@ -824,10 +970,237 @@
 
         persistQuizScore();
         applyQuizFreeGrade(currentQuizWord, isCorrect);
+        if (global.ClassroomEngine && typeof global.ClassroomEngine.recordStudyActivity === 'function') {
+            global.ClassroomEngine.recordStudyActivity({ type: 'quiz_questions', count: 1, isCorrect });
+        }
         updateQuizScoreUI();
         renderQuizResultFeedback(isCorrect);
         if (isCorrect) {
             scheduleAutoNext();
+        }
+    }
+
+    // =========================================================================
+    // 🇯🇵 日文科學實證考題渲染與作答 (漢字脈絡読み / 助詞辨析 / 活用変換)
+    // =========================================================================
+    function setJaScienceFilter(filter) {
+        currentJaScienceFilter = filter || 'all';
+        renderJaScienceQuestion();
+    }
+
+    function renderJaScienceQuestion() {
+        const container = typeof document !== 'undefined' ? document.getElementById('quizJaScienceContainer') : null;
+        if (!container || !global.QuizExamBank) return;
+
+        const bank = global.QuizExamBank.getJapaneseScientificDrills(currentJaScienceFilter);
+        const list = bank.length > 0 ? bank : global.QuizExamBank.getJapaneseScientificDrills('all');
+        const nextPick = list.filter(q => !currentJaScienceQuestion || q.id !== currentJaScienceQuestion.id);
+        const pool = nextPick.length > 0 ? nextPick : list;
+        currentJaScienceQuestion = pool[Math.floor(Math.random() * pool.length)];
+
+        const filters = [
+            { id: 'all', label: '全部綜合' },
+            { id: 'kanji_reading', label: '文脈漢字読み' },
+            { id: 'particle', label: '助詞辨析' },
+            { id: 'conjugation', label: '動詞/形容詞活用' }
+        ];
+
+        const stemHtml = currentJaScienceQuestion.targetSpan
+            ? escapeQuizHTML(currentJaScienceQuestion.stem).replace(
+                `【${escapeQuizHTML(currentJaScienceQuestion.targetSpan)}】`,
+                `<span class="underline decoration-2 decoration-rose-500 underline-offset-4 font-extrabold text-rose-600 dark:text-rose-400 px-1">${escapeQuizHTML(currentJaScienceQuestion.targetSpan)}</span>`
+            )
+            : escapeQuizHTML(currentJaScienceQuestion.stem);
+
+        container.innerHTML = `
+            <div class="bg-white dark:bg-slate-800 rounded-2xl p-5 sm:p-6 shadow-md border border-slate-100 dark:border-slate-700 space-y-4">
+                <div class="flex items-center justify-between gap-2 flex-wrap">
+                    <span class="px-2.5 py-1 rounded-full bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300 text-xs font-extrabold">
+                        🇯🇵 科學實證日語測驗（主動回想・脈絡提取）
+                    </span>
+                    <span class="text-[11px] font-bold text-slate-400">${escapeQuizHTML(currentJaScienceQuestion.subLabel)}</span>
+                </div>
+                <div class="flex flex-wrap gap-1.5">
+                    ${filters.map(f => `
+                        <button type="button" onclick="setJaScienceFilter('${f.id}')"
+                            class="px-2.5 py-1 rounded-lg text-[11px] font-bold transition ${currentJaScienceFilter === f.id ? 'bg-brand-600 text-white' : 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300'}">
+                            ${escapeQuizHTML(f.label)}
+                        </button>
+                    `).join('')}
+                </div>
+                <div class="p-4 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 space-y-2">
+                    <p class="text-base sm:text-lg font-bold text-slate-900 dark:text-slate-100 leading-relaxed">${stemHtml}</p>
+                    <p class="text-xs font-bold text-slate-500 dark:text-slate-400">${escapeQuizHTML(currentJaScienceQuestion.prompt)}</p>
+                </div>
+                <div id="jaScienceOptions" class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    ${currentJaScienceQuestion.options.map((opt, idx) => `
+                        <button type="button" onclick="answerJaScienceQuestion(${idx})"
+                            class="min-h-[44px] text-left px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 hover:border-brand-400 text-sm font-bold text-slate-800 dark:text-slate-100 transition">
+                            ${String.fromCharCode(65 + idx)}. ${escapeQuizHTML(opt)}
+                        </button>
+                    `).join('')}
+                </div>
+                <div id="jaScienceFeedback" class="hidden"></div>
+            </div>
+        `;
+    }
+
+    function answerJaScienceQuestion(idx) {
+        if (!currentJaScienceQuestion) return;
+        const optWrap = document.getElementById('jaScienceOptions');
+        const fb = document.getElementById('jaScienceFeedback');
+        if (!fb || !fb.classList.contains('hidden')) return;
+
+        const isCorrect = idx === currentJaScienceQuestion.answerIndex;
+        quizScoreTotal += 1;
+        if (isCorrect) quizScoreCorrect += 1;
+        persistQuizScore();
+        updateQuizScoreUI();
+        if (global.ClassroomEngine && typeof global.ClassroomEngine.recordStudyActivity === 'function') {
+            global.ClassroomEngine.recordStudyActivity({ type: 'quiz_questions', count: 1, isCorrect });
+        }
+        if (optWrap) {
+            Array.from(optWrap.querySelectorAll('button')).forEach((btn, bIdx) => {
+                btn.disabled = true;
+                if (bIdx === currentJaScienceQuestion.answerIndex) {
+                    btn.className = 'min-h-[44px] text-left px-4 py-2.5 rounded-xl border-2 border-emerald-500 bg-emerald-50 dark:bg-emerald-950/50 text-sm font-extrabold text-emerald-800 dark:text-emerald-200';
+                } else if (bIdx === idx && !isCorrect) {
+                    btn.className = 'min-h-[44px] text-left px-4 py-2.5 rounded-xl border-2 border-rose-500 bg-rose-50 dark:bg-rose-950/50 text-sm font-bold text-rose-800 dark:text-rose-200';
+                }
+            });
+        }
+        fb.classList.remove('hidden');
+        fb.className = `p-4 rounded-xl border text-xs leading-relaxed space-y-2 ${isCorrect ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800 text-emerald-900 dark:text-emerald-100' : 'bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-800 text-rose-900 dark:text-rose-100'}`;
+        fb.innerHTML = `
+            <p class="font-extrabold text-sm">${isCorrect ? '✅ 回答正確！' : '❌ 答錯了'}</p>
+            <p>${escapeQuizHTML(currentJaScienceQuestion.explanation)}</p>
+            <div class="pt-1 flex justify-end">
+                <button type="button" onclick="nextQuizQuestion()" class="min-h-[44px] px-4 py-2 rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-xs font-extrabold transition">
+                    下一題 <i class="fa-solid fa-arrow-right ml-1"></i>
+                </button>
+            </div>
+        `;
+    }
+
+    // =========================================================================
+    // 🎓 母語 == 目標語言 經查證進階考題（含文言文＆教育部一字多音審訂表）
+    // =========================================================================
+    function renderNativeExamQuestion() {
+        const container = typeof document !== 'undefined' ? document.getElementById('quizNativeExamContainer') : null;
+        if (!container || !global.QuizExamBank) return;
+
+        const targetLang = (typeof localStorage !== 'undefined' ? localStorage.getItem('lzhcard_target_lang') : 'zh-TW') || 'zh-TW';
+        const list = global.QuizExamBank.getNativeAdvancedQuestions(targetLang);
+        const candidates = list.filter(q => !currentNativeExamQuestion || q.id !== currentNativeExamQuestion.id);
+        const pool = candidates.length > 0 ? candidates : list;
+        currentNativeExamQuestion = pool[Math.floor(Math.random() * pool.length)];
+
+        if (!currentNativeExamQuestion) {
+            container.innerHTML = `<div class="p-6 text-center text-sm text-slate-500">暫無該語系的進階認證題庫</div>`;
+            return;
+        }
+
+        container.innerHTML = `
+            <div class="bg-white dark:bg-slate-800 rounded-2xl p-5 sm:p-6 shadow-md border border-slate-100 dark:border-slate-700 space-y-4">
+                <div class="flex items-center justify-between gap-2 flex-wrap">
+                    <span class="px-2.5 py-1 rounded-full bg-indigo-50 dark:bg-indigo-950/50 border border-indigo-200 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300 text-xs font-extrabold">
+                        🎓 ${escapeQuizHTML(currentNativeExamQuestion.category)}
+                    </span>
+                    <span class="text-[11px] font-bold text-slate-500 dark:text-slate-400">出處：${escapeQuizHTML(currentNativeExamQuestion.source)}</span>
+                </div>
+                <div class="p-4 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700">
+                    <p class="text-sm sm:text-base font-bold text-slate-900 dark:text-slate-100 leading-relaxed">${escapeQuizHTML(currentNativeExamQuestion.stem)}</p>
+                </div>
+                <div id="nativeExamOptions" class="space-y-2">
+                    ${currentNativeExamQuestion.options.map((opt, idx) => `
+                        <button type="button" onclick="answerNativeExamQuestion(${idx})"
+                            class="w-full min-h-[44px] text-left px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 hover:border-indigo-400 text-sm font-bold text-slate-800 dark:text-slate-100 transition">
+                            ${String.fromCharCode(65 + idx)}. ${escapeQuizHTML(opt)}
+                        </button>
+                    `).join('')}
+                </div>
+                <div id="nativeExamFeedback" class="hidden"></div>
+            </div>
+        `;
+    }
+
+    function answerNativeExamQuestion(idx) {
+        if (!currentNativeExamQuestion) return;
+        const optWrap = document.getElementById('nativeExamOptions');
+        const fb = document.getElementById('nativeExamFeedback');
+        if (!fb || !fb.classList.contains('hidden')) return;
+
+        const isCorrect = idx === currentNativeExamQuestion.answerIndex;
+        quizScoreTotal += 1;
+        if (isCorrect) quizScoreCorrect += 1;
+        persistQuizScore();
+        updateQuizScoreUI();
+        if (global.ClassroomEngine && typeof global.ClassroomEngine.recordStudyActivity === 'function') {
+            global.ClassroomEngine.recordStudyActivity({ type: 'quiz_questions', count: 1, isCorrect });
+        }
+
+        if (optWrap) {
+            Array.from(optWrap.querySelectorAll('button')).forEach((btn, bIdx) => {
+                btn.disabled = true;
+                if (bIdx === currentNativeExamQuestion.answerIndex) {
+                    btn.className = 'w-full min-h-[44px] text-left px-4 py-2.5 rounded-xl border-2 border-emerald-500 bg-emerald-50 dark:bg-emerald-950/50 text-sm font-extrabold text-emerald-800 dark:text-emerald-200';
+                } else if (bIdx === idx && !isCorrect) {
+                    btn.className = 'w-full min-h-[44px] text-left px-4 py-2.5 rounded-xl border-2 border-rose-500 bg-rose-50 dark:bg-rose-950/50 text-sm font-bold text-rose-800 dark:text-rose-200';
+                }
+            });
+        }
+
+        fb.classList.remove('hidden');
+        fb.className = `p-4 rounded-xl border text-xs leading-relaxed space-y-2.5 ${isCorrect ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800 text-emerald-900 dark:text-emerald-100' : 'bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-800 text-rose-900 dark:text-rose-100'}`;
+        fb.innerHTML = `
+            <div class="flex items-center justify-between gap-2 flex-wrap">
+                <p class="font-extrabold text-sm">${isCorrect ? '✅ 回答正確！' : '❌ 答錯了'}</p>
+                <span class="text-[10px] font-bold px-2 py-0.5 rounded bg-white/80 dark:bg-slate-800">經查證權威題庫</span>
+            </div>
+            <p>${escapeQuizHTML(currentNativeExamQuestion.explanation)}</p>
+            <div id="nativeExamAiExtraBox" class="hidden p-3 rounded-lg bg-white/80 dark:bg-slate-900/70 border border-indigo-200 dark:border-indigo-800 text-slate-800 dark:text-slate-100 leading-relaxed"></div>
+            <div class="pt-1 flex items-center justify-between gap-2 flex-wrap">
+                <button type="button" id="nativeExamAiBtn" onclick="requestNativeExamAiExplain()"
+                    class="min-h-[44px] px-3 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-extrabold transition">
+                    ✨ AI 深化記憶口訣與對比（消耗解析額度）
+                </button>
+                <button type="button" onclick="nextQuizQuestion()" class="min-h-[44px] px-4 py-2 rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-xs font-extrabold transition">
+                    下一題 <i class="fa-solid fa-arrow-right ml-1"></i>
+                </button>
+            </div>
+        `;
+    }
+
+    async function requestNativeExamAiExplain() {
+        if (!currentNativeExamQuestion || !global.QuizExamBank || typeof global.QuizExamBank.explainVerifiedQuestionWithAi !== 'function') return;
+        if (typeof global.MembershipEngine !== 'undefined' && typeof global.MembershipEngine.canConsumeAiQuota === 'function') {
+            const q = global.MembershipEngine.canConsumeAiQuota('def_fill');
+            if (!q.allowed) {
+                if (typeof global.MembershipEngine.showQuotaUpgradePrompt === 'function') {
+                    global.MembershipEngine.showQuotaUpgradePrompt('def_fill');
+                }
+                return;
+            }
+        }
+        const btn = document.getElementById('nativeExamAiBtn');
+        const extraBox = document.getElementById('nativeExamAiExtraBox');
+        if (btn) {
+            btn.disabled = true;
+            btn.innerText = '✨ AI 解析補充中...';
+        }
+        try {
+            const txt = await global.QuizExamBank.explainVerifiedQuestionWithAi(currentNativeExamQuestion);
+            if (extraBox) {
+                extraBox.classList.remove('hidden');
+                extraBox.innerText = txt || '（暫無額外補充）';
+            }
+            if (btn) btn.classList.add('hidden');
+        } catch (err) {
+            if (typeof global.showToast === 'function') global.showToast(`✨ AI 補充失敗：${err.message}`, 'error');
+            if (btn) {
+                btn.disabled = false;
+                btn.innerText = '✨ AI 深化記憶口訣與對比（消耗解析額度）';
+            }
         }
     }
 
@@ -839,8 +1212,15 @@
     global.buildHeadTailMaskHint = buildHeadTailMaskHint;
     global.buildClozeSentenceHtml = buildClozeSentenceHtml;
     global.syncQuizScoreFromStorage = syncQuizScoreFromStorage;
+    global.syncNativeAndJaModeVisibility = syncNativeAndJaModeVisibility;
     global.setQuizLanguage = setQuizLanguage;
     global.setQuizMode = setQuizMode;
+    global.setSpellingSubMode = setSpellingSubMode;
+    global.requestAiInflectionQuestion = requestAiInflectionQuestion;
+    global.setJaScienceFilter = setJaScienceFilter;
+    global.answerJaScienceQuestion = answerJaScienceQuestion;
+    global.answerNativeExamQuestion = answerNativeExamQuestion;
+    global.requestNativeExamAiExplain = requestNativeExamAiExplain;
     global.nextQuizQuestion = nextQuizQuestion;
     global.handleQuizSubmit = handleQuizSubmit;
     global.speakQuizPromptWord = speakQuizPromptWord;

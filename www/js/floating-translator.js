@@ -28,25 +28,6 @@
         ? global.SHARED_BACKEND_URL.replace(/\/+$/, '')
         : 'https://lzhcard.tomlin980415.workers.dev';
 
-    function hasLocalGeminiKey() {
-        try {
-            if (localStorage.getItem('lzhcard_api_mode') === 'shared') return false;
-        } catch (e) {}
-        if (typeof global.getValidApiKey === 'function') return Boolean(global.getValidApiKey());
-        const raw = localStorage.getItem('flashcard_gemini_key_v1');
-        return Boolean(raw && raw.trim() && raw.trim() !== 'undefined' && raw.trim() !== 'null');
-    }
-
-    function hasLocalPersonalAiKey() {
-        try {
-            if (localStorage.getItem('lzhcard_api_mode') === 'shared') return false;
-        } catch (e) {}
-        if (typeof global.hasAnyPersonalKey === 'function') return Boolean(global.hasAnyPersonalKey());
-        const rawGroq = localStorage.getItem('lzhcard_groq_key_v1');
-        const hasGroq = Boolean(rawGroq && rawGroq.trim() && rawGroq.trim() !== 'undefined' && rawGroq.trim() !== 'null');
-        return hasGroq || hasLocalGeminiKey();
-    }
-
     let cachedEnvInsets = null;
     function getEffectiveSafeInsets() {
         try {
@@ -715,9 +696,9 @@
 {"word":"${cleanWord.replace(/"/g, '\\"')}","lang":"${detectedLang}","phonetic":"","pos":"","meaning":"","sentence":"","translation":""}`;
 
             let result = null;
-            const canUseCloudDef = hasLocalPersonalAiKey() || ((typeof global.MembershipEngine !== 'undefined' && typeof global.MembershipEngine.canConsumeAiQuota === 'function')
+            const canUseCloudDef = (typeof global.MembershipEngine !== 'undefined' && typeof global.MembershipEngine.canConsumeAiQuota === 'function')
                 ? global.MembershipEngine.canConsumeAiQuota('def_fill').allowed
-                : true);
+                : true;
             if (canUseCloudDef && typeof global.callGeminiApi === 'function') {
                 try {
                     const raw = await global.callGeminiApi(prompt, { silent: true, feature: 'def_fill' });
@@ -1154,7 +1135,6 @@
             '#welcomeModal',
             '#onboardingTourOverlay',
             '#helpManualModal',
-            '#keyModal',
             '#cardModal',
             '#batchModal',
             '#backupModal',
@@ -2383,9 +2363,9 @@
             return '';
         }
 
-        const canUseCloudAi = hasLocalPersonalAiKey() || ((typeof global.MembershipEngine !== 'undefined' && typeof global.MembershipEngine.canConsumeAiQuota === 'function')
+        const canUseCloudAi = (typeof global.MembershipEngine !== 'undefined' && typeof global.MembershipEngine.canConsumeAiQuota === 'function')
             ? global.MembershipEngine.canConsumeAiQuota('def_fill').allowed
-            : true);
+            : true;
 
         if (canUseCloudAi && typeof global.ensureAiPrivacyConsent === 'function') {
             const consentOk = await global.ensureAiPrivacyConsent({ feature: photoImageBase64 && !sourceText ? 'vision_ocr' : 'def_fill' });
@@ -2426,7 +2406,7 @@
 
             translated = String(translated || '').trim();
             if (!translated) {
-                toast('整篇翻譯失敗，請檢查網路連線或 API Key 設定', 'error');
+                toast('整篇翻譯失敗，請檢查網路連線或會員雲端 AI 額度狀態', 'error');
                 return '';
             }
 
@@ -2472,9 +2452,9 @@
 7. 只輸出單一純 JSON 物件（不要加 Markdown 語法）：
 {"rawText":"","summary":"","detectedLang":"en|ja|zh-TW","tokens":[{"text":"","lang":"en|ja|zh-TW","reading":"","pos":"","translation":"","box":[0,0,100,200]}]}`;
 
-        let canUseCloudVision = hasLocalGeminiKey() || ((typeof global.MembershipEngine !== 'undefined' && typeof global.MembershipEngine.canConsumeAiQuota === 'function')
+        let canUseCloudVision = (typeof global.MembershipEngine !== 'undefined' && typeof global.MembershipEngine.canConsumeAiQuota === 'function')
             ? global.MembershipEngine.canConsumeAiQuota('vision_ocr').allowed
-            : true);
+            : true;
 
         if (canUseCloudVision && typeof global.ensureAiPrivacyConsent === 'function') {
             const consentOk = await global.ensureAiPrivacyConsent({ feature: 'vision_ocr' });
@@ -3461,9 +3441,9 @@
             const nativeCfg = getNativeLangConfig(targetNativeLang);
             const lockedLang = videoSourceLang || 'en';
             const tessLang = mapSourceLangToTesseract(lockedLang);
-            const canCloudVision = hasLocalGeminiKey() || ((typeof global.MembershipEngine !== 'undefined' && typeof global.MembershipEngine.canConsumeAiQuota === 'function')
+            const canCloudVision = (typeof global.MembershipEngine !== 'undefined' && typeof global.MembershipEngine.canConsumeAiQuota === 'function')
                 ? global.MembershipEngine.canConsumeAiQuota('vision_ocr').allowed
-                : true);
+                : true;
 
             let orig = '';
             let trans = '';
@@ -3502,7 +3482,10 @@
                 orig = filtered.text;
                 if (orig) {
                     lang = lockedLang;
-                    if (typeof global.callGeminiApi === 'function' && hasLocalGeminiKey()) {
+                    const canCloudDefFallback = (typeof global.MembershipEngine !== 'undefined' && typeof global.MembershipEngine.canConsumeAiQuota === 'function')
+                        ? global.MembershipEngine.canConsumeAiQuota('def_fill').allowed
+                        : false;
+                    if (typeof global.callGeminiApi === 'function' && canCloudDefFallback) {
                         try {
                             trans = String(await global.callGeminiApi(
                                 `將以下 OCR 辨識出的字幕翻譯為自然道地的「${nativeCfg.aiName}」。自動忽略句首或句尾殘留的亂碼符號（如 | ar Ss = 5），遇到俚語依語境自然意譯（如 new whip -> 新車／座駕），僅輸出最終譯文：\n${orig}`,
@@ -3786,11 +3769,11 @@
             }
         } catch (e) {}
 
-        const quotaAllowsRefine = hasLocalPersonalAiKey() || (!ftFastRefineExhausted && (
+        const quotaAllowsRefine = !ftFastRefineExhausted && (
             (typeof global.MembershipEngine !== 'undefined' && typeof global.MembershipEngine.canConsumeAiQuota === 'function')
                 ? global.MembershipEngine.canConsumeAiQuota('fast_refine').allowed
                 : true
-        ));
+        );
 
         if (!quotaAllowsRefine) return;
 
@@ -3952,12 +3935,12 @@
             ytStatusText = `已載入 ${ytCues.length} 句字幕，正在預譯雙語時間軸...`;
             renderActiveTabBody();
 
-            // 平行批次預譯所有時間軸字幕：個人 BYOK / 付費且尚有配額才使用 AI 整批翻譯，否則零成本平行走 GTX 直譯
+            // 平行批次預譯所有時間軸字幕：付費／教師班級共享且尚有配額才使用 AI 整批翻譯，否則零成本平行走 GTX 直譯
             const batchSize = 18;
             const memSnap = (typeof global.MembershipEngine !== 'undefined' && typeof global.MembershipEngine.getQuotaSnapshot === 'function')
                 ? global.MembershipEngine.getQuotaSnapshot()
                 : null;
-            let allowBatchAi = hasLocalPersonalAiKey() || Boolean(memSnap && (memSnap.byok || memSnap.isSupporter) && memSnap.remainingDaily.def_fill > 0);
+            let allowBatchAi = Boolean(memSnap && (memSnap.isSupporter || memSnap.classSponsored) && (memSnap.isAdmin || memSnap.remainingDaily.def_fill > 0));
             for (let i = 0; i < ytCues.length; i += batchSize) {
                 const slice = ytCues.slice(i, i + batchSize);
                 const joined = slice.map((c, idx) => `${idx}: ${c.text}`).join('\n');
@@ -6105,7 +6088,7 @@
                 <textarea id="ftScreenScratchInput" rows="3" placeholder="貼上任何英文、日文（如：今日はいい天気ですね）或中文文章..." class="w-full p-2.5 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs outline-none">${escapeHtml(screenScratchText)}</textarea>
                 <div class="flex items-center gap-2">
                     <button type="button" id="ftScreenTranslateBtn" ${isScreenTextBusy ? 'disabled' : ''} class="flex-1 py-2 rounded-xl bg-brand-600 hover:bg-brand-700 disabled:opacity-50 text-white text-xs font-extrabold inline-flex items-center justify-center gap-1 cursor-pointer">
-                        ${FT_SVG.sparkle}<span>${isScreenTextBusy ? '翻譯分詞中...' : '斷詞與整句翻譯'}</span>
+                        ${FT_SVG.sparkle}<span>${isScreenTextBusy ? '翻譯分詞中...' : '✨ AI 斷詞與整句翻譯（消耗解析額度）'}</span>
                     </button>
                     <button type="button" id="ftScreenClearBtn" class="px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-200 text-xs font-bold cursor-pointer">清空</button>
                 </div>
@@ -6142,9 +6125,9 @@
                     const detected = detectScriptLang(screenScratchText);
                     const nativeCfg = getNativeLangConfig(targetNativeLang);
                     let trans = '';
-                    const canCloudScratch = hasLocalPersonalAiKey() || ((typeof global.MembershipEngine !== 'undefined' && typeof global.MembershipEngine.canConsumeAiQuota === 'function')
+                    const canCloudScratch = (typeof global.MembershipEngine !== 'undefined' && typeof global.MembershipEngine.canConsumeAiQuota === 'function')
                         ? global.MembershipEngine.canConsumeAiQuota('def_fill').allowed
-                        : true);
+                        : true;
                     if (canCloudScratch && typeof global.callGeminiApi === 'function') {
                         try {
                             trans = String(await global.callGeminiApi(`將以下文字通順翻譯成「${nativeCfg.aiName}」。自動忽略殘留 OCR 亂碼符號，遇到口語俚語依語境自然意譯（例如 new whip -> 新車／座駕），僅輸出譯文：\n${screenScratchText}`, { silent: true, feature: 'def_fill' }) || '').trim();
@@ -6812,24 +6795,8 @@
             }
         } catch (e) {}
 
-        const globalApiMode = (() => {
-            try { return localStorage.getItem('lzhcard_api_mode') || 'shared'; } catch (e) { return 'shared'; }
-        })();
-        if (globalApiMode === 'shared') {
-            iosScreenConfig.cloudKeyMode = 'shared';
-            iosScreenConfig.customApiKey = '';
-        } else {
-            iosScreenConfig.cloudKeyMode = 'personal';
-            if (!iosScreenConfig.customApiKey) {
-                try {
-                    const localGroq = (localStorage.getItem('lzhcard_groq_key_v1') || '').trim();
-                    const localGem = (localStorage.getItem('flashcard_gemini_key_v1') || '').trim();
-                    if (localGroq || localGem) {
-                        iosScreenConfig.customApiKey = localGroq || localGem;
-                    }
-                } catch (e) {}
-            }
-        }
+        iosScreenConfig.cloudKeyMode = 'shared';
+        iosScreenConfig.customApiKey = '';
         return iosScreenConfig;
     }
 
@@ -6842,26 +6809,6 @@
             iosScreenConfig.region = curIsLandscape ? { ...iosScreenConfig.landscapeRegion } : { ...iosScreenConfig.portraitRegion };
             localStorage.setItem(STORAGE_IOS_SCREEN_CFG_KEY, JSON.stringify(iosScreenConfig));
         } catch (e) {}
-    }
-
-    function syncApiModeFromGlobal(mode) {
-        const finalMode = mode === 'personal' ? 'personal' : 'shared';
-        if (finalMode === 'shared') {
-            iosScreenConfig.cloudKeyMode = 'shared';
-            iosScreenConfig.customApiKey = '';
-        } else {
-            iosScreenConfig.cloudKeyMode = 'personal';
-            try {
-                const localGroq = (localStorage.getItem('lzhcard_groq_key_v1') || '').trim();
-                const localGem = (localStorage.getItem('flashcard_gemini_key_v1') || '').trim();
-                iosScreenConfig.customApiKey = localGroq || localGem || iosScreenConfig.customApiKey || '';
-            } catch (e) {}
-        }
-        persistIosScreenConfig();
-        renderIosScreenTranslateModalIfVisible();
-        if (isIosScreenTranslatePlatform()) {
-            syncIosConfigToNativePlugin().catch(() => {});
-        }
     }
 
     async function launchIosScreenTranslateQuick(options = {}) {
@@ -7024,22 +6971,8 @@
         const plugin = getIosNativeScreenPlugin();
         if (!plugin || typeof plugin.saveConfig !== 'function') return false;
         const authToken = await getFirebaseIdTokenSafe();
-        const globalApiMode = localStorage.getItem('lzhcard_api_mode') || 'shared';
-        const usePersonalKey = globalApiMode === 'personal' && (iosScreenConfig.cloudKeyMode === 'personal' || hasLocalPersonalAiKey());
-        const groqKey = globalApiMode === 'personal' ? (localStorage.getItem('lzhcard_groq_key_v1') || '').trim() : '';
-        const geminiKey = globalApiMode === 'personal' ? (localStorage.getItem('flashcard_gemini_key_v1') || '').trim() : '';
-        const effectiveKey = usePersonalKey
-            ? (iosScreenConfig.customApiKey || groqKey || geminiKey || '').trim()
-            : '';
-        let resolvedProvider = 'worker';
-        let resolvedModel = 'gemini-2.0-flash';
-        if (effectiveKey.startsWith('gsk_')) {
-            resolvedProvider = 'groq';
-            resolvedModel = 'llama-3.1-8b-instant';
-        } else if (effectiveKey.startsWith('AIza')) {
-            resolvedProvider = 'gemini';
-            resolvedModel = 'gemini-2.0-flash';
-        }
+        const resolvedProvider = 'worker';
+        const resolvedModel = 'gemini-2.0-flash';
         const effectivePortraitRect = iosScreenConfig.portraitRegionMode === 'custom'
             ? iosScreenConfig.portraitRegion
             : { x: 0.08, y: 0.70, width: 0.84, height: 0.22 };
@@ -7055,7 +6988,6 @@
             targetLang: 'zh-Hant',
             provider: resolvedProvider,
             model: resolvedModel,
-            apiKey: effectiveKey,
             workerBaseUrl: SHARED_WORKER_BASE,
             authToken,
             regionMode: iosScreenConfig.regionMode || 'auto',
@@ -7098,13 +7030,8 @@
         const modal = ensureIosScreenModal();
         modal.classList.remove('hidden');
 
-        const globalApiMode = (() => {
-            try { return localStorage.getItem('lzhcard_api_mode') || 'shared'; } catch (e) { return 'shared'; }
-        })();
-        if (globalApiMode === 'shared') {
-            iosScreenConfig.cloudKeyMode = 'shared';
-            iosScreenConfig.customApiKey = '';
-        }
+        iosScreenConfig.cloudKeyMode = 'shared';
+        iosScreenConfig.customApiKey = '';
 
         const isAppleOffline = iosScreenConfig.engine !== 'cloud_api';
         const supportsOffline = iosScreenCapabilities ? Boolean(iosScreenCapabilities.supportsOfflineTranslation) : true;
@@ -7124,16 +7051,12 @@
             : '橫向自動';
         const langNameMap = { en: '英文 (English)', ja: '日文 (日本語)', ko: '韓文 (한국어)' };
 
-        let quotaSummaryHtml = globalApiMode === 'shared'
-            ? '目前使用全站「雲端公用 API」，免填個人金鑰；依會員或每日免費額度自動運作。'
-            : '已選擇使用個人 Groq／Gemini API Key（儲存於本機，不扣系統額度）。';
+        let quotaSummaryHtml = '目前使用 LZHCard 雲端 AI 翻譯通道（僅限付費會員或班級教師共享方案使用）。';
         try {
             if (typeof global.MembershipEngine !== 'undefined' && typeof global.MembershipEngine.getSummary === 'function') {
                 const sm = global.MembershipEngine.getSummary();
                 if (sm && sm.tierLabel) {
-                    quotaSummaryHtml = globalApiMode === 'shared'
-                        ? `目前方案：${escapeHtml(sm.tierLabel)}（使用雲端公用 API，無需輸入個人金鑰）`
-                        : `目前方案：${escapeHtml(sm.tierLabel)}（已啟用個人 API Key 直連）`;
+                    quotaSummaryHtml = `目前方案：${escapeHtml(sm.tierLabel)}（使用 LZHCard 雲端 AI 翻譯通道）`;
                 }
             }
         } catch (e) {}
@@ -7200,7 +7123,7 @@
                                     <input type="radio" name="ftIosEngineRadio" value="cloud_api" ${!isAppleOffline ? 'checked' : ''} class="mt-1 accent-brand-600">
                                     <div class="min-w-0 flex-1 space-y-1">
                                         <div class="flex items-center gap-1.5 flex-wrap">
-                                            <span class="text-xs font-black">雲端 AI / 自訂 API Key 翻譯</span>
+                                            <span class="text-xs font-black">雲端 AI 翻譯</span>
                                             <span class="px-1.5 py-0.5 rounded-md bg-indigo-100 dark:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 text-[10px] font-extrabold">全 iOS 版本適用</span>
                                         </div>
                                         <p class="text-[11px] text-slate-500 dark:text-slate-400">${quotaSummaryHtml}</p>
@@ -7229,27 +7152,8 @@
                                         ${iosOfflineDownloading ? '正在檢查／喚起 Apple 離線語言包...' : (iosOfflinePackReady ? '✅ 已檢查 Apple 離線語言包（點擊可重新檢查）' : '檢查／下載 Apple 離線語言包')}
                                     </button>
                                 ` : `
-                                    <div class="space-y-2">
-                                        <div class="grid grid-cols-2 gap-2">
-                                            <label class="flex items-center gap-1.5 min-h-[44px] p-2 rounded-xl border cursor-pointer text-[11px] font-bold ${iosScreenConfig.cloudKeyMode !== 'personal' ? 'border-brand-600 bg-brand-50/60 dark:bg-brand-950/30 text-brand-700 dark:text-brand-300' : 'border-slate-200 dark:border-slate-700'}">
-                                                <input type="radio" name="ftIosCloudKeyMode" value="shared" ${iosScreenConfig.cloudKeyMode !== 'personal' ? 'checked' : ''} class="accent-brand-600">
-                                                <span>☁️ 雲端公用 API</span>
-                                            </label>
-                                            <label class="flex items-center gap-1.5 min-h-[44px] p-2 rounded-xl border cursor-pointer text-[11px] font-bold ${iosScreenConfig.cloudKeyMode === 'personal' ? 'border-brand-600 bg-brand-50/60 dark:bg-brand-950/30 text-brand-700 dark:text-brand-300' : 'border-slate-200 dark:border-slate-700'}">
-                                                <input type="radio" name="ftIosCloudKeyMode" value="personal" ${iosScreenConfig.cloudKeyMode === 'personal' ? 'checked' : ''} class="accent-brand-600">
-                                                <span>🔑 個人 API Key</span>
-                                            </label>
-                                        </div>
-                                        ${iosScreenConfig.cloudKeyMode === 'personal' ? `
-                                            <div id="ftIosCustomApiKeyBox">
-                                                <label class="block text-[10.5px] font-bold text-slate-500 dark:text-slate-400 mb-1">個人 Groq / Gemini API Key（僅存於本機）</label>
-                                                <input type="password" id="ftIosCustomApiKeyInput" value="${escapeHtml(iosScreenConfig.customApiKey || '')}" placeholder="gsk_... 或 AIza..." class="w-full px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-mono outline-none">
-                                            </div>
-                                        ` : `
-                                            <div class="text-[11px] text-sky-700 dark:text-sky-300 bg-sky-50 dark:bg-sky-950/40 border border-sky-200 dark:border-sky-800/60 rounded-xl px-3 py-2 leading-relaxed">
-                                                目前使用「雲端公用 API」，已隱藏個人金鑰欄位、無需填寫 Key，依帳號額度自動運行。
-                                            </div>
-                                        `}
+                                    <div class="text-[11px] text-sky-700 dark:text-sky-300 bg-sky-50 dark:bg-sky-950/40 border border-sky-200 dark:border-sky-800/60 rounded-xl px-3 py-2 leading-relaxed">
+                                        使用 LZHCard 雲端 AI 翻譯通道，依您的月繳會員或班級共享配額自動運行。
                                     </div>
                                 `}
                             </div>
@@ -7311,7 +7215,7 @@
                             </div>
 
                             <div class="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 text-xs space-y-1">
-                                <div class="flex justify-between gap-2"><span class="text-slate-500 dark:text-slate-400">翻譯引擎</span><span class="font-extrabold">${isAppleOffline ? 'Apple 離線翻譯（本機）' : (globalApiMode === 'personal' ? '雲端個人 API Key' : '雲端公用 API')}</span></div>
+                                <div class="flex justify-between gap-2"><span class="text-slate-500 dark:text-slate-400">翻譯引擎</span><span class="font-extrabold">${isAppleOffline ? 'Apple 離線翻譯（本機）' : 'LZHCard 雲端 AI 引擎'}</span></div>
                                 <div class="flex justify-between gap-2"><span class="text-slate-500 dark:text-slate-400">翻譯方向</span><span class="font-extrabold">${escapeHtml(langNameMap[iosScreenConfig.sourceLang] || '英文')} → 繁體中文</span></div>
                                 <div class="flex justify-between gap-2"><span class="text-slate-500 dark:text-slate-400">擷取區域</span><span class="font-extrabold text-right">${escapeHtml(pSummary)} / ${escapeHtml(lSummary)}</span></div>
                                 <div class="flex justify-between gap-2"><span class="text-slate-500 dark:text-slate-400">通訊模式</span><span id="ftIosIpcModeChip" class="font-extrabold ${_iosLiveSubtitleState.ipcMode === 'app_group' ? 'text-emerald-600 dark:text-emerald-400' : 'text-sky-600 dark:text-sky-400'}">${_iosLiveSubtitleState.ipcMode === 'app_group' ? 'App Group 共享通道（正式模式）' : `本機直連模式（側載免 App Group${_iosLiveSubtitleState.loopbackPort ? `:${_iosLiveSubtitleState.loopbackPort}` : ''}）`}</span></div>
@@ -7375,39 +7279,6 @@
             };
         }
 
-        modal.querySelectorAll('input[name="ftIosCloudKeyMode"]').forEach(rad => {
-            rad.onchange = () => {
-                const nextMode = rad.value === 'personal' ? 'personal' : 'shared';
-                iosScreenConfig.cloudKeyMode = nextMode;
-                if (nextMode === 'shared') {
-                    iosScreenConfig.customApiKey = '';
-                    try {
-                        localStorage.setItem('lzhcard_api_mode', 'shared');
-                        localStorage.removeItem('lzhcard_groq_key_v1');
-                        localStorage.removeItem('flashcard_gemini_key_v1');
-                    } catch (e) {}
-                } else {
-                    try { localStorage.setItem('lzhcard_api_mode', 'personal'); } catch (e) {}
-                }
-                persistIosScreenConfig();
-                if (typeof global.updateSettingsApiModeBadge === 'function') {
-                    global.updateSettingsApiModeBadge(nextMode);
-                }
-                if (typeof global.syncSettingsUI === 'function') {
-                    global.syncSettingsUI();
-                }
-                renderIosScreenTranslateModal();
-            };
-        });
-
-        const keyInp = modal.querySelector('#ftIosCustomApiKeyInput');
-        if (keyInp) {
-            keyInp.oninput = () => {
-                iosScreenConfig.customApiKey = keyInp.value.trim();
-                persistIosScreenConfig();
-            };
-        }
-
         const dlBtn = modal.querySelector('#ftIosDownloadPackBtn');
         if (dlBtn) {
             dlBtn.onclick = async () => {
@@ -7427,9 +7298,9 @@
                     });
                     if (res && res.fallbackSuggested) {
                         iosScreenConfig.engine = 'cloud_api';
-                        iosFallbackNotice = '偵測到您的 iOS 版本低於 18.0，不支援 Apple 系統離線翻譯 Session，已自動切換為雲端／API Key 翻譯模式。';
+                        iosFallbackNotice = '偵測到您的 iOS 版本低於 18.0，不支援 Apple 系統離線翻譯 Session，已自動切換為雲端 AI 翻譯模式。';
                         persistIosScreenConfig();
-                        toast('已自動切換為雲端／API Key 翻譯模式', 'info');
+                        toast('已自動切換為雲端 AI 翻譯模式', 'info');
                     } else {
                         iosOfflinePackReady = true;
                         toast((res && res.message) || 'Apple 離線語言包已準備完成', 'success');
@@ -7700,7 +7571,7 @@
                 if (iosScreenCapabilities) {
                     if (iosScreenCapabilities.supportsOfflineTranslation === false) {
                         iosScreenConfig.engine = 'cloud_api';
-                        iosFallbackNotice = '您的裝置系統低於 iOS 18.0，已自動切換為雲端 AI／自訂 API Key 翻譯模式。';
+                        iosFallbackNotice = '您的裝置系統低於 iOS 18.0，已自動切換為雲端 AI 翻譯模式。';
                         persistIosScreenConfig();
                     }
                     if (iosScreenCapabilities.ipcMode) {
@@ -7894,7 +7765,6 @@
         closeIosScreenTranslateModal,
         stopIosPip,
         launchIosScreenTranslateQuick,
-        syncApiModeFromGlobal,
         openVisualRoiCropper,
         isIosScreenTranslatePlatform,
         isIosPipActive: () => iosPipActive,

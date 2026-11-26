@@ -27,7 +27,10 @@
     let duelDeferredFinishRoom = null;
     let duelTimeline = [];
     let duelStartMs = 0;
+    let duelWaitingTimer = null;
     const settledDuelCodes = new Set();
+    const settledDuelMeta = new Map();
+    const DUEL_OPPONENT_IDLE_TIMEOUT_MS = 30000;
 
     let activeQueueRef = null;
     let activeQueueListener = null;
@@ -69,6 +72,39 @@
             if (pts >= RANK_TIERS[i].min) return RANK_TIERS[i].name;
         }
         return '青銅 III';
+    }
+
+    function getRankTierProgressInfo(rp) {
+        const pts = Math.max(0, Number(rp) || 0);
+        let curIdx = RANK_TIERS.length - 1;
+        for (let i = 0; i < RANK_TIERS.length; i++) {
+            if (pts >= RANK_TIERS[i].min) {
+                curIdx = i;
+                break;
+            }
+        }
+        const curTier = RANK_TIERS[curIdx];
+        const nextTier = curIdx > 0 ? RANK_TIERS[curIdx - 1] : null;
+        if (!nextTier) {
+            return {
+                currentTier: curTier.name,
+                nextTier: null,
+                currentMin: curTier.min,
+                nextMin: curTier.min,
+                remainingRp: 0,
+                progressPct: 100
+            };
+        }
+        const span = Math.max(1, nextTier.min - curTier.min);
+        const gained = Math.max(0, pts - curTier.min);
+        return {
+            currentTier: curTier.name,
+            nextTier: nextTier.name,
+            currentMin: curTier.min,
+            nextMin: nextTier.min,
+            remainingRp: Math.max(0, nextTier.min - pts),
+            progressPct: Math.min(100, Math.max(0, Math.round((gained / span) * 100)))
+        };
     }
 
     function sanitizeMPUrl(rawUrl, fallbackUrl = '') {
@@ -245,7 +281,15 @@
         activeOnDisconnectRefs.clear();
     }
 
+    function clearDuelWaitingTimer() {
+        if (duelWaitingTimer) {
+            clearInterval(duelWaitingTimer);
+            duelWaitingTimer = null;
+        }
+    }
+
     function detachActiveDuelListener() {
+        clearDuelWaitingTimer();
         if (activeDuelRef && activeDuelListener) {
             try { activeDuelRef.off('value', activeDuelListener); } catch (e) {}
         }
@@ -333,6 +377,12 @@
     }
 
     function closeModal() {
+        const playingCode = activeDuelCode;
+        const playingRoom = activeDuelData;
+        const me = getCurrentPlayerIdentity();
+        if (playingCode && playingRoom && playingRoom.status === 'playing' && playingRoom.guestUid && me) {
+            forfeitActiveDuelRoom(playingCode, me, { settleSelf: true }).catch(() => {});
+        }
         cancelMatchmaking(true);
         cleanupMultiplayerListeners();
         activeDuelCode = null;
@@ -357,9 +407,12 @@
         const body = getModalBody();
         if (!body) return;
 
+        if (typeof global.ensureUserProfileDefaults === 'function') {
+            global.ensureUserProfileDefaults();
+        }
         const identity = getCurrentPlayerIdentity();
         const prog = (global.userData && global.userData.progression) || {};
-        const rp = Number(prog.rankPoints) || 0;
+        const rp = Math.max(0, Number(prog.rankPoints) || 0);
         const tier = prog.rankTier || getRankTierFromPoints(rp);
         const wins = Number(prog.duelWins) || 0;
         const total = Number(prog.duelTotal) || 0;
@@ -820,6 +873,12 @@
             return;
         }
 
+        if (room.status === 'finished') {
+            clearDuelWaitingTimer();
+        }
+
+        const settledMeta = room.status === 'finished' ? settleFinishedDuel(room, me) : null;
+
         if (room.status === 'finished' && hold) {
             duelDeferredFinishRoom = room;
             const heldQ = questions[hold.qIdx] || null;
@@ -869,15 +928,36 @@
         }
 
         if (room.status === 'finished') {
-            settleFinishedDuel(room, me);
             const iWon = room.winnerUid === me.uid;
             const isDraw = room.winnerUid === 'DRAW';
+            const fallbackRp = Math.max(0, Number(global.userData?.progression?.rankPoints) || 0);
+            const rpMeta = settledMeta || {
+                rpDelta: isDraw ? 5 : (iWon ? 25 : -10),
+                prevRp: fallbackRp,
+                nextRp: fallbackRp,
+                prevTier: getRankTierFromPoints(fallbackRp),
+                nextTier: (global.userData?.progression?.rankTier) || getRankTierFromPoints(fallbackRp),
+                promoted: false
+            };
+            const actualDelta = rpMeta.nextRp - rpMeta.prevRp;
+            const deltaText = actualDelta > 0 ? `+${actualDelta} RP` : (actualDelta < 0 ? `${actualDelta} RP` : (rpMeta.rpDelta < 0 ? '0 RP（保底）' : `+${rpMeta.rpDelta} RP`));
+            const deltaBadgeCls = actualDelta > 0
+                ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-300 border-emerald-500/30'
+                : (actualDelta < 0
+                    ? 'bg-rose-500/15 text-rose-600 dark:text-rose-300 border-rose-500/30'
+                    : 'bg-sky-500/15 text-sky-600 dark:text-sky-300 border-sky-500/30');
+            const progressInfo = getRankTierProgressInfo(rpMeta.nextRp);
+            const forfeitNotice = room.forfeitedBy
+                ? (room.forfeitedBy === me.uid ? '你已提前離開此場對戰' : '對手中途離線／逾時未回應，系統已直接判定你獲勝！')
+                : '';
+
             body.innerHTML = `
                 <div class="space-y-4 text-center py-2">
                     <div class="text-4xl">${isDraw ? '🤝' : (iWon ? '🏆' : '💪')}</div>
                     <h4 class="text-xl font-black text-slate-900 dark:text-white">
                         ${isDraw ? '勢均力敵・平手收場！' : (iWon ? '勝出！拔河霸主就是你！' : '惜敗！下次討回來！')}
                     </h4>
+                    ${forfeitNotice ? `<div class="text-xs font-bold text-amber-600 dark:text-amber-400">${escapeMP(forfeitNotice)}</div>` : ''}
                     <div class="grid grid-cols-2 gap-3 p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700">
                         <div>
                             <div class="text-[11px] font-bold text-brand-500 inline-flex items-center justify-center gap-1 flex-wrap">你 (${escapeMP(me.name)}) ${myBadgeHtml}</div>
@@ -886,6 +966,28 @@
                         <div>
                             <div class="text-[11px] font-bold text-rose-500 inline-flex items-center justify-center gap-1 flex-wrap">${escapeMP(oppName)} ${oppBadgeHtml}</div>
                             <div class="text-2xl font-black text-slate-900 dark:text-white">${oppScore} 分</div>
+                        </div>
+                    </div>
+                    <!-- 排位積分結算與段位進度條 -->
+                    <div class="p-3.5 rounded-2xl bg-gradient-to-br from-slate-900 to-indigo-950 text-white text-left space-y-2 shadow-sm">
+                        ${rpMeta.promoted ? `
+                            <div class="px-2.5 py-1 rounded-xl bg-amber-400/20 border border-amber-300/40 text-amber-200 text-xs font-extrabold text-center">
+                                🎉 恭喜段位晉升！${escapeMP(rpMeta.prevTier)} → ${escapeMP(rpMeta.nextTier)}
+                            </div>
+                        ` : ''}
+                        <div class="flex items-center justify-between gap-2 flex-wrap">
+                            <div class="flex items-center gap-2">
+                                <span class="text-xs font-extrabold text-amber-300">🏆 ${escapeMP(rpMeta.nextTier)}</span>
+                                <span class="text-xs font-mono text-sky-200">${rpMeta.prevRp} → <strong class="text-white">${rpMeta.nextRp} RP</strong></span>
+                            </div>
+                            <span class="px-2 py-0.5 rounded-full text-[11px] font-extrabold border ${deltaBadgeCls}">${escapeMP(deltaText)}</span>
+                        </div>
+                        <div class="w-full h-2 rounded-full bg-slate-800 overflow-hidden">
+                            <div class="h-full bg-gradient-to-r from-amber-400 to-emerald-400 transition-all duration-500" style="width:${progressInfo.progressPct}%"></div>
+                        </div>
+                        <div class="text-[11px] text-slate-300 flex items-center justify-between">
+                            <span>${progressInfo.nextTier ? `距離「${escapeMP(progressInfo.nextTier)}」還差 ${progressInfo.remainingRp} RP` : '已達最高傳說宗師段位！'}</span>
+                            <span class="font-mono">${progressInfo.nextTier ? `${rpMeta.nextRp} / ${progressInfo.nextMin} RP` : `${rpMeta.nextRp} RP`}</span>
                         </div>
                     </div>
                     <div class="flex flex-wrap justify-center gap-2">
@@ -907,6 +1009,14 @@
         const myTugPct = isHost ? tug : (100 - tug);
         const activeHold = (hold && hold.qIdx === myIndex) ? hold : null;
 
+        if (!waitingForOpponentFinish) {
+            clearDuelWaitingTimer();
+        }
+        const lastActivityMs = Number(room.updatedAt || room.startedAt || room.createdAt) || Date.now();
+        const idleElapsedMs = Math.max(0, Date.now() - lastActivityMs);
+        const canClaimTimeout = waitingForOpponentFinish && idleElapsedMs >= DUEL_OPPONENT_IDLE_TIMEOUT_MS;
+        const waitSecRemain = Math.max(0, Math.ceil((DUEL_OPPONENT_IDLE_TIMEOUT_MS - idleElapsedMs) / 1000));
+
         body.innerHTML = `
             <div class="space-y-4">
                 <div class="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 space-y-2.5">
@@ -922,10 +1032,18 @@
                 </div>
 
                 ${waitingForOpponentFinish ? `
-                    <div class="py-8 text-center space-y-2">
+                    <div class="py-6 text-center space-y-3">
                         <i class="fa-solid fa-hourglass-half text-3xl text-brand-500 animate-spin"></i>
-                        <div class="text-sm font-extrabold text-slate-800 dark:text-white">你已完成全部 10 題！</div>
+                        <div class="text-sm font-extrabold text-slate-800 dark:text-white">你已完成全部 ${questions.length} 題！</div>
                         <div class="text-xs text-slate-400">正在等待對手作答完畢結算...</div>
+                        <div class="pt-2 flex flex-wrap justify-center gap-2">
+                            <button id="duelWaitTimeoutBtn" type="button" ${canClaimTimeout ? '' : 'disabled'} onclick="MultiplayerEngine.claimOpponentTimeoutWin()" class="px-4 py-2 rounded-xl text-xs font-extrabold transition ${canClaimTimeout ? 'bg-amber-500 hover:bg-amber-600 text-white cursor-pointer shadow-xs' : 'bg-slate-100 dark:bg-slate-800 text-slate-400 cursor-not-allowed'}">
+                                ${canClaimTimeout ? '對手久未回應・直接結算戰果' : `若對手離線，${waitSecRemain} 秒後可直接結算`}
+                            </button>
+                            <button type="button" onclick="MultiplayerEngine.leaveDuelRoom()" class="px-4 py-2 rounded-xl bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 text-slate-600 dark:text-slate-300 text-xs font-bold cursor-pointer">
+                                放棄並離開
+                            </button>
+                        </div>
                     </div>
                 ` : `
                     <div class="p-4 rounded-2xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 space-y-3">
@@ -968,10 +1086,35 @@
                                 <i class="fa-solid fa-arrow-right"></i>
                             </button>
                         ` : ''}
+                        <div class="pt-1 flex justify-end">
+                            <button type="button" onclick="MultiplayerEngine.leaveDuelRoom()" class="text-[11px] font-bold text-slate-400 hover:text-rose-500 transition cursor-pointer">
+                                認輸並離開對戰
+                            </button>
+                        </div>
                     </div>
                 `}
             </div>
         `;
+
+        if (waitingForOpponentFinish && !canClaimTimeout && !duelWaitingTimer) {
+            duelWaitingTimer = setInterval(() => {
+                const btn = document.getElementById('duelWaitTimeoutBtn');
+                if (!btn || !activeDuelData || activeDuelData.status !== 'playing') {
+                    clearDuelWaitingTimer();
+                    return;
+                }
+                const lastAct = Number(activeDuelData.updatedAt || activeDuelData.startedAt || activeDuelData.createdAt) || Date.now();
+                const remain = Math.max(0, Math.ceil((DUEL_OPPONENT_IDLE_TIMEOUT_MS - (Date.now() - lastAct)) / 1000));
+                if (remain <= 0) {
+                    btn.disabled = false;
+                    btn.className = 'px-4 py-2 rounded-xl text-xs font-extrabold transition bg-amber-500 hover:bg-amber-600 text-white cursor-pointer shadow-xs';
+                    btn.textContent = '對手久未回應・直接結算戰果';
+                    clearDuelWaitingTimer();
+                } else {
+                    btn.textContent = `若對手離線，${remain} 秒後可直接結算`;
+                }
+            }, 1000);
+        }
     }
 
     async function answerDuelQuestion(optionIdx) {
@@ -987,11 +1130,7 @@
 
         duelAnswerLocked = true;
         const isCorrect = optionIdx === q.correctIndex;
-        if (isCorrect) {
-            setTimeout(() => {
-                if (!duelFeedbackHold) duelAnswerLocked = false;
-            }, 120);
-        } else {
+        if (!isCorrect) {
             duelFeedbackHold = {
                 roomCode: activeDuelCode,
                 qIdx: myIndex,
@@ -1017,49 +1156,67 @@
 
         const totalQ = questions.length || 10;
         const dbRef = getActiveRtdb();
-        if (!dbRef) return;
+        if (!dbRef) {
+            duelAnswerLocked = false;
+            return;
+        }
         const ref = dbRef.ref(`duels/${activeDuelCode}`);
-        await ref.transaction((room) => {
-            if (!room || room.status !== 'playing') return room;
-            const hostTurn = room.hostUid === me.uid;
-            const curIdx = hostTurn ? (Number(room.hostIndex) || 0) : (Number(room.guestIndex) || 0);
-            if (curIdx >= totalQ) return room;
+        try {
+            const minDelay = isCorrect ? new Promise(r => setTimeout(r, 120)) : Promise.resolve();
+            const txPromise = ref.transaction((room) => {
+                if (!room || room.status !== 'playing') return undefined;
+                const hostTurn = room.hostUid === me.uid;
+                const curIdx = hostTurn ? (Number(room.hostIndex) || 0) : (Number(room.guestIndex) || 0);
+                if (curIdx >= totalQ) return undefined;
 
-            const deltaTug = isCorrect ? (hostTurn ? 10 : -10) : (hostTurn ? -6 : 6);
-            const nextTug = Math.max(0, Math.min(100, (Number(room.tugPosition != null ? room.tugPosition : 50)) + deltaTug));
-            room.tugPosition = nextTug;
+                const nowTs = Date.now();
+                const deltaTug = isCorrect ? (hostTurn ? 10 : -10) : (hostTurn ? -6 : 6);
+                const nextTug = Math.max(0, Math.min(100, (Number(room.tugPosition != null ? room.tugPosition : 50)) + deltaTug));
+                room.tugPosition = nextTug;
+                room.updatedAt = nowTs;
 
-            if (isCorrect) {
-                if (hostTurn) {
-                    room.hostIndex = curIdx + 1;
-                    room.hostScore = (Number(room.hostScore) || 0) + 10;
-                } else {
-                    room.guestIndex = curIdx + 1;
-                    room.guestScore = (Number(room.guestScore) || 0) + 10;
+                if (isCorrect) {
+                    if (hostTurn) {
+                        room.hostIndex = curIdx + 1;
+                        room.hostScore = (Number(room.hostScore) || 0) + 10;
+                    } else {
+                        room.guestIndex = curIdx + 1;
+                        room.guestScore = (Number(room.guestScore) || 0) + 10;
+                    }
                 }
-            }
 
-            if (nextTug >= 100) {
-                room.status = 'finished';
-                room.winnerUid = room.hostUid;
-                room.finishedAt = Date.now();
-            } else if (nextTug <= 0) {
-                room.status = 'finished';
-                room.winnerUid = room.guestUid;
-                room.finishedAt = Date.now();
-            } else if ((Number(room.hostIndex) || 0) >= totalQ && (Number(room.guestIndex) || 0) >= totalQ) {
-                room.status = 'finished';
-                const hs = Number(room.hostScore) || 0;
-                const gs = Number(room.guestScore) || 0;
-                if (hs > gs) room.winnerUid = room.hostUid;
-                else if (gs > hs) room.winnerUid = room.guestUid;
-                else if (nextTug > 50) room.winnerUid = room.hostUid;
-                else if (nextTug < 50) room.winnerUid = room.guestUid;
-                else room.winnerUid = 'DRAW';
-                room.finishedAt = Date.now();
+                if (nextTug >= 100) {
+                    room.status = 'finished';
+                    room.winnerUid = room.hostUid;
+                    room.finishedAt = nowTs;
+                } else if (nextTug <= 0) {
+                    room.status = 'finished';
+                    room.winnerUid = room.guestUid;
+                    room.finishedAt = nowTs;
+                } else if ((Number(room.hostIndex) || 0) >= totalQ && (Number(room.guestIndex) || 0) >= totalQ) {
+                    room.status = 'finished';
+                    const hs = Number(room.hostScore) || 0;
+                    const gs = Number(room.guestScore) || 0;
+                    if (hs > gs) room.winnerUid = room.hostUid;
+                    else if (gs > hs) room.winnerUid = room.guestUid;
+                    else if (nextTug > 50) room.winnerUid = room.hostUid;
+                    else if (nextTug < 50) room.winnerUid = room.guestUid;
+                    else room.winnerUid = 'DRAW';
+                    room.finishedAt = nowTs;
+                }
+                return room;
+            }, undefined, false);
+            await Promise.all([txPromise, minDelay]);
+        } catch (err) {
+            console.warn('1v1 作答同步失敗:', err);
+            if (typeof global.showToast === 'function') {
+                global.showToast('作答同步失敗，請重試一次', 'warning');
             }
-            return room;
-        });
+        } finally {
+            if (isCorrect && !duelFeedbackHold) {
+                duelAnswerLocked = false;
+            }
+        }
 
         if (!isCorrect && activeDuelData) {
             renderDuelRoomView(activeDuelData);
@@ -1094,36 +1251,45 @@
         const totalQ = questions.length || 10;
         const ref = dbRef.ref(`duels/${activeDuelCode}`);
 
-        await ref.transaction((room) => {
-            if (!room || room.status !== 'playing') return room;
-            const hostTurn = room.hostUid === me.uid;
-            const curIdx = hostTurn ? (Number(room.hostIndex) || 0) : (Number(room.guestIndex) || 0);
-            if (curIdx !== hold.qIdx) return room;
+        try {
+            await ref.transaction((room) => {
+                if (!room || room.status !== 'playing') return undefined;
+                const hostTurn = room.hostUid === me.uid;
+                const curIdx = hostTurn ? (Number(room.hostIndex) || 0) : (Number(room.guestIndex) || 0);
+                if (curIdx !== hold.qIdx) return undefined;
 
-            if (hostTurn) {
-                room.hostIndex = curIdx + 1;
-            } else {
-                room.guestIndex = curIdx + 1;
-            }
+                const nowTs = Date.now();
+                room.updatedAt = nowTs;
+                if (hostTurn) {
+                    room.hostIndex = curIdx + 1;
+                } else {
+                    room.guestIndex = curIdx + 1;
+                }
 
-            if ((Number(room.hostIndex) || 0) >= totalQ && (Number(room.guestIndex) || 0) >= totalQ) {
-                room.status = 'finished';
-                const hs = Number(room.hostScore) || 0;
-                const gs = Number(room.guestScore) || 0;
-                const tugVal = Number(room.tugPosition != null ? room.tugPosition : 50);
-                if (hs > gs) room.winnerUid = room.hostUid;
-                else if (gs > hs) room.winnerUid = room.guestUid;
-                else if (tugVal > 50) room.winnerUid = room.hostUid;
-                else if (tugVal < 50) room.winnerUid = room.guestUid;
-                else room.winnerUid = 'DRAW';
-                room.finishedAt = Date.now();
-            }
-            return room;
-        });
+                if ((Number(room.hostIndex) || 0) >= totalQ && (Number(room.guestIndex) || 0) >= totalQ) {
+                    room.status = 'finished';
+                    const hs = Number(room.hostScore) || 0;
+                    const gs = Number(room.guestScore) || 0;
+                    const tugVal = Number(room.tugPosition != null ? room.tugPosition : 50);
+                    if (hs > gs) room.winnerUid = room.hostUid;
+                    else if (gs > hs) room.winnerUid = room.guestUid;
+                    else if (tugVal > 50) room.winnerUid = room.hostUid;
+                    else if (tugVal < 50) room.winnerUid = room.guestUid;
+                    else room.winnerUid = 'DRAW';
+                    room.finishedAt = nowTs;
+                }
+                return room;
+            }, undefined, false);
+        } catch (err) {
+            console.warn('1v1 切換下一題失敗:', err);
+        }
     }
 
     function settleFinishedDuel(room, me) {
-        if (!room || !room.roomCode || settledDuelCodes.has(room.roomCode)) return;
+        if (!room || !room.roomCode || !me || !me.uid) return null;
+        if (settledDuelCodes.has(room.roomCode)) {
+            return settledDuelMeta.get(room.roomCode) || null;
+        }
         settledDuelCodes.add(room.roomCode);
 
         const isHost = room.hostUid === me.uid;
@@ -1131,23 +1297,57 @@
         const iWon = room.winnerUid === me.uid;
         const isDraw = room.winnerUid === 'DRAW';
 
-        if (global.userData) {
-            if (!global.userData.progression) global.userData.progression = {};
-            const p = global.userData.progression;
-            const rpDelta = isDraw ? 5 : (iWon ? 25 : -10);
-            p.rankPoints = Math.max(0, (Number(p.rankPoints) || 0) + rpDelta);
-            p.rankTier = getRankTierFromPoints(p.rankPoints);
-            p.duelTotal = (Number(p.duelTotal) || 0) + 1;
-            if (iWon) p.duelWins = (Number(p.duelWins) || 0) + 1;
+        const u = (typeof global.ensureUserProfileDefaults === 'function')
+            ? global.ensureUserProfileDefaults()
+            : (global.userData || (global.userData = {}));
+        if (!u.progression || typeof u.progression !== 'object') {
+            u.progression = {};
         }
+        const p = u.progression;
+        const prevRp = Math.max(0, Number(p.rankPoints) || 0);
+        const prevTier = p.rankTier || getRankTierFromPoints(prevRp);
+        const rpDelta = isDraw ? 5 : (iWon ? 25 : -10);
+        const nextRp = Math.max(0, prevRp + rpDelta);
+        const nextTier = getRankTierFromPoints(nextRp);
+
+        p.rankPoints = nextRp;
+        p.rankTier = nextTier;
+        p.duelTotal = (Number(p.duelTotal) || 0) + 1;
+        if (iWon) p.duelWins = (Number(p.duelWins) || 0) + 1;
+
+        const prevIdx = RANK_TIERS.findIndex(t => t.name === prevTier);
+        const nextIdx = RANK_TIERS.findIndex(t => t.name === nextTier);
+        const meta = {
+            rpDelta,
+            prevRp,
+            nextRp,
+            prevTier,
+            nextTier,
+            promoted: nextIdx >= 0 && (prevIdx < 0 || nextIdx < prevIdx)
+        };
+        settledDuelMeta.set(room.roomCode, meta);
 
         if (global.GameEngine && typeof global.GameEngine.awardProgression === 'function') {
             global.GameEngine.awardProgression({ xp: iWon ? 45 : 20 });
-        } else if (typeof global.saveUserData === 'function') {
-            global.saveUserData();
         }
-        if (typeof global.renderProfileSection === 'function' && global.currentTab === 'profile') {
+        if (typeof global.invalidateLeaderboardCache === 'function') {
+            global.invalidateLeaderboardCache();
+        }
+        if (global.GameEngine && typeof global.GameEngine.renderHomePortal === 'function') {
+            global.GameEngine.renderHomePortal();
+        }
+        if (typeof global.renderProfileSection === 'function' && (global.currentTab === 'profile' || document.getElementById('sec-profile'))) {
             global.renderProfileSection();
+        }
+        if (typeof global.saveUserData === 'function') {
+            Promise.resolve(global.saveUserData()).catch(() => {});
+        }
+        if (typeof global.syncMyPublicProfile === 'function') {
+            Promise.resolve(global.syncMyPublicProfile(true)).catch(() => {});
+        }
+
+        if (meta.promoted && typeof global.showToast === 'function') {
+            global.showToast(`🏆 恭喜晉升段位「${nextTier}」！(${nextRp} RP)`, 'success');
         }
 
         saveGhostSnapshot({
@@ -1162,6 +1362,74 @@
             timeline: duelTimeline,
             questions: room.questions || []
         });
+
+        return meta;
+    }
+
+    async function forfeitActiveDuelRoom(roomCode, me, options = {}) {
+        const code = String(roomCode || '').trim().toUpperCase();
+        const dbRef = getActiveRtdb();
+        if (!code || !me || !me.uid || !dbRef) return null;
+        try {
+            const ref = dbRef.ref(`duels/${code}`);
+            const txRes = await ref.transaction((room) => {
+                if (!room || room.status !== 'playing' || !room.hostUid || !room.guestUid) return undefined;
+                if (room.hostUid !== me.uid && room.guestUid !== me.uid) return undefined;
+                const oppUid = room.hostUid === me.uid ? room.guestUid : room.hostUid;
+                const nowTs = Date.now();
+                room.status = 'finished';
+                room.winnerUid = oppUid;
+                room.forfeitedBy = me.uid;
+                room.finishedAt = nowTs;
+                room.updatedAt = nowTs;
+                return room;
+            }, undefined, false);
+            const settledRoom = txRes && txRes.snapshot ? txRes.snapshot.val() : null;
+            if (options && options.settleSelf && settledRoom && settledRoom.status === 'finished') {
+                settleFinishedDuel(settledRoom, me);
+            }
+            return settledRoom;
+        } catch (err) {
+            console.warn('投降結算對戰失敗:', err);
+            return null;
+        }
+    }
+
+    async function claimOpponentTimeoutWin() {
+        if (!activeDuelCode || !activeDuelData) return false;
+        const me = getCurrentPlayerIdentity();
+        const dbRef = getActiveRtdb();
+        if (!me || !dbRef) return false;
+
+        const ref = dbRef.ref(`duels/${activeDuelCode}`);
+        try {
+            const txRes = await ref.transaction((room) => {
+                if (!room || room.status !== 'playing' || !room.hostUid || !room.guestUid) return undefined;
+                const isHost = room.hostUid === me.uid;
+                const totalQ = (Array.isArray(room.questions) ? room.questions.length : 10) || 10;
+                const myIdx = isHost ? (Number(room.hostIndex) || 0) : (Number(room.guestIndex) || 0);
+                const oppIdx = isHost ? (Number(room.guestIndex) || 0) : (Number(room.hostIndex) || 0);
+                const oppUid = isHost ? room.guestUid : room.hostUid;
+                const lastAct = Number(room.updatedAt || room.startedAt || room.createdAt) || 0;
+                if (myIdx < totalQ || oppIdx >= totalQ) return undefined;
+                if ((Date.now() - lastAct) < DUEL_OPPONENT_IDLE_TIMEOUT_MS) return undefined;
+
+                const nowTs = Date.now();
+                room.status = 'finished';
+                room.winnerUid = me.uid;
+                room.forfeitedBy = oppUid;
+                room.finishedAt = nowTs;
+                room.updatedAt = nowTs;
+                return room;
+            }, undefined, false);
+            return Boolean(txRes && txRes.committed);
+        } catch (err) {
+            console.warn('逾時結算對戰失敗:', err);
+            if (typeof global.showToast === 'function') {
+                global.showToast('結算失敗，請稍後再試', 'warning');
+            }
+            return false;
+        }
     }
 
     function renderDuelReport(roomCode) {
@@ -1182,14 +1450,17 @@
         });
     }
 
-    function leaveDuelRoom() {
+    async function leaveDuelRoom() {
         const roomRef = activeDuelRef;
         const roomData = activeDuelData;
+        const roomCode = activeDuelCode;
         const me = getCurrentPlayerIdentity();
         if (roomRef) {
             cancelOnDisconnectRef(roomRef);
             if (me && roomData && roomData.hostUid === me.uid && roomData.status === 'waiting') {
                 roomRef.remove().catch(() => {});
+            } else if (me && roomCode && roomData && roomData.status === 'playing' && roomData.guestUid) {
+                await forfeitActiveDuelRoom(roomCode, me, { settleSelf: true });
             }
         }
         detachActiveDuelListener();
@@ -2186,6 +2457,7 @@
         copyDuelInviteLink,
         answerDuelQuestion,
         confirmDuelWrongNext,
+        claimOpponentTimeoutWin,
         renderDuelReport,
         leaveDuelRoom,
         startMatchmaking,

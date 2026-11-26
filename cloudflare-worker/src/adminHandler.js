@@ -329,7 +329,7 @@ export async function handleAdminUpdatePlayer(request, env) {
       patchPayload.membership = {
         tier: validTier,
         tierPriceNtd: Number(prevMem.tierPriceNtd) || 0,
-        billingCycle: days >= 365 ? "annual" : "monthly",
+        billingCycle: "monthly",
         startedAt: nowMs,
         expiresAt: nowMs + days * DAY_MS,
         totalDonatedNtd: Number(prevMem.totalDonatedNtd) || 0,
