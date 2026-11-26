@@ -2248,11 +2248,8 @@ public class FloatingOverlayService extends Service {
 
         bgExecutor.execute(() -> {
             String result = "";
-            if (isPaidOrPersonalFastRefineEligible()) {
-                result = callDirectByokFastRefineSync(text, "", targetLangName, null);
-                if (TextUtils.isEmpty(result)) {
-                    result = callWorkerFastRefineSync(text, "", srcLang, nativeLang, targetLangName, new ArrayList<>());
-                }
+            if (isPaidFastRefineEligible()) {
+                result = callWorkerFastRefineSync(text, "", srcLang, nativeLang, targetLangName, new ArrayList<>());
             }
             if (TextUtils.isEmpty(result)) {
                 result = callGoogleTranslatePublicSync(text, srcLang, nativeLang);
