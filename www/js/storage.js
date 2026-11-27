@@ -318,6 +318,32 @@ const StorageEngine = {
   _reconnectTimer: null,
   _saveQueue: Promise.resolve(),
 
+  withTimeout(promise, ms = 10000, label = 'Firestore') {
+    if (!promise || typeof promise.then !== 'function') return Promise.resolve(promise);
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        reject(new Error(`${label} timeout (${ms}ms)`));
+      }, Math.max(500, Number(ms) || 10000));
+      Promise.resolve(promise).then(
+        (val) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          resolve(val);
+        },
+        (err) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          reject(err);
+        }
+      );
+    });
+  },
+
   setWordListInPlace(nextList) {
     const safeList = Array.isArray(nextList) ? nextList : [];
     if (typeof wordList !== 'undefined' && Array.isArray(wordList)) {
@@ -1606,7 +1632,7 @@ const StorageEngine = {
     if (!uid || typeof db === 'undefined') return null;
     this.refreshCachedIdToken(uid);
     const docRef = db.collection('users').doc(uid);
-    const doc = await docRef.get();
+    const doc = await this.withTimeout(docRef.get(), 10000, 'userDocGet');
     if (!doc.exists) {
       return { exists: false, data: null, remoteDecks: [] };
     }
@@ -1644,7 +1670,7 @@ const StorageEngine = {
 
       if (decksToFetch.length > 0) {
         if (decksToFetch.length > 6 && decksToFetch.length === manifestKeys.length) {
-          const chunksSnap = await docRef.collection('deckChunks').get();
+          const chunksSnap = await this.withTimeout(docRef.collection('deckChunks').get(), 12000, 'deckChunksGet');
           chunksSnap.docs.forEach(cd => {
             const cData = cd.data() || {};
             if (Array.isArray(cData.decks)) {
@@ -1653,7 +1679,7 @@ const StorageEngine = {
           });
         } else {
           const chunkDocs = await Promise.all(
-            decksToFetch.map(deckId => docRef.collection('deckChunks').doc(deckId).get().catch(() => null))
+            decksToFetch.map(deckId => this.withTimeout(docRef.collection('deckChunks').doc(deckId).get(), 10000, 'deckChunkDocGet').catch(() => null))
           );
           chunkDocs.forEach((docSnap, idx) => {
             if (docSnap && docSnap.exists) {
@@ -1684,7 +1710,7 @@ const StorageEngine = {
       });
     } else if (typeof data.deckChunkCount === 'number' && data.deckChunkCount > 0) {
       this._remoteChunkModeByUid[uid] = 'legacy_chunk';
-      const chunksSnap = await docRef.collection('deckChunks').get();
+      const chunksSnap = await this.withTimeout(docRef.collection('deckChunks').get(), 12000, 'legacyDeckChunksGet');
       const chunkDocs = chunksSnap.docs
         .map(d => ({ id: d.id, ...d.data() }))
         .sort((a, b) => {

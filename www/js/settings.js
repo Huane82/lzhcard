@@ -881,31 +881,42 @@ function toggleAuthButtons() {
     }
 }
 
-function handleWelcomeGoogleLogin() {
+async function handleWelcomeGoogleLogin() {
     const isChecked = document.getElementById('tosCheckbox')?.checked;
     if (!isChecked) {
         if (typeof showToast === 'function') showToast('請先勾選同意服務與隱私條款！', 'warning');
         return;
     }
     localStorage.setItem('lzhcard_tos_accepted', 'true');
+    localStorage.removeItem('lzhcard_guest_mode');
     if (typeof loginWithGoogle === 'function') {
-        loginWithGoogle();
+        const user = await loginWithGoogle();
+        const activeUser = user || (typeof firebase !== 'undefined' && firebase.auth && firebase.auth().currentUser);
+        if (activeUser && typeof closeWelcomeModal === 'function') {
+            closeWelcomeModal();
+        }
     }
 }
 
-function handleWelcomeAppleLogin() {
+async function handleWelcomeAppleLogin() {
     const isChecked = document.getElementById('tosCheckbox')?.checked;
     if (!isChecked) {
         if (typeof showToast === 'function') showToast('請先勾選同意服務與隱私條款！', 'warning');
         return;
     }
     localStorage.setItem('lzhcard_tos_accepted', 'true');
+    localStorage.removeItem('lzhcard_guest_mode');
     if (typeof loginWithApple === 'function') {
-        loginWithApple();
+        const user = await loginWithApple();
+        const activeUser = user || (typeof firebase !== 'undefined' && firebase.auth && firebase.auth().currentUser);
+        if (activeUser && typeof closeWelcomeModal === 'function') {
+            closeWelcomeModal();
+        }
     }
 }
 
 if (typeof window !== 'undefined') {
+    window.handleWelcomeGoogleLogin = handleWelcomeGoogleLogin;
     window.handleWelcomeAppleLogin = handleWelcomeAppleLogin;
 }
 

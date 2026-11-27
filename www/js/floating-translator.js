@@ -7775,6 +7775,7 @@
         copyPhotoArticleTranslation,
         close: collapsePanel,
         collapse: collapsePanel,
+        collapsePanel: collapsePanel,
         toggle: togglePanel,
         setEnabled: setFeatureEnabled,
         isEnabled: isFeatureEnabled,

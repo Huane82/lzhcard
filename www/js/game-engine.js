@@ -23,7 +23,11 @@
         { word: 'pragmatic', meaning: '務實的；講求實效的', pos: 'adj.', lang: 'en' },
         { word: 'ambiguous', meaning: '模稜兩可的；含糊不清的', pos: 'adj.', lang: 'en' },
         { word: 'perseverance', meaning: '毅力；堅持不懈', pos: 'n.', lang: 'en' },
-        { word: 'meticulous', meaning: '一絲不苟的；細心的', pos: 'adj.', lang: 'en' }
+        { word: 'meticulous', meaning: '一絲不苟的；細心的', pos: 'adj.', lang: 'en' },
+        { word: 'coherent', meaning: '連貫的；有條理的', pos: 'adj.', lang: 'en' },
+        { word: 'abundant', meaning: '豐富的；充裕的', pos: 'adj.', lang: 'en' },
+        { word: 'versatile', meaning: '多才多藝的；多用途的', pos: 'adj.', lang: 'en' },
+        { word: 'inevitable', meaning: '不可避免的；必然發生的', pos: 'adj.', lang: 'en' }
     ];
     const FALLBACK_JA_ARCADE_WORDS = [
         { word: '約束', meaning: '約定；承諾', pos: '名詞', lang: 'ja' },
@@ -31,8 +35,34 @@
         { word: '経験', meaning: '經驗；經歷', pos: '名詞', lang: 'ja' },
         { word: '準備', meaning: '準備；預備', pos: '名詞', lang: 'ja' },
         { word: '安全', meaning: '安全；平安', pos: '形容動詞', lang: 'ja' },
-        { word: '自由', meaning: '自由；隨意', pos: '形容動詞', lang: 'ja' }
+        { word: '自由', meaning: '自由；隨意', pos: '形容動詞', lang: 'ja' },
+        { word: '感謝', meaning: '感謝；感激', pos: '名詞', lang: 'ja' },
+        { word: '発見', meaning: '發現；發覺', pos: '名詞', lang: 'ja' },
+        { word: '練習', meaning: '練習；訓練', pos: '名詞', lang: 'ja' },
+        { word: '確認', meaning: '確認；核實', pos: '名詞', lang: 'ja' },
+        { word: '応援', meaning: '聲援；支持', pos: '名詞', lang: 'ja' },
+        { word: '成長', meaning: '成長；長大', pos: '名詞', lang: 'ja' }
     ];
+    const FALLBACK_ZH_ARCADE_WORDS = [
+        { word: '豁然開朗', meaning: '突然明白或開闊', pos: '成語', lang: 'zh-TW' },
+        { word: '循序漸進', meaning: '依照順序逐步推進', pos: '成語', lang: 'zh-TW' },
+        { word: '精益求精', meaning: '好了還求更好', pos: '成語', lang: 'zh-TW' },
+        { word: '舉一反三', meaning: '從一件事推知多件事', pos: '成語', lang: 'zh-TW' },
+        { word: '實事求是', meaning: '憑實際狀況探求真相', pos: '成語', lang: 'zh-TW' },
+        { word: '切磋琢磨', meaning: '互相研究討論以求進步', pos: '成語', lang: 'zh-TW' },
+        { word: '名副其實', meaning: '名聲與實際相符合', pos: '成語', lang: 'zh-TW' },
+        { word: '不恥下問', meaning: '不以向地位或學識較低者請教為恥', pos: '成語', lang: 'zh-TW' },
+        { word: '相輔相成', meaning: '互相配合輔助完成', pos: '成語', lang: 'zh-TW' },
+        { word: '防微杜漸', meaning: '在錯誤或壞事剛萌芽時就制止', pos: '成語', lang: 'zh-TW' },
+        { word: '任重道遠', meaning: '責任重大且路途遙遠', pos: '成語', lang: 'zh-TW' },
+        { word: '集思廣益', meaning: '匯集眾人意見以獲得更大效益', pos: '成語', lang: 'zh-TW' }
+    ];
+
+    function getBattleFallbackBank(targetLang = getBattleTargetLang()) {
+        if (targetLang === 'ja') return FALLBACK_JA_ARCADE_WORDS;
+        if (targetLang === 'zh-TW') return FALLBACK_ZH_ARCADE_WORDS;
+        return FALLBACK_ARCADE_WORDS;
+    }
 
     let audioCtx = null;
     let sessionCombo = 0;
@@ -67,6 +97,7 @@
         pool: [],
         distractors: [],
         reviewedWords: [],
+        askedKeys: new Set(),
         sessionMissMap: Object.create(null),
         currentSnapshot: null,
         isLocked: false,
@@ -84,6 +115,7 @@
         BossBattleState.pool = [];
         BossBattleState.distractors = [];
         BossBattleState.reviewedWords = [];
+        BossBattleState.askedKeys = new Set();
         BossBattleState.sessionMissMap = Object.create(null);
         BossBattleState.currentSnapshot = null;
         BossBattleState.isLocked = false;
@@ -1197,15 +1229,16 @@
         }
         const candidates = Array.from(uniqueMap.values());
 
-        if (!preferAbyssOnly && candidates.length < 4) {
-            const fallbackBank = targetLang === 'ja' ? FALLBACK_JA_ARCADE_WORDS : FALLBACK_ARCADE_WORDS;
+        if (!preferAbyssOnly && candidates.length < 10) {
+            const fallbackBank = getBattleFallbackBank(targetLang);
             const existingSet = new Set(candidates.map(c => String(c.word).trim().toLowerCase()));
-            fallbackBank.forEach(fb => {
+            for (const fb of fallbackBank) {
                 if (!existingSet.has(fb.word.toLowerCase())) {
-                    candidates.push({ ...fb });
+                    candidates.push({ ...fb, isFallbackHelper: true });
                     existingSet.add(fb.word.toLowerCase());
                 }
-            });
+                if (candidates.length >= 10) break;
+            }
         }
         return candidates;
     }
@@ -1262,7 +1295,7 @@
         }
 
         if (distractorItems.length < 3) {
-            const fallbackBank = targetLang === 'ja' ? FALLBACK_JA_ARCADE_WORDS : FALLBACK_ARCADE_WORDS;
+            const fallbackBank = getBattleFallbackBank(targetLang);
             for (const fb of [...fallbackBank].sort(() => Math.random() - 0.5)) {
                 tryPushDistractor(fb);
                 if (distractorItems.length >= 3) break;
@@ -1673,7 +1706,7 @@
         }
 
         if (distractorOptions.length < 3) {
-            const fallbackBank = targetLang === 'ja' ? FALLBACK_JA_ARCADE_WORDS : FALLBACK_ARCADE_WORDS;
+            const fallbackBank = getBattleFallbackBank(targetLang);
             for (const fb of shuffleFisherYates(fallbackBank)) {
                 tryAddDistractor(fb);
                 if (distractorOptions.length >= 3) break;
@@ -1735,7 +1768,7 @@
         return sessWrong * 100000 + persistentWrong * 1000 + lapses * 10 + recencyBonus;
     }
 
-    function selectNextBossWord(pool, lastWordKey = '', sessionMissMap = BossBattleState.sessionMissMap, nowMs = Date.now()) {
+    function selectNextBossWord(pool, lastWordKey = '', sessionMissMap = BossBattleState.sessionMissMap, nowMs = Date.now(), askedKeys = BossBattleState.askedKeys) {
         if (!Array.isArray(pool) || pool.length === 0) return null;
         if (pool.length === 1) return pool[0];
 
@@ -1744,10 +1777,74 @@
         });
 
         const cleanLast = String(lastWordKey || '').trim().toLowerCase();
-        if (!cleanLast) return ranked[0];
+        const isNotLast = (item) => {
+            if (!cleanLast) return true;
+            return getBossCardKey(item) !== cleanLast && String(item?.word || '').trim().toLowerCase() !== cleanLast;
+        };
 
-        const nextDifferent = ranked.find(item => getBossCardKey(item) !== cleanLast && String(item?.word || '').trim().toLowerCase() !== cleanLast);
+        if (askedKeys && typeof askedKeys.has === 'function') {
+            const unasked = ranked.filter(item => {
+                const k = getBossCardKey(item);
+                return isNotLast(item) && k && !askedKeys.has(k);
+            });
+            if (unasked.length > 0) {
+                return unasked[0];
+            }
+            if (typeof askedKeys.clear === 'function') {
+                askedKeys.clear();
+            }
+        }
+
+        const nextDifferent = ranked.find(isNotLast);
         return nextDifferent || ranked[0];
+    }
+
+    function buildSupplementedBossPool(abyssWords) {
+        const result = [];
+        const seenWordKeys = new Set();
+        const pushUnique = (item) => {
+            if (!item || !item.word) return false;
+            const wk = String(item.word).trim().toLowerCase();
+            if (!wk || seenWordKeys.has(wk)) return false;
+            seenWordKeys.add(wk);
+            result.push(item);
+            return true;
+        };
+
+        (Array.isArray(abyssWords) ? abyssWords : []).forEach(pushUnique);
+
+        if (result.length < 6) {
+            const targetLang = getBattleTargetLang();
+            const allCards = (typeof wordList !== 'undefined' && Array.isArray(wordList)) ? wordList : [];
+            const extraUserCards = allCards
+                .filter(w => (
+                    w && w.word && String(w.word).trim() &&
+                    isCardValidForBattleLang(w, targetLang) &&
+                    isValidBattleMeaning(w.meaning) &&
+                    !seenWordKeys.has(String(w.word).trim().toLowerCase())
+                ))
+                .sort((a, b) => {
+                    const scoreA = (Number(a.lapses) || 0) * 100 + (Number(a.bossWrongCount) || 0) * 50 - (Number(a.stability) || 0);
+                    const scoreB = (Number(b.lapses) || 0) * 100 + (Number(b.bossWrongCount) || 0) * 50 - (Number(b.stability) || 0);
+                    return scoreB - scoreA;
+                });
+
+            for (const c of extraUserCards) {
+                pushUnique(c);
+                if (result.length >= 6) break;
+            }
+        }
+
+        if (result.length < 6) {
+            const targetLang = getBattleTargetLang();
+            const fallbackBank = shuffleFisherYates(getBattleFallbackBank(targetLang));
+            for (const fb of fallbackBank) {
+                pushUnique({ ...fb, isFallbackHelper: true });
+                if (result.length >= 6) break;
+            }
+        }
+
+        return result;
     }
 
     function startAbyssBossMode() {
@@ -1769,8 +1866,9 @@
         }
 
         closeArenaModal();
+        const bossPool = buildSupplementedBossPool(abyssWords);
         const distractors = buildQuestionPool(false);
-        const targetCount = Math.min(8, Math.max(3, abyssWords.length));
+        const targetCount = Math.min(8, Math.max(4, bossPool.length));
         const bossMaxHp = targetCount * 100;
 
         battleSessionToken += 1;
@@ -1786,9 +1884,10 @@
         BossBattleState.combo = 0;
         BossBattleState.maxCombo = 0;
         BossBattleState.slainCount = 0;
-        BossBattleState.pool = abyssWords;
+        BossBattleState.pool = bossPool;
         BossBattleState.distractors = distractors;
         BossBattleState.reviewedWords = [];
+        BossBattleState.askedKeys = new Set();
         BossBattleState.sessionMissMap = Object.create(null);
         BossBattleState.currentSnapshot = null;
         BossBattleState.isLocked = false;
@@ -1808,8 +1907,13 @@
         const lastKey = BossBattleState.currentSnapshot
             ? (BossBattleState.currentSnapshot.cardId || BossBattleState.currentSnapshot.word || '')
             : '';
-        const pick = selectNextBossWord(BossBattleState.pool, lastKey, BossBattleState.sessionMissMap, Date.now());
+        const pick = selectNextBossWord(BossBattleState.pool, lastKey, BossBattleState.sessionMissMap, Date.now(), BossBattleState.askedKeys);
         if (!pick) return;
+
+        const pickKey = getBossCardKey(pick);
+        if (pickKey && BossBattleState.askedKeys) {
+            BossBattleState.askedKeys.add(pickKey);
+        }
 
         BossBattleState.currentSnapshot = buildBossSnapshot(pick, BossBattleState.distractors);
         BossBattleState.isLocked = false;
@@ -1958,7 +2062,7 @@
 
         const cardKey = String(snapshot.cardId || snapshot.word || '').trim().toLowerCase();
         const nowMs = Date.now();
-        const matchingPoolCards = BossBattleState.pool.filter(c => getBossCardKey(c) === cardKey || String(c?.word || '').trim().toLowerCase() === String(snapshot.word || '').trim().toLowerCase());
+        const matchingPoolCards = BossBattleState.pool.filter(c => !c.isFallbackHelper && (getBossCardKey(c) === cardKey || String(c?.word || '').trim().toLowerCase() === String(snapshot.word || '').trim().toLowerCase()));
         const matchingWordListCards = (typeof wordList !== 'undefined' && Array.isArray(wordList))
             ? wordList.filter(c => getBossCardKey(c) === cardKey || (String(c?.word || '').trim().toLowerCase() === String(snapshot.word || '').trim().toLowerCase() && isCardValidForBattleLang(c)))
             : [];

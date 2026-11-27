@@ -194,154 +194,277 @@ if (typeof window !== 'undefined') {
   window.applyAvatarImgWithFallback = applyAvatarImgWithFallback;
 }
 
+function withAuthTimeout(promise, ms = 6500, label = 'AuthNetwork') {
+  if (!promise || typeof promise.then !== 'function') return Promise.resolve(promise);
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      reject(new Error(`${label} timeout (${ms}ms)`));
+    }, Math.max(400, Number(ms) || 6500));
+    Promise.resolve(promise).then(
+      (val) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(val);
+      },
+      (err) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        reject(err);
+      }
+    );
+  });
+}
+
+let _activeAuthSignInPromise = null;
+
+function setAuthTriggerBusy(isBusy, providerLabel = '') {
+  if (typeof document === 'undefined') return;
+  const ids = ['welcomeGoogleBtn', 'welcomeAppleBtn', 'welcomeGuestBtn', 'settingsAppleLoginBtn'];
+  ids.forEach((id) => {
+    const btn = document.getElementById(id);
+    if (!btn) return;
+    if (isBusy) {
+      if (!btn.dataset.origDisabledBeforeAuth) {
+        btn.dataset.origDisabledBeforeAuth = btn.disabled ? '1' : '0';
+      }
+      btn.disabled = true;
+      btn.classList.add('opacity-70', 'pointer-events-none');
+    } else {
+      const wasDisabled = btn.dataset.origDisabledBeforeAuth === '1';
+      delete btn.dataset.origDisabledBeforeAuth;
+      btn.classList.remove('opacity-70', 'pointer-events-none');
+      if (id === 'welcomeGoogleBtn' || id === 'welcomeAppleBtn' || id === 'welcomeGuestBtn') {
+        const tosOk = document.getElementById('tosCheckbox')?.checked;
+        btn.disabled = typeof tosOk === 'boolean' ? !tosOk : wasDisabled;
+      } else {
+        btn.disabled = wasDisabled;
+      }
+    }
+  });
+}
+
+function dismissWelcomeModalOnAuthSuccess() {
+  if (typeof closeWelcomeModal === 'function') {
+    closeWelcomeModal();
+  } else if (typeof closeModal === 'function') {
+    closeModal('welcomeModal');
+  } else if (typeof document !== 'undefined') {
+    const wm = document.getElementById('welcomeModal');
+    if (wm) {
+      wm.classList.add('hidden');
+      wm.classList.remove('flex');
+    }
+  }
+}
+
+async function triggerPostLoginStorageSyncNonBlocking(uid) {
+  if (typeof loadStorage !== 'function') return;
+  try {
+    const loadPromise = (typeof StorageEngine !== 'undefined' && StorageEngine._inFlightLoad && StorageEngine._inFlightLoad.key === uid)
+      ? StorageEngine._inFlightLoad.promise
+      : loadStorage();
+    await withAuthTimeout(loadPromise, 2500, 'postLoginHydration').catch(() => {});
+  } catch (e) {}
+}
+
+if (auth && typeof auth.getRedirectResult === 'function' && typeof window !== 'undefined') {
+  auth.getRedirectResult().catch(() => {});
+}
+
 // 1. Google 一鍵登入 (網頁版 Popup / Capacitor 原生外掛橋接，防 WebView disallowed_useragent 封鎖)
 async function loginWithGoogle() {
-  const provider = new firebase.auth.GoogleAuthProvider();
-  provider.setCustomParameters({ prompt: 'select_account' });
-
-  try {
-    let result = null;
-    let nativeProfileHint = null;
-
-    if (isNativeApp()) {
-      const capPlugins = window.Capacitor?.Plugins || {};
-      if (capPlugins.FirebaseAuthentication && typeof capPlugins.FirebaseAuthentication.signInWithGoogle === 'function') {
-        const nativeRes = await capPlugins.FirebaseAuthentication.signInWithGoogle();
-        const idToken = nativeRes?.credential?.idToken || nativeRes?.idToken;
-        if (!idToken) throw new Error('無法取得原生 Google ID Token');
-        nativeProfileHint = nativeRes?.user || null;
-        const credential = firebase.auth.GoogleAuthProvider.credential(idToken);
-        result = await auth.signInWithCredential(credential);
-      } else if (capPlugins.GoogleAuth && typeof capPlugins.GoogleAuth.signIn === 'function') {
-        const googleUser = await capPlugins.GoogleAuth.signIn();
-        const idToken = googleUser?.authentication?.idToken || googleUser?.idToken;
-        if (!idToken) throw new Error('無法取得 GoogleAuth ID Token');
-        nativeProfileHint = {
-          displayName: googleUser?.displayName || googleUser?.name || '',
-          photoURL: googleUser?.imageUrl || ''
-        };
-        const credential = firebase.auth.GoogleAuthProvider.credential(idToken);
-        result = await auth.signInWithCredential(credential);
-      } else {
-        throw new Error('偵測到原生 App 環境，請確認已安裝 Capacitor Google / Firebase 原生登入外掛');
-      }
-    } else {
-      result = await auth.signInWithPopup(provider);
-    }
-
-    if (result && result.user && nativeProfileHint) {
-      const hintPhoto = nativeProfileHint.photoUrl || nativeProfileHint.photoURL || '';
-      const hintName = nativeProfileHint.displayName || '';
-      const patch = {};
-      if (!result.user.photoURL && isValidAvatarUrl(hintPhoto)) patch.photoURL = hintPhoto;
-      if (!result.user.displayName && hintName) patch.displayName = hintName;
-      if (Object.keys(patch).length > 0 && typeof result.user.updateProfile === 'function') {
-        await result.user.updateProfile(patch).catch(() => {});
-      }
-      if (isValidAvatarUrl(hintPhoto) || hintName) {
-        saveCachedUserIdentity(result.user.uid, {
-          ...(isValidAvatarUrl(hintPhoto) ? { photoURL: hintPhoto } : {}),
-          ...(hintName && !getCachedUserIdentity(result.user.uid).nickname ? { nickname: hintName } : {})
-        });
-      }
-    }
-
-    localStorage.removeItem('lzhcard_guest_mode');
-    console.log("Google 登入成功:", result.user);
-
-    if (typeof loadStorage === 'function') {
-      if (typeof StorageEngine !== 'undefined' && StorageEngine._inFlightLoad && StorageEngine._inFlightLoad.key === result.user.uid) {
-        await StorageEngine._inFlightLoad.promise;
-      } else {
-        await loadStorage();
-      }
-    }
-    if (typeof showToast === 'function') {
-      showToast(`歡迎回來，${result.user.displayName || '使用者'}！`, "success");
-    }
-    return result.user;
-  } catch (error) {
-    if (error.code === 'auth/cancelled-popup-request' || error.code === 'auth/popup-closed-by-user') {
-      console.warn("登入視窗已關閉或重新觸發");
-      return;
-    }
-    console.error("Google 登入失敗:", error);
-    if (typeof showToast === 'function') showToast("登入失敗：" + error.message, "error");
+  if (_activeAuthSignInPromise) {
+    return _activeAuthSignInPromise;
   }
+
+  const run = async () => {
+    if (!auth) {
+      if (typeof showToast === 'function') showToast('登入服務尚未初始化，請稍後再試', 'error');
+      return null;
+    }
+    const provider = new firebase.auth.GoogleAuthProvider();
+    provider.setCustomParameters({ prompt: 'select_account' });
+
+    setAuthTriggerBusy(true, 'google');
+    try {
+      let result = null;
+      let nativeProfileHint = null;
+
+      if (isNativeApp()) {
+        const capPlugins = window.Capacitor?.Plugins || {};
+        if (capPlugins.FirebaseAuthentication && typeof capPlugins.FirebaseAuthentication.signInWithGoogle === 'function') {
+          const nativeRes = await withAuthTimeout(capPlugins.FirebaseAuthentication.signInWithGoogle(), 45000, 'nativeGoogleSignIn');
+          const idToken = nativeRes?.credential?.idToken || nativeRes?.idToken;
+          if (!idToken) throw new Error('無法取得原生 Google ID Token');
+          nativeProfileHint = nativeRes?.user || null;
+          const credential = firebase.auth.GoogleAuthProvider.credential(idToken);
+          result = await withAuthTimeout(auth.signInWithCredential(credential), 15000, 'firebaseSignInWithCredential');
+        } else if (capPlugins.GoogleAuth && typeof capPlugins.GoogleAuth.signIn === 'function') {
+          const googleUser = await withAuthTimeout(capPlugins.GoogleAuth.signIn(), 45000, 'googleAuthSignIn');
+          const idToken = googleUser?.authentication?.idToken || googleUser?.idToken;
+          if (!idToken) throw new Error('無法取得 GoogleAuth ID Token');
+          nativeProfileHint = {
+            displayName: googleUser?.displayName || googleUser?.name || '',
+            photoURL: googleUser?.imageUrl || ''
+          };
+          const credential = firebase.auth.GoogleAuthProvider.credential(idToken);
+          result = await withAuthTimeout(auth.signInWithCredential(credential), 15000, 'firebaseSignInWithCredential');
+        } else {
+          throw new Error('偵測到原生 App 環境，請確認已安裝 Capacitor Google / Firebase 原生登入外掛');
+        }
+      } else {
+        try {
+          result = await auth.signInWithPopup(provider);
+        } catch (popupErr) {
+          if (popupErr && popupErr.code === 'auth/popup-blocked' && typeof auth.signInWithRedirect === 'function') {
+            if (typeof showToast === 'function') showToast('瀏覽器封鎖了登入彈窗，正在切換為跳轉登入...', 'info');
+            await auth.signInWithRedirect(provider);
+            return null;
+          }
+          throw popupErr;
+        }
+      }
+
+      if (result && result.user && nativeProfileHint) {
+        const hintPhoto = nativeProfileHint.photoUrl || nativeProfileHint.photoURL || '';
+        const hintName = nativeProfileHint.displayName || '';
+        const patch = {};
+        if (!result.user.photoURL && isValidAvatarUrl(hintPhoto)) patch.photoURL = hintPhoto;
+        if (!result.user.displayName && hintName) patch.displayName = hintName;
+        if (Object.keys(patch).length > 0 && typeof result.user.updateProfile === 'function') {
+          await withAuthTimeout(result.user.updateProfile(patch), 3500, 'updateProfile').catch(() => {});
+        }
+        if (isValidAvatarUrl(hintPhoto) || hintName) {
+          saveCachedUserIdentity(result.user.uid, {
+            ...(isValidAvatarUrl(hintPhoto) ? { photoURL: hintPhoto } : {}),
+            ...(hintName && !getCachedUserIdentity(result.user.uid).nickname ? { nickname: hintName } : {})
+          });
+        }
+      }
+
+      localStorage.removeItem('lzhcard_guest_mode');
+      console.log("Google 登入成功:", result.user);
+      dismissWelcomeModalOnAuthSuccess();
+
+      await triggerPostLoginStorageSyncNonBlocking(result.user.uid);
+      if (typeof showToast === 'function') {
+        showToast(`歡迎回來，${result.user.displayName || '使用者'}！`, "success");
+      }
+      return result.user;
+    } catch (error) {
+      if (error && (error.code === 'auth/cancelled-popup-request' || error.code === 'auth/popup-closed-by-user')) {
+        console.warn("登入視窗已關閉或重新觸發");
+        return null;
+      }
+      console.error("Google 登入失敗:", error);
+      const errMsg = /timeout/i.test(String(error?.message || ''))
+        ? '登入連線逾時，請檢查網路後再試一次'
+        : (error?.message || '請稍後再試');
+      if (typeof showToast === 'function') showToast("登入失敗：" + errMsg, "error");
+      return null;
+    } finally {
+      setAuthTriggerBusy(false);
+    }
+  };
+
+  _activeAuthSignInPromise = run().finally(() => {
+    _activeAuthSignInPromise = null;
+  });
+  return _activeAuthSignInPromise;
 }
 
 // 1.5 Apple 登入 (App Store Guideline 4.8：原生 Capacitor FirebaseAuthentication 或 Web OAuthProvider)
 async function loginWithApple() {
-  try {
-    let result = null;
-    let nativeProfileHint = null;
+  if (_activeAuthSignInPromise) {
+    return _activeAuthSignInPromise;
+  }
 
-    if (isNativeApp()) {
-      const capPlugins = window.Capacitor?.Plugins || {};
-      if (capPlugins.FirebaseAuthentication && typeof capPlugins.FirebaseAuthentication.signInWithApple === 'function') {
-        const nativeRes = await capPlugins.FirebaseAuthentication.signInWithApple();
-        const idToken = nativeRes?.credential?.idToken || nativeRes?.idToken;
-        const rawNonce = nativeRes?.credential?.rawNonce || nativeRes?.credential?.nonce || undefined;
-        if (!idToken) throw new Error('無法取得原生 Apple ID Token');
-        nativeProfileHint = nativeRes?.user || null;
-        const provider = new firebase.auth.OAuthProvider('apple.com');
-        const credential = rawNonce
-          ? provider.credential({ idToken, rawNonce })
-          : provider.credential({ idToken });
-        result = await auth.signInWithCredential(credential);
-      } else {
-        throw new Error('偵測到原生 App 環境，請確認已安裝 Capacitor Firebase Authentication Apple 登入外掛');
-      }
-    } else {
-      const provider = new firebase.auth.OAuthProvider('apple.com');
-      provider.addScope('email');
-      provider.addScope('name');
-      result = await auth.signInWithPopup(provider);
-    }
-
-    if (result && result.user && nativeProfileHint) {
-      const hintPhoto = nativeProfileHint.photoUrl || nativeProfileHint.photoURL || '';
-      const hintName = nativeProfileHint.displayName || '';
-      const patch = {};
-      if (!result.user.photoURL && isValidAvatarUrl(hintPhoto)) patch.photoURL = hintPhoto;
-      if (!result.user.displayName && hintName) patch.displayName = hintName;
-      if (Object.keys(patch).length > 0 && typeof result.user.updateProfile === 'function') {
-        await result.user.updateProfile(patch).catch(() => {});
-      }
-    }
-
-    localStorage.removeItem('lzhcard_guest_mode');
-    if (typeof loadStorage === 'function') {
-      if (typeof StorageEngine !== 'undefined' && StorageEngine._inFlightLoad && StorageEngine._inFlightLoad.key === result.user.uid) {
-        await StorageEngine._inFlightLoad.promise;
-      } else {
-        await loadStorage();
-      }
-    }
-    if (typeof showToast === 'function') {
-      showToast(`歡迎回來，${result.user.displayName || '使用者'}！`, "success");
-    }
-    return result.user;
-  } catch (error) {
-    const code = String(error?.code || '');
-    const msg = String(error?.message || '');
-    if (
-      code === 'auth/cancelled-popup-request' ||
-      code === 'auth/popup-closed-by-user' ||
-      /cancel/i.test(msg) ||
-      /1001/.test(msg)
-    ) {
+  const run = async () => {
+    if (!auth) {
+      if (typeof showToast === 'function') showToast('登入服務尚未初始化，請稍後再試', 'error');
       return null;
     }
-    console.error("Apple 登入失敗:", error);
-    if (typeof showToast === 'function') showToast("Apple 登入失敗：" + (error.message || '請稍後再試'), "error");
-    return null;
-  }
+    setAuthTriggerBusy(true, 'apple');
+    try {
+      let result = null;
+      let nativeProfileHint = null;
+
+      if (isNativeApp()) {
+        const capPlugins = window.Capacitor?.Plugins || {};
+        if (capPlugins.FirebaseAuthentication && typeof capPlugins.FirebaseAuthentication.signInWithApple === 'function') {
+          const nativeRes = await withAuthTimeout(capPlugins.FirebaseAuthentication.signInWithApple(), 45000, 'nativeAppleSignIn');
+          const idToken = nativeRes?.credential?.idToken || nativeRes?.idToken;
+          const rawNonce = nativeRes?.credential?.rawNonce || nativeRes?.credential?.nonce || undefined;
+          if (!idToken) throw new Error('無法取得原生 Apple ID Token');
+          nativeProfileHint = nativeRes?.user || null;
+          const provider = new firebase.auth.OAuthProvider('apple.com');
+          const credential = rawNonce
+            ? provider.credential({ idToken, rawNonce })
+            : provider.credential({ idToken });
+          result = await withAuthTimeout(auth.signInWithCredential(credential), 15000, 'appleCredentialSignIn');
+        } else {
+          throw new Error('偵測到原生 App 環境，請確認已安裝 Capacitor Firebase Authentication Apple 登入外掛');
+        }
+      } else {
+        const provider = new firebase.auth.OAuthProvider('apple.com');
+        provider.addScope('email');
+        provider.addScope('name');
+        result = await auth.signInWithPopup(provider);
+      }
+
+      if (result && result.user && nativeProfileHint) {
+        const hintPhoto = nativeProfileHint.photoUrl || nativeProfileHint.photoURL || '';
+        const hintName = nativeProfileHint.displayName || '';
+        const patch = {};
+        if (!result.user.photoURL && isValidAvatarUrl(hintPhoto)) patch.photoURL = hintPhoto;
+        if (!result.user.displayName && hintName) patch.displayName = hintName;
+        if (Object.keys(patch).length > 0 && typeof result.user.updateProfile === 'function') {
+          await withAuthTimeout(result.user.updateProfile(patch), 3500, 'updateProfile').catch(() => {});
+        }
+      }
+
+      localStorage.removeItem('lzhcard_guest_mode');
+      dismissWelcomeModalOnAuthSuccess();
+      await triggerPostLoginStorageSyncNonBlocking(result.user.uid);
+      if (typeof showToast === 'function') {
+        showToast(`歡迎回來，${result.user.displayName || '使用者'}！`, "success");
+      }
+      return result.user;
+    } catch (error) {
+      const code = String(error?.code || '');
+      const msg = String(error?.message || '');
+      if (
+        code === 'auth/cancelled-popup-request' ||
+        code === 'auth/popup-closed-by-user' ||
+        /cancel/i.test(msg) ||
+        /1001/.test(msg)
+      ) {
+        return null;
+      }
+      console.error("Apple 登入失敗:", error);
+      const errMsg = /timeout/i.test(msg) ? '登入連線逾時，請檢查網路後再試一次' : (error?.message || '請稍後再試');
+      if (typeof showToast === 'function') showToast("Apple 登入失敗：" + errMsg, "error");
+      return null;
+    } finally {
+      setAuthTriggerBusy(false);
+    }
+  };
+
+  _activeAuthSignInPromise = run().finally(() => {
+    _activeAuthSignInPromise = null;
+  });
+  return _activeAuthSignInPromise;
 }
 
 if (typeof window !== 'undefined') {
   window.loginWithGoogle = loginWithGoogle;
   window.loginWithApple = loginWithApple;
+  window.withAuthTimeout = withAuthTimeout;
 }
 
 // 2. Email 登入與註冊
@@ -1274,25 +1397,26 @@ auth.onAuthStateChanged(async (user) => {
 
     let fetchedUserDoc = null;
     let userDocFetchError = null;
+    let isListedInAdminsCollection = false;
     const userRef = db.collection('users').doc(user.uid);
-    for (let attempt = 0; attempt < 3; attempt++) {
+    const adminPromise = withAuthTimeout(db.collection('admins').doc(user.uid).get(), 4500, 'adminsGet')
+      .then((snap) => Boolean(snap && snap.exists))
+      .catch(() => false);
+
+    for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        fetchedUserDoc = await userRef.get();
+        fetchedUserDoc = await withAuthTimeout(userRef.get(), 5500, 'userDocGet');
         userDocFetchError = null;
         break;
       } catch (fetchErr) {
         userDocFetchError = fetchErr;
-        if (attempt < 2) {
-          await new Promise(r => setTimeout(r, attempt === 0 ? 250 : 600));
+        if (attempt < 1) {
+          await new Promise(r => setTimeout(r, 250));
         }
       }
     }
 
-    let isListedInAdminsCollection = false;
-    try {
-      const adminSnap = await db.collection('admins').doc(user.uid).get();
-      isListedInAdminsCollection = Boolean(adminSnap && adminSnap.exists);
-    } catch (adminCheckErr) {}
+    isListedInAdminsCollection = await adminPromise;
 
     try {
       if (fetchedUserDoc && fetchedUserDoc.exists) {
@@ -1334,13 +1458,16 @@ auth.onAuthStateChanged(async (user) => {
           const isExpired = banExpiresAt > 0 && Date.now() >= banExpiresAt;
           if (isExpired) {
             try {
-              const tok = await user.getIdToken(false);
+              const tok = await withAuthTimeout(user.getIdToken(false), 4000, 'getIdToken');
               const workerBase = (typeof SHARED_BACKEND_URL === 'string' && SHARED_BACKEND_URL)
                 ? SHARED_BACKEND_URL
                 : 'https://lzhcard.tomlin980415.workers.dev';
+              const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+              const abortTimer = ctrl ? setTimeout(() => ctrl.abort(), 4500) : null;
               const banStatusRes = await fetch(`${workerBase}/ban/status`, {
-                headers: { 'Authorization': `Bearer ${tok}` }
-              });
+                headers: { 'Authorization': `Bearer ${tok}` },
+                ...(ctrl ? { signal: ctrl.signal } : {})
+              }).finally(() => { if (abortTimer) clearTimeout(abortTimer); });
               if (banStatusRes.ok) {
                 const banJson = await banStatusRes.json().catch(() => null);
                 if (banJson && banJson.ban) {
@@ -1418,21 +1545,21 @@ auth.onAuthStateChanged(async (user) => {
         } else if (isValidAvatarUrl(resolvedPhotoForDb) && !(remoteDocData && isValidAvatarUrl(remoteDocData.photoURL))) {
           mergePayload.photoURL = resolvedPhotoForDb;
         }
-        await userRef.set(mergePayload, { merge: true });
+        await withAuthTimeout(userRef.set(mergePayload, { merge: true }), 5500, 'userDocMergeSet');
 
         // 為目前暱稱補建唯一索引（若尚無佔用者）
         const activeNorm = normalizeNicknameKey(mergePayload.nickname || (remoteDocData && remoteDocData.nickname) || userNickname);
         if (activeNorm) {
           try {
             const idxRef = db.collection('nicknameIndex').doc(activeNorm);
-            const idxSnap = await idxRef.get();
+            const idxSnap = await withAuthTimeout(idxRef.get(), 4500, 'nicknameIdxGet');
             if (!idxSnap.exists) {
-              await idxRef.set({
+              await withAuthTimeout(idxRef.set({
                 uid: user.uid,
                 nickname: (remoteDocData && remoteDocData.nickname) ? remoteDocData.nickname.trim() : userNickname,
                 nicknameLower: activeNorm,
                 updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-              }, { merge: true });
+              }, { merge: true }), 4500, 'nicknameIdxSet');
             }
           } catch (idxErr) {}
         }
@@ -1583,7 +1710,9 @@ auth.onAuthStateChanged(async (user) => {
 
   try {
     if (typeof setAppLoaderProgress === 'function') setAppLoaderProgress(60, '同步雲端字庫與設定...');
-    if (typeof loadStorage === 'function') await loadStorage();
+    if (typeof loadStorage === 'function') {
+      await withAuthTimeout(loadStorage(), 10000, 'authInitialLoadStorage').catch(() => {});
+    }
 
     if (typeof setAppLoaderProgress === 'function') setAppLoaderProgress(85, '載入畫面與權限中...');
     if (typeof updateUI === 'function') updateUI();

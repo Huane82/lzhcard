@@ -199,8 +199,42 @@
     }
 
     function buildTenQuestionDeck() {
+        const FALLBACK_DECK = [
+            { word: 'resilient', phonetic: '/rɪˈzɪl.jənt/', meaning: '有彈性的；能迅速恢復的' },
+            { word: 'meticulous', phonetic: '/məˈtɪk.jə.ləs/', meaning: '一絲不苟的' },
+            { word: 'ephemeral', phonetic: '/ɪˈfem.ər.əl/', meaning: '短暫的' },
+            { word: 'pragmatic', phonetic: '/præɡˈmæt.ɪk/', meaning: '務實的' },
+            { word: 'coherent', phonetic: '/koʊˈhɪr.ənt/', meaning: '連貫的；有條理的' },
+            { word: 'diligent', phonetic: '/ˈdɪl.ə.dʒənt/', meaning: '勤奮的' },
+            { word: 'abundant', phonetic: '/əˈbʌn.dənt/', meaning: '豐富的' },
+            { word: 'versatile', phonetic: '/ˈvɜːr.sə.təl/', meaning: '多才多藝的' },
+            { word: 'inevitable', phonetic: '/ɪnˈev.ə.tə.bəl/', meaning: '不可避免的' },
+            { word: 'persevere', phonetic: '/ˌpɜːr.səˈvɪr/', meaning: '堅持不懈' },
+            { word: 'eloquent', phonetic: '/ˈel.ə.kwənt/', meaning: '雄辯的；有說服力的' },
+            { word: 'ambiguous', phonetic: '/æmˈbɪɡ.ju.əs/', meaning: '模稜兩可的；含糊不清的' }
+        ];
+
         if (global.GameEngine && typeof global.GameEngine.buildQuestionPool === 'function' && typeof global.GameEngine.createMcqQuestion === 'function') {
-            const pool = [...global.GameEngine.buildQuestionPool()].sort(() => Math.random() - 0.5);
+            const rawPool = [...global.GameEngine.buildQuestionPool(false)].sort(() => Math.random() - 0.5);
+            const pool = [];
+            const seenWords = new Set();
+            rawPool.forEach(item => {
+                const key = String(item?.word || '').trim().toLowerCase();
+                if (key && !seenWords.has(key)) {
+                    seenWords.add(key);
+                    pool.push(item);
+                }
+            });
+            if (pool.length < 10) {
+                for (const fb of [...FALLBACK_DECK].sort(() => Math.random() - 0.5)) {
+                    const key = fb.word.toLowerCase();
+                    if (!seenWords.has(key)) {
+                        seenWords.add(key);
+                        pool.push({ ...fb, isFallbackHelper: true });
+                    }
+                    if (pool.length >= 10) break;
+                }
+            }
             const qs = [];
             for (let i = 0; i < 10; i++) {
                 const target = pool[i % pool.length];
@@ -216,20 +250,26 @@
             return qs;
         }
 
-        const list = Array.isArray(global.wordList) && global.wordList.length >= 4
-            ? global.wordList.filter(w => w && w.word && w.meaning)
-            : [
-                { word: 'resilient', phonetic: '/rɪˈzɪl.jənt/', meaning: '有彈性的；能迅速恢復的' },
-                { word: 'meticulous', phonetic: '/məˈtɪk.jə.ləs/', meaning: '一絲不苟的' },
-                { word: 'ephemeral', phonetic: '/ɪˈfem.ər.əl/', meaning: '短暫的' },
-                { word: 'pragmatic', phonetic: '/præɡˈmæt.ɪk/', meaning: '務實的' },
-                { word: 'coherent', phonetic: '/koʊˈhɪr.ənt/', meaning: '連貫的；有條理的' },
-                { word: 'diligent', phonetic: '/ˈdɪl.ə.dʒənt/', meaning: '勤奮的' },
-                { word: 'abundant', phonetic: '/əˈbʌn.dənt/', meaning: '豐富的' },
-                { word: 'versatile', phonetic: '/ˈvɜːr.sə.təl/', meaning: '多才多藝的' },
-                { word: 'inevitable', phonetic: '/ɪnˈev.ə.tə.bəl/', meaning: '不可避免的' },
-                { word: 'persevere', phonetic: '/ˌpɜːr.səˈvɪr/', meaning: '堅持不懈' }
-            ];
+        const list = [];
+        const seenList = new Set();
+        const rawList = Array.isArray(global.wordList) ? global.wordList.filter(w => w && w.word && w.meaning) : [];
+        rawList.forEach(w => {
+            const key = String(w.word).trim().toLowerCase();
+            if (key && !seenList.has(key)) {
+                seenList.add(key);
+                list.push(w);
+            }
+        });
+        if (list.length < 10) {
+            for (const fb of [...FALLBACK_DECK].sort(() => Math.random() - 0.5)) {
+                const key = fb.word.toLowerCase();
+                if (!seenList.has(key)) {
+                    seenList.add(key);
+                    list.push({ ...fb });
+                }
+                if (list.length >= 10) break;
+            }
+        }
 
         const shuffled = [...list].sort(() => Math.random() - 0.5);
         const qs = [];

@@ -370,7 +370,8 @@
         const tokens = clean.split(/(\s+)/);
         let anyHit = false;
         const partsHtml = tokens.map(tok => {
-            if (!tok || /^\s+$/.test(tok)) return escapeMorphHtml(tok);
+            if (!tok) return '';
+            if (/^\s+$/.test(tok)) return `<span class="whitespace-pre">${escapeMorphHtml(tok)}</span>`;
             const res = analyzeWordMorphemes(tok);
             if (!res.hasMorpheme) return escapeMorphHtml(tok);
             anyHit = true;
@@ -385,15 +386,7 @@
 
         if (!anyHit) return null;
 
-        const legendHtml = `
-            <div onclick="event.stopPropagation();" class="mt-2 flex items-center justify-center gap-2.5 flex-wrap text-[10px] font-bold text-slate-500 dark:text-slate-400">
-                <span class="border-b-2 border-sky-500 px-0.5 text-sky-700 dark:text-sky-300">[字首]</span>
-                <span class="border-b-2 border-emerald-500 px-0.5 text-emerald-700 dark:text-emerald-300">[字根]</span>
-                <span class="border-b-2 border-amber-500 px-0.5 text-amber-700 dark:text-amber-300">[字尾]</span>
-                <span class="text-slate-400">· 點擊底線可查詞素</span>
-            </div>
-        `;
-        return `<span class="inline-flex flex-wrap items-baseline justify-center">${partsHtml}</span>${legendHtml}`;
+        return `<span class="inline leading-tight">${partsHtml}</span>`;
     }
 
     function ensurePopoverDom() {

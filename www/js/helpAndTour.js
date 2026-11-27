@@ -578,6 +578,24 @@
         }
     }
 
+    function closeFloatingPanelSafe(ft) {
+        if (!ft) return;
+        if (typeof ft.closePipWindow === 'function') {
+            try { ft.closePipWindow(); } catch (e) {}
+        }
+        if (typeof ft.collapsePanel === 'function') {
+            ft.collapsePanel();
+        } else if (typeof ft.collapse === 'function') {
+            ft.collapse();
+        } else if (typeof ft.close === 'function') {
+            ft.close();
+        }
+        if (typeof document !== 'undefined') {
+            const panelEl = document.getElementById('ftPanelHost') || document.getElementById('ftPanel');
+            if (panelEl) panelEl.classList.add('hidden');
+        }
+    }
+
     function ensureFloatingPanelState(step) {
         const ft = global.FloatingTranslator;
         if (!ft) return;
@@ -593,11 +611,15 @@
                 if (typeof ft.open === 'function') ft.open(step.floatingTab);
             }
         } else if (step && step.closeFloatingPanel) {
-            if (typeof ft.isOpen === 'function' && ft.isOpen() && typeof ft.collapsePanel === 'function') {
-                ft.collapsePanel();
+            closeFloatingPanelSafe(ft);
+        } else if (!tourSnapshotFloatingOpen) {
+            const isPanelDomOpen = typeof document !== 'undefined' && Boolean(
+                (document.getElementById('ftPanelHost') && !document.getElementById('ftPanelHost').classList.contains('hidden')) ||
+                (document.getElementById('ftPanel') && !document.getElementById('ftPanel').classList.contains('hidden'))
+            );
+            if ((typeof ft.isOpen === 'function' && ft.isOpen()) || isPanelDomOpen) {
+                closeFloatingPanelSafe(ft);
             }
-        } else if (typeof ft.isOpen === 'function' && ft.isOpen() && !tourSnapshotFloatingOpen) {
-            if (typeof ft.collapsePanel === 'function') ft.collapsePanel();
         }
     }
 
@@ -1045,8 +1067,8 @@
 
         const ft = global.FloatingTranslator;
         if (ft) {
-            if (!tourSnapshotFloatingOpen && typeof ft.collapsePanel === 'function') {
-                ft.collapsePanel();
+            if (!tourSnapshotFloatingOpen) {
+                closeFloatingPanelSafe(ft);
             }
             if (tourSnapshotFloatingEnabled === 'false' && typeof ft.setEnabled === 'function') {
                 ft.setEnabled(false);
