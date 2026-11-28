@@ -1,0 +1,27 @@
+{
+  "name": "lzhcard-server",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "lint": "tsc -p tsconfig.json --noEmit",
+    "migrate": "tsx src/db/migrate.ts",
+    "migrate:status": "tsx src/db/migrate.ts --status",
+    "etl:full": "tsx src/etl/firebaseToPg.ts --mode=full",
+    "etl:incremental": "tsx src/etl/firebaseToPg.ts --mode=incremental",
+    "etl:dry-run": "tsx src/etl/firebaseToPg.ts --mode=full --dry-run",
+    "etl:reconcile": "tsx src/etl/reconcile.ts",
+    "test": "node --test dist/etl/normalizers.test.js"
+  },
+  "dependencies": {
+    "firebase-admin": "^13.2.0",
+    "pg": "^8.14.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.14.0",
+    "@types/pg": "^8.11.11",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2"
+  }
+}
